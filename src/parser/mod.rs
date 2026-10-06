@@ -225,7 +225,7 @@ fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
 ///   `src/parser/mod.rs:339-371`  `contains_escaping_break` +
 ///                                `stmt_contains_escaping_break` — reachable
 ///                                breaks only, mirroring `contains_break`
-///   `src/parser/mod.rs:1211-1235`  the only caller: the refusal and the lowering
+///   `src/parser/mod.rs:1216-1240`  the only caller: the refusal and the lowering
 ///
 /// The agreement between this side and the C-side reader is not asserted by
 /// this comment — it is executed by `assert_net_a` in tests/d3b_tail_if.rs,
@@ -770,11 +770,16 @@ impl Parser {
         );
 
         if !KNOWN_ATTRIBUTES.contains(&name.as_str()) {
-            return Err(CompileError::unknown_attribute(
-                &name,
-                KNOWN_ATTRIBUTES,
-                span,
-            ));
+            // PD0006 IS ATTACHED HERE, at the predicate, and not inside
+            // `CompileError::unknown_attribute`: the constructor is a shape and
+            // this `if` is the rule. Every attribute SHAPE the grammar has —
+            // `#[name]`, `#[name(args)]`, `#![name]` — reaches this one line, so
+            // the three shapes are one condition and the name they carry is its
+            // parameter.
+            return Err(
+                CompileError::unknown_attribute(&name, KNOWN_ATTRIBUTES, span)
+                    .with_code(DiagnosticCode::AttributeIsOneThisCompilerImplements),
+            );
         }
 
         Ok(Attribute {

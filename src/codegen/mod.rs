@@ -10,7 +10,7 @@ pub mod llvm_text_backend;
 
 use crate::ast::{AssignTarget, UnaryOp, *};
 use crate::codegen::c_literal::{c_char_constant, c_string_body};
-use crate::errors::{CompileError, Result, Span};
+use crate::errors::{CompileError, DiagnosticCode, Result, Span};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -1012,6 +1012,9 @@ impl CodeGenerator {
             match Self::array_len_of_size(size) {
                 ArrayLen::Proven(n) => suffix.push_str(&format!("[{}]", n)),
                 ArrayLen::Unproven(spelling) => {
+                    // PD0024. ONE `Err`, three callers — a field, a parameter, a
+                    // local — so the code is on the refusal and the DECLARING
+                    // POSITION stays what it is, an argument `what` carries in.
                     return Err(CompileError::CodegenError {
                         message: format!(
                             "cannot declare {}: the inner array length is written as `{}`, \
@@ -1023,7 +1026,8 @@ impl CodeGenerator {
                              literal length, e.g. `[[i64; 4]; 3]`.",
                             what, spelling
                         ),
-                    })
+                    }
+                    .with_code(DiagnosticCode::NestedArrayInnerLengthIsALiteral));
                 }
             }
         }
@@ -1169,6 +1173,11 @@ impl CodeGenerator {
                     name
                 ),
             }),
+            // PD0028 IS ON THIS ARM AND NOT ON THE FUNCTION. The `Shared` arm
+            // above states a different rule — a shared reference does not permit
+            // mutation, which the specification has settled — and the language
+            // has not decided this one, which is why it is refused rather than
+            // emitted. A code on `check_array_write` would say the two were one.
             ArrayParamForm::ByValue => Err(CompileError::CodegenError {
                 message: format!(
                     "cannot write to `{}`: it is a by-value array parameter, but C \
@@ -1180,7 +1189,8 @@ impl CodeGenerator {
                      array.",
                     name, name, name
                 ),
-            }),
+            }
+            .with_code(DiagnosticCode::ByValueArrayParameterIsNotWritten)),
         }
     }
 
@@ -2616,6 +2626,11 @@ impl CodeGenerator {
             };
             for ty in payload_types {
                 if matches!(ty, Type::Tuple(_)) {
+                    // PD0023. The loop above collected the payload types of a
+                    // TUPLE variant and of a STRUCT variant alike, so both
+                    // payload kinds arrive at this one predicate: one rule about
+                    // emission order, with the struct-payload arm un-witnessed by
+                    // the corpus rather than un-ruled.
                     return Err(CompileError::CodegenError {
                         message: format!(
                             "`{}::{}` carries a TUPLE in its payload, and code generation emits \
@@ -2627,7 +2642,8 @@ impl CodeGenerator {
                              is not a way out",
                             enum_def.name, variant.name, variant.name
                         ),
-                    });
+                    }
+                    .with_code(DiagnosticCode::EnumPayloadMayNotBeATuple));
                 }
             }
         }
@@ -4254,6 +4270,7 @@ impl CodeGenerator {
                                 _ => "<expression>",
                             };
                             let row_dims = &dims[dims[1..].find('[').map(|i| i + 1).unwrap_or(0)..];
+                            // PD0026, on the one predicate that states it.
                             return Err(CompileError::CodegenError {
                                 message: format!(
                                     "cannot iterate `{}`: each step would bind a whole row \
@@ -4270,7 +4287,8 @@ impl CodeGenerator {
                                     },
                                     name
                                 ),
-                            });
+                            }
+                            .with_code(DiagnosticCode::ForMayNotBindAWholeRow));
                         }
                         let len = self.array_len_of_expr(iter);
                         let storage = match iter {
@@ -6129,6 +6147,10 @@ impl CodeGenerator {
                     // passing `&t` would be new lowering rather than something that falls out
                     // of what is here, so the refusal is by NAME and the temp is not built.
                     if needs_address && !Self::expr_is_addressable(arg) {
+                        // PD0027. `expr_kind_name` names nineteen expression
+                        // kinds into this payload and the corpus witnesses one:
+                        // the kind is the particular, and the rule is that the
+                        // argument has to be a place at all.
                         return Err(CompileError::CodegenError {
                             message: format!(
                                 "cannot pass a temporary as argument {} of `{}`: the parameter \
@@ -6139,7 +6161,8 @@ impl CodeGenerator {
                                 callee,
                                 Self::expr_kind_name(arg)
                             ),
-                        });
+                        }
+                        .with_code(DiagnosticCode::ReferenceArgumentIsAPlace));
                     }
 
                     if sequenced {

@@ -2,7 +2,7 @@
 // "Ensuring memory safety through static analysis"
 
 use crate::ast::{AssignTarget, Expr, Function, Item, Pattern, Program, Stmt, Type};
-use crate::errors::{CompileError, Result};
+use crate::errors::{CompileError, DiagnosticCode, Result};
 use crate::ownership::{expr_to_place, Lifetime, OwnershipContext, Place, RefKind};
 use std::collections::HashMap;
 
@@ -247,7 +247,7 @@ impl BorrowChecker {
     /// and it was true.
     ///
     /// It stopped being true on 2026-08-23. The emission walk now asks
-    /// `crate::ast::local_type_shadows_import` (`src/codegen/mod.rs:2209-2237`)
+    /// `crate::ast::local_type_shadows_import` (`src/codegen/mod.rs:2219-2247`)
     /// and skips the imported definition, because the same window in the TYPE
     /// CHECKER was producing `Type mismatch: expected Color, found Color` for an
     /// ordinary program — a local `struct Color` over an imported `pub enum
@@ -296,7 +296,7 @@ impl BorrowChecker {
                         // function bodies, one item kind across.
                         //
                         // Its reason was that codegen emits only NON-generic
-                        // imported structs (`src/codegen/mod.rs:2213-2218`), so a
+                        // imported structs (`src/codegen/mod.rs:2223-2228`), so a
                         // generic `P<T>` would be "a layout for a type this
                         // compilation never produces". Structs have a
                         // monomorphization path too
@@ -429,8 +429,8 @@ impl BorrowChecker {
         //
         // ONLY `Item::Function` IS WALKED, and an imported `impl` method is not a
         // gap in that. Codegen's imported walk matches `Item::Struct` and
-        // `Item::Enum` (`src/codegen/mod.rs:2209-2237`) and, separately,
-        // `Item::Function` (`src/codegen/mod.rs:2369-2370`) — there is no `Item::Impl`
+        // `Item::Enum` (`src/codegen/mod.rs:2219-2247`) and, separately,
+        // `Item::Function` (`src/codegen/mod.rs:2379-2380`) — there is no `Item::Impl`
         // arm anywhere in it. So an imported impl method is not merely uncallable:
         // IT DOES NOT EXIST IN THE OUTPUT. Measured — a module exporting
         // `pub struct P { a: i64 }` with `impl P { fn get(self) -> i64 { … } }`
@@ -472,7 +472,7 @@ impl BorrowChecker {
                     // AND WAS A FAIL-OPEN. Its stated reason was that a skipped body
                     // "produces no C, because the codegen guard is the same
                     // predicate". That is true of the DIRECT imported-emission path
-                    // (`src/codegen/mod.rs:2370-2373`, public and non-generic) and
+                    // (`src/codegen/mod.rs:2380-2383`, public and non-generic) and
                     // false of MONOMORPHIZATION, which is a different path and emits
                     // `name__T` from the same template. Measured on the guard:
                     //
@@ -1345,6 +1345,14 @@ impl BorrowChecker {
             match root {
                 Place::Local(name) => {
                     if self.mutable_bindings.get(name) != Some(&true) {
+                        // PD0012. THE ONE `Err` OF THIS RULE, and the code goes
+                        // on it rather than on `CompileError::BorrowChecker`:
+                        // NINETEEN sites in this file raise that variant and
+                        // this is one of them, so a code on the variant would
+                        // say nineteen rules were one. The three callers of this
+                        // function are three positions of ONE rule about one
+                        // binding, which is why the code is here and not on each
+                        // of them.
                         return Err(CompileError::BorrowChecker {
                             message: format!(
                                 "cannot borrow `{}` as mutable: it is not declared mutable. \
@@ -1353,7 +1361,8 @@ impl BorrowChecker {
                                 name, name
                             ),
                             span: Some(span),
-                        });
+                        }
+                        .with_code(DiagnosticCode::MutableBorrowNeedsAMutableBinding));
                     }
                     return Ok(());
                 }
@@ -1754,6 +1763,23 @@ mod tests {
         let mut program = parser.parse()?;
         crate::macros::MacroExpander::new().expand_program(&mut program)?;
         BorrowChecker::new().check_program(&program)
+    }
+
+    /// Whether a refusal is the borrow checker's, IGNORING any GI-12 code.
+    ///
+    /// `peel()`: the mutable-borrow rule carries PD0012 since su4, and a code is
+    /// a WRAPPER around the refusal it names. Matching
+    /// `CompileError::BorrowChecker` directly would say attaching a code turned
+    /// this into a different error — the one thing `CompileError::Coded`
+    /// promises it does not do — and it would say it in twelve places at once,
+    /// which is why the peel lives here instead of at each assertion. The
+    /// question these tests ask is WHICH refusal was raised, not whether it has
+    /// been attributed.
+    fn is_borrow_checker_refusal(result: &Result<()>) -> bool {
+        matches!(
+            result.as_ref().err().map(CompileError::peel),
+            Some(CompileError::BorrowChecker { .. })
+        )
     }
 
     /// A LOCAL NAMED AFTER A BUILT-IN IS STILL A LOCAL, and moving it twice is
@@ -2284,7 +2310,7 @@ mod tests {
             "#,
         );
         assert!(
-            matches!(result, Err(CompileError::BorrowChecker { .. })),
+            is_borrow_checker_refusal(&result),
             "a mutable borrow of an immutable binding was accepted: {:?}",
             result
         );
@@ -2303,7 +2329,7 @@ mod tests {
             "#,
         );
         assert!(
-            matches!(result, Err(CompileError::BorrowChecker { .. })),
+            is_borrow_checker_refusal(&result),
             "a mutable borrow of an immutable scalar was accepted: {:?}",
             result
         );
@@ -2397,7 +2423,7 @@ mod tests {
             "#,
         );
         assert!(
-            matches!(result, Err(CompileError::BorrowChecker { .. })),
+            is_borrow_checker_refusal(&result),
             "an immutable local passed to a `mut` parameter was accepted: {:?}",
             result
         );
@@ -2423,7 +2449,7 @@ mod tests {
             "#,
         );
         assert!(
-            matches!(result, Err(CompileError::BorrowChecker { .. })),
+            is_borrow_checker_refusal(&result),
             "an inner `let mut` shadow made an immutable outer binding writable: {:?}",
             result
         );
@@ -2472,7 +2498,7 @@ mod tests {
             "#,
         );
         assert!(
-            matches!(result, Err(CompileError::BorrowChecker { .. })),
+            is_borrow_checker_refusal(&result),
             "an immutable scalar passed to a `mut` parameter was accepted: {:?}",
             result
         );
@@ -2494,7 +2520,7 @@ mod tests {
             "#,
         );
         assert!(
-            matches!(result, Err(CompileError::BorrowChecker { .. })),
+            is_borrow_checker_refusal(&result),
             "an immutable String passed to a `mut` parameter was accepted: {:?}",
             result
         );
@@ -2539,7 +2565,7 @@ mod tests {
             "#,
         );
         assert!(
-            matches!(result, Err(CompileError::BorrowChecker { .. })),
+            is_borrow_checker_refusal(&result),
             "a mutable borrow of a `for` variable was accepted: {:?}",
             result
         );
@@ -2560,7 +2586,7 @@ mod tests {
             "#,
         );
         assert!(
-            matches!(result, Err(CompileError::BorrowChecker { .. })),
+            is_borrow_checker_refusal(&result),
             "a mutable borrow of a match binding was accepted: {:?}",
             result
         );
@@ -2604,7 +2630,7 @@ mod tests {
             "#,
         );
         assert!(
-            matches!(result, Err(CompileError::BorrowChecker { .. })),
+            is_borrow_checker_refusal(&result),
             "a mutable borrow of the `for` binder was accepted: {:?}",
             result
         );
@@ -2644,7 +2670,7 @@ mod tests {
             "#,
         );
         assert!(
-            matches!(result, Err(CompileError::BorrowChecker { .. })),
+            is_borrow_checker_refusal(&result),
             "a mutable borrow of the match binder was accepted: {:?}",
             result
         );
@@ -2682,7 +2708,7 @@ mod tests {
         ] {
             let result = borrow_check(program);
             assert!(
-                matches!(result, Err(CompileError::BorrowChecker { .. })),
+                is_borrow_checker_refusal(&result),
                 "an rvalue ({}) passed to a `mut` parameter was accepted: {:?}",
                 arg,
                 result
@@ -2727,7 +2753,7 @@ mod tests {
             "#,
         );
         assert!(
-            matches!(result, Err(CompileError::BorrowChecker { .. })),
+            is_borrow_checker_refusal(&result),
             "a write through an immutable binding's element was accepted: {:?}",
             result
         );

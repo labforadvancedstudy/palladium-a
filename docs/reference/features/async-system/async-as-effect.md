@@ -268,12 +268,12 @@ citations in `language-spec.md` before this change were taken from the pre-clean
 `function` production carries an optional `async` (`docs/specification/grammar.ebnf:145`), `.await`
 is a postfix operator (`docs/specification/grammar.ebnf:352`), and the keyword list names both
 (`docs/specification/grammar.ebnf:90`). The parser sets `Function.is_async` from that keyword
-(`src/parser/mod.rs:972`, `src/parser/mod.rs:981`). The implementation therefore offers exactly the two things this
+(`src/parser/mod.rs:977`, `src/parser/mod.rs:986`). The implementation therefore offers exactly the two things this
 document says the language does not have: an `async` marker and an await operator.
 
 **2. Effects are inferred, but the result is print-only — it gates nothing.**
 The parser hardcodes `Function.effects` to `None`, commented "Effects will be inferred during
-analysis" (`src/parser/mod.rs:1336`). An effect analyser exists (`src/effects/mod.rs`, 479 lines;
+analysis" (`src/parser/mod.rs:1341`). An effect analyser exists (`src/effects/mod.rs`, 479 lines;
 `Effect` enum at `src/effects/mod.rs:16-29`, `analyze_function` at `src/effects/mod.rs:151`) and it does union effects across
 statements and calls (`src/effects/mod.rs:298`). But `crate::effects::` is referenced from exactly one place in
 the compiler — `src/driver/mod.rs:172` — and all the driver does with the result is `println!` it
@@ -301,9 +301,9 @@ no `-> async T` return form. `with`, `effect` and `ref` are not keywords at all
 
 **7. `.await` is refused, and the lowering that used to be here is deleted.**
 Codegen for an await expression returns `await_unimplemented` at the construct's own span
-(`src/codegen/mod.rs:6545-6549`), and the type checker refuses it before that
+(`src/codegen/mod.rs:6568-6572`), and the type checker refuses it before that
 (`src/typeck/mod.rs:5033-5033`). `?` is the same shape: refused in codegen
-(`src/codegen/mod.rs:6533-6537`) and in the type checker (`src/typeck/mod.rs:5025-5025`).
+(`src/codegen/mod.rs:6556-6560`) and in the type checker (`src/typeck/mod.rs:5025-5025`).
 
 *Historical, and the reason those refusals exist — this paragraph described it in the present
 tense until D5 was fixed.* Codegen used to emit `while (!<tmp>.poll(&<tmp>)) { }` and then read
@@ -314,7 +314,7 @@ is deleted too, and an `async fn` is refused); `?` used to emit a
 an error at any earlier stage — it was silent breakage discovered by the C compiler, which is the
 failure mode `language-spec.md` §6.5 recorded. Both lowerings are gone: searching
 `src/codegen/mod.rs` for `poll(&` and `struct Result` now matches only the two comments that
-explain why the arms refuse (`src/codegen/mod.rs:6534-6536`, `src/codegen/mod.rs:6546-6548`).
+explain why the arms refuse (`src/codegen/mod.rs:6557-6559`, `src/codegen/mod.rs:6569-6571`).
 
 Direction of travel: making `.await` a hard compile error is *consistent* with this document,
 because `.await` is not part of the language. The end state is that neither `async` nor `await` is

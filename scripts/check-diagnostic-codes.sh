@@ -502,19 +502,50 @@ else
   bad "M2 planted code: the fixture's text reached the capture $planted_hits time(s), so this mutant proved nothing"
 fi
 
-# M3 — UNCODED. A refusal from a site that is not wired yet says so; NO_CODE is
-# a state, never a silent pass.
+# M3 — UNCODED. A refusal from a rule nothing has judged says so; NO_CODE is a
+# state, never a silent pass.
 #
-# THE FIXTURE MOVES AS THE SLICES LAND, and that is the control working rather
-# than rotting. It was `ref_parameter.pd` until su2b coded that refusal PD0030,
-# then `at_binding_shadows_item.pd` until su3 coded it PD0004; an "unwired
-# refusal" has to be a refusal nothing has judged, so this now points at a
-# BORROW-CHECKER refusal (the locked map's PD0012), which su3 does not touch and
-# a later slice owns, and the slice that codes it will move the pointer again.
-# Picking a fixture that could never be coded would be picking one that is not on
-# the evidence path.
-( cd "$TMPROOT/run" && "$OLDPWD/$PDC" compile "$OLDPWD/tests/reject/mut_borrow_of_immutable.pd" -o m3 >/dev/null 2>"$M/m3" )
-expect_state "M3 an unwired refusal reports NO_CODE" "$M/m3" NO_CODE
+# THE CONTROL RAN OUT OF FIXTURES, and that is the slices finishing rather than
+# the control rotting. It was `ref_parameter.pd` until su2b coded that refusal
+# PD0030, then `at_binding_shadows_item.pd` until su3 coded it PD0004, then
+# `mut_borrow_of_immutable.pd` until su4 coded it PD0012 — and su4 is the LAST
+# emission slice, so the corpus no longer holds an uncoded reject row to point
+# at. Rather than keep a pointer there is nothing to point at, the control now
+# ASSEMBLES its own subject: a program written here whose refusal is the
+# ASSIGNMENT arm of the type checker's `type_mismatch` helper — a rule the locked
+# 72-condition map allocates no number to, and one that
+# `tests/gi12_diagnostic_codes.rs` independently asserts stays uncoded in
+# `the_assignment_arm_sharing_the_type_mismatch_helper_stays_uncoded`. Two
+# derivations of the same premise, in two files: a future slice that codes that
+# arm cannot quietly turn this control into a tautology, because it goes red here
+# AND there, and moving this program is then the same edit the slices have been
+# making all along.
+#
+# A REAL COMPILE, not a synthesised capture. The state under test is a COMPILER
+# state — that a refusal from an unjudged site carries no code — and a capture
+# this gate wrote would only test the parser against this gate's own text, which
+# M5 already does. The two premises are therefore asserted before the state is:
+# the program must REFUSE (an accepted program prints nothing to stderr, and an
+# empty capture also parses as NO_CODE, so the guard is what keeps this control
+# from passing by having nothing to read), and it must refuse with the sentence
+# the arm above is named for.
+cat >"$M/uncoded.pd" <<'PD'
+fn main() {
+    let mut n: i64 = 1;
+    n = 'a';
+    print_int(n);
+}
+PD
+( cd "$TMPROOT/run" && "$OLDPWD/$PDC" compile "$M/uncoded.pd" -o m3 >/dev/null 2>"$M/m3" )
+m3_rc=$?
+m3_plain=$(sed $'s/\033\\[[0-9;]*m//g' "$M/m3" | head -1)
+if [ "$m3_rc" -ne 1 ]; then
+  bad "M3 uncoded control: the assembled program exited $m3_rc instead of refusing (1), so it says nothing about NO_CODE"
+elif ! printf '%s' "$m3_plain" | grep -q 'Type mismatch: expected Int, found Char'; then
+  bad "M3 uncoded control: the program reached a different refusal ($m3_plain), so this control is no longer about the assignment arm"
+else
+  expect_state "M3 an unjudged refusal reports NO_CODE" "$M/m3" NO_CODE
+fi
 
 # M4 — TWO CODED PRIMARY HEADERS. The state the choke-point refactor made
 # unreachable; the parser must still name it rather than pick one.

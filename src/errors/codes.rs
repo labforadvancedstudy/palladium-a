@@ -22,11 +22,13 @@
 //   * a tombstoned number is never reused, and `TOMBSTONES` below is the
 //     machine-readable form of that promise.
 //
-// SCOPE OF THIS FILE TODAY. su1 wires the two SEED conditions end to end; the
-// remaining conditions of the locked semantic map are minted by the emission
-// slices (su2+). `ALL` is therefore the compiler's honest inventory of what it
-// can currently emit, not a copy of the map, and the registry gate compares in
-// that direction only.
+// SCOPE OF THIS FILE TODAY. su1 wired the two SEED conditions end to end and the
+// emission slices minted the rest; with su4 every condition of the locked
+// semantic map that survived its merges is attached to a site, so the corpus
+// holds no refusal a slice still owes a code to. `ALL` is nonetheless the
+// compiler's honest inventory of what it can EMIT rather than a copy of the map,
+// and the registry gate compares in that direction only: the two agreeing is a
+// measurement, and it stops being one the moment one is derived from the other.
 
 use std::fmt;
 
@@ -78,6 +80,17 @@ pub enum DiagnosticCode {
     /// which direction was written is the particular.
     TopLevelNamesShareOneNamespace,
 
+    /// PD0006 — an attribute is one this compiler implements (N2-11). One
+    /// predicate over `KNOWN_ATTRIBUTES` in `parse_attribute`
+    /// (`src/parser/mod.rs`), and that set is EMPTY today, so every attribute
+    /// that lexes is refused by name. The name written is the PARAMETER of one
+    /// rule: three of the four witnesses spell it `frobnicate` in three
+    /// attribute SHAPES — `#[name]`, `#[name(args)]`, `#![name]` — and print a
+    /// character-identical payload, so the shape is not part of the identity;
+    /// the fourth writes `#[total]`, the obligation N8 will one day have to
+    /// honour, and is told from its siblings by that name alone.
+    AttributeIsOneThisCompilerImplements,
+
     /// PD0007 — `pub` on a top-level `const`/`static` is not implemented,
     /// because nothing exports one and nothing emits a definition for an
     /// imported one. One predicate over `Visibility::Public` in
@@ -119,6 +132,18 @@ pub enum DiagnosticCode {
     /// checkable, and this compiler does not do that, so the binding form is
     /// refused rather than half-supported.
     OrPatternAlternativeBindsNothing,
+
+    /// PD0012 — a `&mut` borrow requires the binding underneath to have been
+    /// declared mutable. One `Err` in `check_mutable_borrow_allowed`
+    /// (`src/ownership/borrow_checker.rs`), reached from THREE positions — an
+    /// explicit `&mut place`, a write through a place, and a `&mut` argument at
+    /// a call — which are one rule about one binding. The name in the payload
+    /// is fixture data, and the two witnesses print a character-identical
+    /// sentence: one borrows in a called function and one in a function nothing
+    /// calls, which is a claim about WHEN the pass runs, not about the rule.
+    /// The other refusals of the same pass (a moved value, conflicting borrows)
+    /// are different rules and stay uncoded.
+    MutableBorrowNeedsAMutableBinding,
 
     /// PD0013 — a top-level item is one of the declaration forms this language
     /// has. The `_` arm of `parse_item` (`src/parser/mod.rs`), which is where a
@@ -210,6 +235,55 @@ pub enum DiagnosticCode {
     /// at the call site and never inside the helper — the same reason
     /// `consume_coded` exists on the parser side.
     LetAnnotationAndInitialiserAgree,
+
+    /// PD0023 — an enum variant's payload may not be a TUPLE. One loop over the
+    /// variants in the enum emitter (`src/codegen/mod.rs`): tuple structs are
+    /// emitted AFTER the enums that would use them, so a tuple payload would be
+    /// referenced before it is defined. Measured without the refusal, the
+    /// generated C reached gcc as `unknown type name
+    /// '__pd_tuple2_long_long_long_long'` — this compiler's own C failing on the
+    /// user's behalf. The same loop enforces it over `EnumVariantData::Struct`
+    /// payloads, an arm no fixture reaches; that is a corpus gap, not a second
+    /// rule.
+    EnumPayloadMayNotBeATuple,
+
+    /// PD0024 — a nested array's INNER length is a literal this compiler
+    /// resolves. One `Err` in `inner_dims_for_declarator`
+    /// (`src/codegen/mod.rs`): every dimension after the first is part of the
+    /// element type in C — it decides the stride of `g[i]` — so a length this
+    /// pass cannot resolve has no honest spelling there, and `[0]` would be the
+    /// wrong stride rather than an error. The DECLARING POSITION is passed in by
+    /// the caller (`the field ... of ...`, `the parameter ...`, `the local
+    /// ...`), which is why the two witnesses share this code; the local caller
+    /// has no fixture. The locked map carried the field spelling as PD0025 —
+    /// one `Err` cannot be two rules — and 25 is in `TOMBSTONES`.
+    NestedArrayInnerLengthIsALiteral,
+
+    /// PD0026 — a `for` may not bind a whole ROW of a nested array. One
+    /// predicate over the iterated type's dimensions in the `for` emitter
+    /// (`src/codegen/mod.rs`): C cannot copy an array into a loop variable, and
+    /// both ways to emit something anyway are wrong — dropping the inner
+    /// dimension declares an int from a pointer, and binding a pointer makes the
+    /// loop variable ALIAS the grid, so a write through it reaches the original.
+    ForMayNotBindAWholeRow,
+
+    /// PD0027 — an argument for a reference parameter is a PLACE, because the
+    /// call site takes its address. One `Err` in the call emitter
+    /// (`src/codegen/mod.rs`), and not repairable by the hoist beside it: the
+    /// hoist emits `T* t = &(expr);`, which takes the address of the same rvalue
+    /// one line earlier. `expr_kind_name` names nineteen expression kinds for
+    /// the payload and the corpus witnesses one of them — the kind is the
+    /// parameter, so the other eighteen are a corpus gap and not eighteen rules.
+    ReferenceArgumentIsAPlace,
+
+    /// PD0028 — an array parameter taken BY VALUE may not be written, because C
+    /// decays every array parameter to a pointer and the write would reach the
+    /// caller's array rather than a copy. One arm of `check_array_write`
+    /// (`src/codegen/mod.rs`). The `Shared` arm beside it refuses `&[T; N]` for
+    /// a different reason — a shared reference does not permit mutation, which
+    /// is settled — and stays UNCODED, so the code is attached to the arm and
+    /// never to the function.
+    ByValueArrayParameterIsNotWritten,
 
     /// PD0029 — a macro invocation writes its arguments in PARENTHESES:
     /// `name!(...)` is the one call shape. The `consume` after `!` in
@@ -548,11 +622,13 @@ impl DiagnosticCode {
         DiagnosticCode::CastRelation,
         DiagnosticCode::LocalBindingMayNotShadowATopLevelItem,
         DiagnosticCode::TopLevelNamesShareOneNamespace,
+        DiagnosticCode::AttributeIsOneThisCompilerImplements,
         DiagnosticCode::PubOnATopLevelItemIsNotImplemented,
         DiagnosticCode::NonIntegerLiteralInMacroTokenStream,
         DiagnosticCode::PatternHasTheScrutineeType,
         DiagnosticCode::RangePatternMatchesSomething,
         DiagnosticCode::OrPatternAlternativeBindsNothing,
+        DiagnosticCode::MutableBorrowNeedsAMutableBinding,
         DiagnosticCode::TopLevelItemIsADeclarationForm,
         DiagnosticCode::PatternShapeMatchesTheVariant,
         DiagnosticCode::VariantPatternFieldIsDeclared,
@@ -563,6 +639,11 @@ impl DiagnosticCode {
         DiagnosticCode::TopLevelInitialiserMustBeConstant,
         DiagnosticCode::MutMethodCallNeedsAMutReceiver,
         DiagnosticCode::LetAnnotationAndInitialiserAgree,
+        DiagnosticCode::EnumPayloadMayNotBeATuple,
+        DiagnosticCode::NestedArrayInnerLengthIsALiteral,
+        DiagnosticCode::ForMayNotBindAWholeRow,
+        DiagnosticCode::ReferenceArgumentIsAPlace,
+        DiagnosticCode::ByValueArrayParameterIsNotWritten,
         DiagnosticCode::MacroInvocationIsParenthesised,
         DiagnosticCode::ParameterListIsClosedByParen,
         DiagnosticCode::LetInitialiserIsMandatory,
@@ -650,11 +731,13 @@ impl DiagnosticCode {
             DiagnosticCode::CastRelation => 3,
             DiagnosticCode::LocalBindingMayNotShadowATopLevelItem => 4,
             DiagnosticCode::TopLevelNamesShareOneNamespace => 5,
+            DiagnosticCode::AttributeIsOneThisCompilerImplements => 6,
             DiagnosticCode::PubOnATopLevelItemIsNotImplemented => 7,
             DiagnosticCode::NonIntegerLiteralInMacroTokenStream => 8,
             DiagnosticCode::PatternHasTheScrutineeType => 9,
             DiagnosticCode::RangePatternMatchesSomething => 10,
             DiagnosticCode::OrPatternAlternativeBindsNothing => 11,
+            DiagnosticCode::MutableBorrowNeedsAMutableBinding => 12,
             DiagnosticCode::TopLevelItemIsADeclarationForm => 13,
             DiagnosticCode::PatternShapeMatchesTheVariant => 14,
             DiagnosticCode::VariantPatternFieldIsDeclared => 15,
@@ -665,6 +748,11 @@ impl DiagnosticCode {
             DiagnosticCode::TopLevelInitialiserMustBeConstant => 20,
             DiagnosticCode::MutMethodCallNeedsAMutReceiver => 21,
             DiagnosticCode::LetAnnotationAndInitialiserAgree => 22,
+            DiagnosticCode::EnumPayloadMayNotBeATuple => 23,
+            DiagnosticCode::NestedArrayInnerLengthIsALiteral => 24,
+            DiagnosticCode::ForMayNotBindAWholeRow => 26,
+            DiagnosticCode::ReferenceArgumentIsAPlace => 27,
+            DiagnosticCode::ByValueArrayParameterIsNotWritten => 28,
             DiagnosticCode::MacroInvocationIsParenthesised => 29,
             DiagnosticCode::ParameterListIsClosedByParen => 30,
             DiagnosticCode::LetInitialiserIsMandatory => 31,
@@ -723,6 +811,9 @@ impl DiagnosticCode {
                 "local_binding_may_not_shadow_a_top_level_item"
             }
             DiagnosticCode::TopLevelNamesShareOneNamespace => "top_level_names_share_one_namespace",
+            DiagnosticCode::AttributeIsOneThisCompilerImplements => {
+                "attribute_is_one_this_compiler_implements"
+            }
             DiagnosticCode::PubOnATopLevelItemIsNotImplemented => {
                 "pub_on_a_top_level_item_is_not_implemented"
             }
@@ -733,6 +824,9 @@ impl DiagnosticCode {
             DiagnosticCode::RangePatternMatchesSomething => "range_pattern_matches_something",
             DiagnosticCode::OrPatternAlternativeBindsNothing => {
                 "or_pattern_alternative_binds_nothing"
+            }
+            DiagnosticCode::MutableBorrowNeedsAMutableBinding => {
+                "mutable_borrow_needs_a_mutable_binding"
             }
             DiagnosticCode::TopLevelItemIsADeclarationForm => {
                 "top_level_item_is_a_declaration_form"
@@ -753,6 +847,15 @@ impl DiagnosticCode {
             }
             DiagnosticCode::LetAnnotationAndInitialiserAgree => {
                 "let_annotation_and_initialiser_agree"
+            }
+            DiagnosticCode::EnumPayloadMayNotBeATuple => "enum_payload_may_not_be_a_tuple",
+            DiagnosticCode::NestedArrayInnerLengthIsALiteral => {
+                "nested_array_inner_length_is_a_literal"
+            }
+            DiagnosticCode::ForMayNotBindAWholeRow => "for_may_not_bind_a_whole_row",
+            DiagnosticCode::ReferenceArgumentIsAPlace => "reference_argument_is_a_place",
+            DiagnosticCode::ByValueArrayParameterIsNotWritten => {
+                "by_value_array_parameter_is_not_written"
             }
             DiagnosticCode::MacroInvocationIsParenthesised => "macro_invocation_is_parenthesised",
             DiagnosticCode::ParameterListIsClosedByParen => "parameter_list_is_closed_by_paren",
@@ -863,7 +966,7 @@ mod tests {
     fn every_code_is_in_all() {
         assert_eq!(
             DiagnosticCode::ALL.len(),
-            64,
+            71,
             "a code was added to the enum without being added to ALL (or this \
              literal was not updated with the new count)"
         );

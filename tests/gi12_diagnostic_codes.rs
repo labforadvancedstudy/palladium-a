@@ -125,6 +125,31 @@
 //! PD0021 and drops the second unminted rather than tombstoning it. The registry
 //! row says what that costs.
 //!
+//! THE SEVEN CONDITIONS su4 ADDS, and what closes with them
+//!
+//! su4 wires the LAST of the map: the attribute rule in the parser, the
+//! mutable-borrow rule in the ownership pass, and five code-generation rules.
+//! With them the corpus holds no uncoded reject row, which changes one thing
+//! outside this file — `scripts/check-diagnostic-codes.sh`'s M3 control, which
+//! had been pointing at whichever corpus fixture was still unjudged, has no
+//! fixture left to point at and now assembles its own uncoded program. The rule
+//! it uses is the ASSIGNMENT arm asserted uncoded below, so the premise is
+//! derived in two files and a slice that codes that arm goes red in both.
+//!
+//! TWO PASSES JOIN, and each brings the shared-site mutant in its own dialect.
+//! `CompileError::BorrowChecker` is raised at nineteen sites in the ownership
+//! pass and PD0012 is one of them; `check_array_write` refuses in two arms and
+//! PD0028 is one of them, the other being a rule the specification has settled
+//! and the map allocates nothing to. Both cheap wirings — a code on the variant,
+//! a code on the function — would pass every per-fixture assertion in this file,
+//! so both have a control below that writes the neighbouring program.
+//!
+//! IDENTICAL PAYLOADS, at the largest group in the corpus. PD0006 has four
+//! witnesses and three of them print a CHARACTER-IDENTICAL sentence: three
+//! attribute shapes, one refusal, and no fragment that could tell them apart.
+//! The test asserts the identity rather than inventing a discriminator, for the
+//! reason PD0013's two-witness test does.
+//!
 //! WHAT IS NOT CLAIMED. Nothing here says the manifest pins codes: it does not,
 //! and will not until the cutover. These are the vertical proof that it CAN.
 
@@ -733,23 +758,42 @@ fn main() {
     );
 }
 
+/// A refusal from a rule the locked map allocates NO number to.
+///
+/// The subject of every uncoded control in this file, written here once because
+/// three of them need the same program and because
+/// `scripts/check-diagnostic-codes.sh`'s M3 needs it too: this is the assignment
+/// arm of `TypeErrorHelper::type_mismatch`, whose annotated-`let` sibling is
+/// PD0022 and which the map judges as nothing at all.
+const UNJUDGED_REFUSAL: &str =
+    "fn main() {\n    let mut n: i64 = 1;\n    n = 'a';\n    print_int(n);\n}\n";
+
 /// D1's honest NO_CODE state: a site that has not been wired says so.
 ///
 /// There is no family fallback and no sentinel code. The alternative — every
 /// refusal gets SOME code — is the shape the LSP bridge already has
 /// (`_ => "E9999"`), and it makes "this refusal is attributable" unfalsifiable.
 ///
-/// THE CONTROL MOVED TWICE, AND THAT IS THE POINT. It was `ref_parameter.pd`,
-/// which su2b coded as PD0030, then `at_binding_shadows_item.pd`, which su3
-/// coded as PD0004. A control has to be a refusal NOTHING has judged yet, so it
-/// is replaced rather than kept: `mut_borrow_of_immutable.pd` is a BORROW-CHECKER
-/// refusal — the locked map's PD0012, which su3's type-checker family does not
-/// reach — owned by a later slice. The day that slice lands, this control moves
-/// again; the moving is what keeps it a control.
+/// THE CONTROL MOVED THREE TIMES AND THEN RAN OUT OF CORPUS, which is the slices
+/// finishing rather than the control rotting. It was `ref_parameter.pd`, which
+/// su2b coded as PD0030, then `at_binding_shadows_item.pd`, which su3 coded as
+/// PD0004, then `mut_borrow_of_immutable.pd`, which su4 coded as PD0012 — and
+/// su4 is the last emission slice, so no corpus reject row is unjudged any more.
+/// A control has to be a refusal NOTHING has judged, so it now writes its own
+/// program rather than pointing at a fixture: `UNJUDGED_REFUSAL`, the assignment
+/// arm this file already asserts uncoded in
+/// `the_assignment_arm_sharing_the_type_mismatch_helper_stays_uncoded`. If a
+/// later unit codes that arm, both tests and the gate's M3 go red together, and
+/// moving the program is the same edit the three fixture moves were.
 #[test]
 fn an_unwired_refusal_carries_no_code_rather_than_a_fallback() {
-    let (r, _dir) = compile_fixture("mut_borrow_of_immutable.pd");
+    let (r, _dir) = compile_source(UNJUDGED_REFUSAL);
     assert_eq!(r.code, Some(1));
+    assert!(
+        strip_ansi(&r.stderr).contains("Type mismatch: expected Int, found Char"),
+        "the control did not reach the assignment arm:\n{}",
+        r.stderr
+    );
     assert!(
         r.coded_headers().is_empty(),
         "an unwired site produced a code: {:?}",
@@ -762,14 +806,25 @@ fn an_unwired_refusal_carries_no_code_rather_than_a_fallback() {
     );
 }
 
-/// CARDINALITY-1, over both seeds and the uncoded control.
+/// CARDINALITY-1, over both seeds, a coded refusal from each later slice, and an
+/// UNCODED one.
 ///
 /// The state this asserts against was the corpus's REALITY until this unit:
 /// every reject fixture printed two primary headers, in different wording, from
 /// two printers, and the manifest pinned whichever it happened to see. One
-/// choke point is what makes the count structural.
+/// choke point is what makes the count structural — and it has to be counted on
+/// an uncoded refusal too, because the bare `error:` arm is a second path
+/// through that choke and a duplicate there would be invisible to every
+/// `code=`-shaped assertion in this file.
 #[test]
 fn a_refusal_prints_exactly_one_primary_header() {
+    let count = |r: &Refusal| {
+        strip_ansi(&r.stderr)
+            .lines()
+            .filter(|l| l.starts_with("error:") || l.starts_with("error["))
+            .count()
+    };
+
     let mut fixtures: Vec<&str> = CAST.rows.iter().map(|(f, _)| *f).collect();
     fixtures.extend(CONST_INIT.rows.iter().map(|(f, _)| *f));
     fixtures.push("mut_borrow_of_immutable.pd");
@@ -777,16 +832,21 @@ fn a_refusal_prints_exactly_one_primary_header() {
 
     for fixture in fixtures {
         let (r, _dir) = compile_fixture(fixture);
-        let primaries = strip_ansi(&r.stderr)
-            .lines()
-            .filter(|l| l.starts_with("error:") || l.starts_with("error["))
-            .count();
+        let primaries = count(&r);
         assert_eq!(
             primaries, 1,
             "{} printed {} primary headers:\n{}",
             fixture, primaries, r.stderr
         );
     }
+
+    let (uncoded, _dir) = compile_source(UNJUDGED_REFUSAL);
+    let primaries = count(&uncoded);
+    assert_eq!(
+        primaries, 1,
+        "the uncoded refusal printed {} primary headers:\n{}",
+        primaries, uncoded.stderr
+    );
 }
 
 /// The F12 shape, in Rust as well as in the gate: a fixture that CONTAINS the
@@ -1576,9 +1636,7 @@ fn the_su3_positions_the_corpus_does_not_witness_carry_the_code_too() {
 #[test]
 fn the_assignment_arm_sharing_the_type_mismatch_helper_stays_uncoded() {
     let (annotated, _d1) = compile_fixture("int_is_not_a_char.pd");
-    let (assigned, _d2) = compile_source(
-        "fn main() {\n    let mut n: i64 = 1;\n    n = 'a';\n    print_int(n);\n}\n",
-    );
+    let (assigned, _d2) = compile_source(UNJUDGED_REFUSAL);
 
     let (annotated_code, _) = annotated.sole_coded_header("int_is_not_a_char.pd");
     assert_eq!(annotated_code, "PD0022");
@@ -1678,5 +1736,287 @@ fn the_legal_neighbours_of_the_type_checker_family_still_compile_link_and_run() 
     assert_eq!(
         out, "42\n7\n1\n",
         "the legal neighbours of the type-checker family did not produce their values"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// su4 — THE ATTRIBUTE, OWNERSHIP AND CODE-GENERATION FAMILIES
+// ---------------------------------------------------------------------------
+
+/// PD0024. TWO witnesses, ONE `Err` in `inner_dims_for_declarator`, told apart
+/// by the DECLARING POSITION the caller passes in as `what`.
+///
+/// The fragments are the locked map's. They are what makes this a merge and not
+/// a collapse: the map carried the field spelling as PD0025 until the site was
+/// read, and the argument for one code is exactly that the position is carried
+/// by the payload — which is a claim `check_family` measures rather than asserts.
+const NESTED_ARRAY_INNER_LENGTH: Family = Family {
+    code: "PD0024",
+    rows: &[
+        (
+            "nested_array_field_inner_length.pd",
+            "the field `cells` of `Board`",
+        ),
+        ("nested_array_param_inner_length.pd", "the parameter `g`"),
+    ],
+};
+
+/// The four one-witness conditions of su4, as (fixture, code, fragment).
+///
+/// Same contract as the su2a and su2b tables: the fragment is not a manifest pin
+/// — a code with one witness needs no discriminator and the locked map records
+/// none — it answers WHICH refusal is wearing the code. Two of these four are
+/// raised from a function that raises a NEIGHBOURING refusal as well
+/// (`check_array_write`'s shared-reference arm, and the hoist path beside the
+/// temporary-argument refusal), so a code attached one arm over would still be
+/// the right number on the wrong rule.
+const SU4_SINGLE_WITNESS: &[(&str, &str, &str)] = &[
+    (
+        "tuple_in_enum_payload.pd",
+        "PD0023",
+        "carries a TUPLE in its payload",
+    ),
+    (
+        "for_over_nested_array.pd",
+        "PD0026",
+        "each step would bind a whole row",
+    ),
+    (
+        "reference_param_needs_a_place.pd",
+        "PD0027",
+        "the parameter is a reference, so the call site takes its address",
+    ),
+    (
+        "array_param_write_byvalue.pd",
+        "PD0028",
+        "it is a by-value array parameter",
+    ),
+];
+
+#[test]
+fn the_nested_array_inner_length_rule_is_one_code_told_apart_by_the_declaring_position() {
+    check_family(&NESTED_ARRAY_INNER_LENGTH);
+}
+
+/// The four one-witness conditions, each on its own refusal.
+#[test]
+fn each_one_witness_condition_of_su4_is_on_the_refusal_the_registry_names() {
+    for (fixture, want_code, fragment) in SU4_SINGLE_WITNESS {
+        let (r, _dir) = compile_fixture(fixture);
+        assert_eq!(
+            r.code,
+            Some(1),
+            "{} is a reject fixture and must exit 1; it exited {:?}\n{}",
+            fixture,
+            r.code,
+            r.stderr
+        );
+        let (code, payload) = r.sole_coded_header(fixture);
+        assert_eq!(
+            code, *want_code,
+            "{} carries {} — the site was wired to the wrong condition",
+            fixture, code
+        );
+        assert!(
+            payload.contains(fragment),
+            "{} carries {} but not on the refusal that condition names.\n  want fragment: {}\n  got payload:   {}",
+            fixture,
+            code,
+            fragment,
+            payload
+        );
+    }
+}
+
+/// PD0006 IS A PARTITIONED GROUP: three witnesses with a CHARACTER-IDENTICAL
+/// payload, and a fourth its `msg~` can select.
+///
+/// The three are three attribute SHAPES — `#[name]`, `#[name(args)]`, `#![name]`
+/// — and the shape does not reach the message, so no fragment can tell them
+/// apart and the map gives them none. That is asserted here rather than assumed:
+/// if a later edit puts the shape into the payload, the map owes an answer about
+/// whether three rules were hiding in one, and this is where the question
+/// surfaces. The fourth writes `#[total]`, and its fragment has to select it and
+/// no sibling — the ordinary compound-pin contract, on a group where three of
+/// the four rows cannot carry one.
+#[test]
+fn the_attribute_rule_is_one_code_over_three_identical_payloads_and_one_named() {
+    let identical = [
+        "unknown_attribute.pd",
+        "attribute_inner.pd",
+        "attribute_with_args.pd",
+    ];
+    let mut payloads: Vec<(&str, String)> = Vec::new();
+    for fixture in identical {
+        let (r, _dir) = compile_fixture(fixture);
+        assert_eq!(r.code, Some(1), "{} must refuse\n{}", fixture, r.stderr);
+        let (code, payload) = r.sole_coded_header(fixture);
+        assert_eq!(code, "PD0006", "{} carries {}", fixture, code);
+        payloads.push((fixture, payload));
+    }
+    let (first, want) = &payloads[0];
+    for (fixture, got) in &payloads[1..] {
+        assert_eq!(
+            got, want,
+            "{} and {} no longer print the same sentence; the map records the \
+             three attribute shapes as IDENTICAL, so a discriminator now exists \
+             where the map says none can",
+            first, fixture
+        );
+    }
+
+    let (total, _dir) = compile_fixture("total_attribute.pd");
+    let (code, payload) = total.sole_coded_header("total_attribute.pd");
+    assert_eq!(code, "PD0006", "total_attribute.pd carries {}", code);
+    assert!(
+        payload.contains("`total`"),
+        "the fourth witness lost the name its pin selects it by: {}",
+        payload
+    );
+    for (fixture, sibling) in &payloads {
+        assert!(
+            !sibling.contains("`total`"),
+            "the fragment `total` also selects {} — an accepting pin",
+            fixture
+        );
+    }
+}
+
+/// PD0012 OVER TWO IDENTICAL PAYLOADS, and the difference between them is not
+/// about the rule.
+///
+/// One witness borrows inside a function `main` calls and the other inside a
+/// function nothing calls: that pair is a claim about WHEN the ownership pass
+/// runs — every body is checked, called or not — and the sentence they print is
+/// character-identical, so the map allocates one code and no discriminator.
+#[test]
+fn the_mutable_borrow_rule_is_one_code_over_two_identical_payloads() {
+    let (called, _d1) = compile_fixture("mut_borrow_of_immutable.pd");
+    let (uncalled, _d2) = compile_fixture("uncalled_body_is_checked.pd");
+    let (called_code, called_payload) = called.sole_coded_header("mut_borrow_of_immutable.pd");
+    let (uncalled_code, uncalled_payload) =
+        uncalled.sole_coded_header("uncalled_body_is_checked.pd");
+    assert_eq!(
+        called_code, "PD0012",
+        "mut_borrow_of_immutable.pd carries {}",
+        called_code
+    );
+    assert_eq!(
+        uncalled_code, "PD0012",
+        "uncalled_body_is_checked.pd carries {}",
+        uncalled_code
+    );
+    assert_eq!(
+        called_payload, uncalled_payload,
+        "the two witnesses no longer print the same sentence; the map records them as IDENTICAL"
+    );
+    assert!(
+        called_payload.contains("cannot borrow `v` as mutable: it is not declared mutable"),
+        "PD0012 landed on a different refusal: {}",
+        called_payload
+    );
+}
+
+/// ONE PASS IS NOT ONE RULE — the ownership twin of the shared-closure mutants.
+///
+/// Nineteen sites in `src/ownership/borrow_checker.rs` raise
+/// `CompileError::BorrowChecker` and PD0012 is one of them, so the cheap wiring
+/// here is a code attached to the VARIANT (or to `check_program`'s result),
+/// under which every refusal of the pass would carry PD0012 and every assertion
+/// above would still pass. The program below moves a value and uses it again: a
+/// different rule of the same pass, which must still refuse and must still print
+/// a bare primary header.
+#[test]
+fn the_other_refusals_of_the_ownership_pass_stay_uncoded() {
+    let (moved, _dir) = compile_source(
+        "struct C {\n    n: i64,\n}\n\nfn take(c: C) -> i64 {\n    return c.n;\n}\
+         \n\nfn main() {\n    let c: C = C { n: 1 };\n    print_int(take(c));\
+         \n    print_int(take(c));\n}\n",
+    );
+    assert_eq!(moved.code, Some(1), "the move program compiled");
+    let plain = strip_ansi(&moved.stderr);
+    assert!(
+        plain.contains("Use of moved value"),
+        "the control did not reach the move rule:\n{}",
+        moved.stderr
+    );
+    assert!(
+        moved.coded_headers().is_empty(),
+        "a second rule of the same pass carries a code, so `with_code` went onto \
+         the variant rather than onto the refusal: {:?}",
+        moved.coded_headers()
+    );
+}
+
+/// ONE FUNCTION, TWO RULES — the codegen twin, and the one place in su4 where
+/// the cheap wiring is a single line away.
+///
+/// `check_array_write` refuses a write to an array parameter in TWO arms. The
+/// by-value arm is PD0028: C decays the parameter to a pointer and the language
+/// specification has not decided whether `[T; N]` parameters copy or alias, so
+/// the write is refused rather than guessed. The shared arm refuses `&[T; N]`
+/// for a settled reason — a shared reference does not permit mutation — and the
+/// map allocates it no number. A code attached to the function would give both
+/// PD0028 and nothing else in this file would notice.
+#[test]
+fn the_shared_reference_arm_of_the_array_write_check_stays_uncoded() {
+    let (byvalue, _d1) = compile_fixture("array_param_write_byvalue.pd");
+    let (code, _) = byvalue.sole_coded_header("array_param_write_byvalue.pd");
+    assert_eq!(
+        code, "PD0028",
+        "array_param_write_byvalue.pd carries {}",
+        code
+    );
+
+    let (shared, _d2) = compile_source(
+        "fn poke(a: &[i64; 2]) {\n    a[0] = 7;\n}\
+         \n\nfn main() {\n    let xs: [i64; 2] = [1, 2];\n    poke(&xs);\n}\n",
+    );
+    assert_eq!(
+        shared.code,
+        Some(1),
+        "the shared-reference program compiled"
+    );
+    let plain = strip_ansi(&shared.stderr);
+    assert!(
+        plain.contains("it is a shared reference parameter"),
+        "the control did not reach the shared arm:\n{}",
+        shared.stderr
+    );
+    assert!(
+        shared.coded_headers().is_empty(),
+        "the shared arm carries a code, so `with_code` went onto `check_array_write`: {:?}",
+        shared.coded_headers()
+    );
+}
+
+/// The acceptance side of su4, run to three values.
+///
+/// The five code-generation rules of this slice all refuse a SHAPE that is one
+/// character from a legal one — a nested array whose inner length IS a literal,
+/// a `for` over a flat array, a reference argument that IS a place, a `&mut`
+/// array parameter that may be written, an enum payload that is not a tuple —
+/// and the ownership rule refuses a borrow of a binding that was not declared
+/// `mut`. A compiler that had started refusing the legal side of each of those
+/// would satisfy every assertion above and fail here.
+#[test]
+fn the_legal_neighbours_of_the_codegen_family_still_compile_link_and_run() {
+    let out = compile_link_run(
+        "enum E {\n    P(i64, i64),\n}\
+         \n\nstruct Board {\n    cells: [[i64; 2]; 2],\n}\
+         \n\nfn sink(b: &Board) -> i64 {\n    return b.cells[1][1];\n}\
+         \n\nfn fill(xs: &mut [i64; 3]) {\n    xs[0] = 9;\n}\
+         \n\nfn total(xs: [i64; 3]) -> i64 {\n    let mut sum: i64 = 0;\
+         \n    for x in xs {\n        sum = sum + x;\n    }\n    return sum;\n}\
+         \n\nfn main() {\n    let b: Board = Board { cells: [[1, 2], [3, 4]] };\
+         \n    print_int(sink(&b));\
+         \n\n    let mut xs: [i64; 3] = [1, 2, 3];\n    fill(&mut xs);\
+         \n    print_int(total(xs));\
+         \n\n    let e: E = E::P(5, 6);\n    match e {\
+         \n        E::P(a, c) => {\n            print_int(a + c);\n        }\n    }\n}\n",
+    );
+    assert_eq!(
+        out, "4\n14\n11\n",
+        "the legal neighbours of the code-generation family did not produce their values"
     );
 }
