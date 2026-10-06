@@ -41,6 +41,12 @@ an absence over an EMPTY scope is refused (measured, not parsed)	kill	l3-probe
 an absence filtered to an empty file set is refused	kill	l3-probe
 a downstream segment naming a path is refused	kill	l1-downstream
 an absence over an empty scope is refused for FIND too	kill	l3-find-probe
+an absence over a scope LOUDER than the output cap still passes its control	kill	l3-probe-cap
+a MEASURED run louder than the output cap is still refused	kill	cmd-dump-cap
+a control louder than the cap that then exits 3 is a MALFUNCTION	kill	l3-probe-stop-at-cap
+a control louder than the cap that then writes stderr is refused	kill	l3-probe-stop-at-cap
+a control louder than the cap that then hangs still times out	kill	l3-probe-stop-at-cap
+a drain that fails mid-stream is a harness error, not an EMPTY stream	kill	drain-valueerror
 find -exec is refused: it runs a program of the document's choosing	kill	find-grammar
 find -delete is refused: an observation may not alter the tree	kill	find-grammar
 find negation is refused: it would invert the L3 probe	kill	find-grammar
@@ -91,6 +97,17 @@ the same row passes once it cites a fixture	guard	the dynamic-evidence rule must
 an unimplemented row may still rest on an absence proof	guard	absence proofs stay legal for unimplemented
 a class the manifest disagrees with is rejected	kill	conformance-class
 an undeclared fixture is rejected	kill	conformance-declared
+the conformance-count controls pass as a suite	kill	count-width
+a truthful, well-formed tree is GREEN (the fatal green control)	guard	the count governor's fatal green control: a well-formed inventory whose prose states the truth must pass, or every red below it is breakage
+an `untranscribed` row does not false-RED: it is a manifest CLASS, not a hardcoded 0	kill	count-untranscribed
+a wrong-width manifest row is NAMED with its line, not silently skipped	kill	count-width
+a duplicate fixture path is NAMED, with the line it first appeared on	kill	count-duplicate
+an unrecognised class is NAMED, not dropped out of the tally	kill	count-class
+a 6-column row with an EMPTY column is NAMED: width is not the whole contract	kill	count-empty-column
+an unaccounted inventory suppresses the count comparison, and says so	kill	count-suppress
+a stale count is red, names the SITE, and prints have-vs-want	kill	count-site
+a stale count names EVERY site that states it, not just the first	kill	count-every-site
+a REWRITTEN sentence is a failure and never a skip	kill	count-rewrite
 make gates runs scripts/gate-receipts.sh	kill	gates-wiring
 make gates runs scripts/test-doc-evidence.sh	guard	the probe must stay wired into the certifying target
 make gates runs scripts/check-doc-evidence.sh	guard	the evidence gate must stay wired into the certifying target
@@ -110,6 +127,13 @@ a FUTURE branch is not reconciled against a stale inventory	kill	branch-scope
 an explicit base cannot make an inapplicable inventory apply	kill	applies-first
 a recursive read from a root containing build output is refused	kill	artifact-ancestor
 -R is refused: it follows symlinks out of the checkout	kill	grep-deref
+a read inside .git is refused: it is the repository's metadata	kill	unread-metadata
+a read inside .worktrees is refused: it is another checkout	kill	unread-metadata
+a build_output/ BELOW the first component is still an artifact	kill	cmd-artifact-first
+a build_output/ two levels below a recursive root is found and refused	kill	artifact-deep
+a recursive read from the repository root is refused where NOTHING has been built	kill	artifact-ancestor-exists
+an artifact path is refused AS an artifact before anything has built it	kill	artifact-order
+a source directory stays a valid scope where nothing has been built	guard	the path rule must not refuse a real source directory; a rule that refuses everything is not containment
 no workflow env, job env or run step supplies a base to the coverage runner	kill	ci-no-base
 a blank target supports no claim	guard	the six the enumeration knew must keep failing under either implementation
 a bare closing brace supports no claim	guard	the six the enumeration knew must keep failing under either implementation

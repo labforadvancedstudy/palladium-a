@@ -351,7 +351,16 @@ elif w == "cmd-referred":      # pdc/cargo/make are not observations
 elif w == "cmd-allowlist":     # only the five observation tools may run
     t = t.replace("        if head not in CMD_ALLOWED:", "        if False:", 1)
 elif w == "cmd-artifact":      # a build artifact is not reproducible from a checkout
-    t = t.replace("    if first in CMD_BUILD_ARTIFACT_ROOTS:", "    if False:", 1)
+    t = t.replace("    if hit is not None:", "    if False:", 1)
+elif w == "cmd-artifact-first":    # ...below the first component too
+    t = t.replace("    hit = next((x for x in parts if x in CMD_UNREAD_DIRS), None)",
+                  "    hit = next((x for x in parts[:1] if x in CMD_UNREAD_DIRS), None)", 1)
+elif w == "unread-metadata":   # .git and .worktrees are not this checkout's tree
+    t = t.replace("                   **CMD_NOT_THE_TREE}", "                   }", 1)
+elif w == "artifact-order":    # the path is judged before it is required to exist
+    t = t.replace("    real = p.resolve()\n",
+                  "    if not p.exists(): return None, f\"reads {rel!r}, which does not exist\"\n"
+                  "    real = p.resolve()\n", 1)
 elif w == "cmd-operators":     # a shell operator is not a pipeline
     t = t.replace("        elif tok in CMD_OPERATORS:", "        elif False:", 1)
 elif w == "result-compare":    # the claimed exit status and line count are compared
@@ -373,6 +382,27 @@ elif w == "l3-probe":          # an absence must be shown capable of producing o
 elif w == "l3-find-probe":     # find: keep the traversal bound in the probe
     t = t.replace('        return [head] + parsed["paths"] + expr',
                   '        return [head] + parsed["paths"]', 1)
+elif w == "l3-probe-cap":      # the control may read PAST the output cap
+    # The revert of the fix itself: the control goes back to the measured run's refusal,
+    # so a scope that has merely GROWN is reported as reading nothing. Line-neutral, so
+    # the citation pins below it do not move and only the control it names can die.
+    t = t.replace("                                 drain_excess=True)",
+                  "                                 drain_excess=False)", 1)
+elif w == "cmd-dump-cap":      # ...and the MEASURED run may not
+    # The leak: the drain becomes every caller's default, so a dump is no longer refused
+    # and the compared line count is a prefix's.
+    t = t.replace("timeout: int = CMD_TIMEOUT_S, drain_excess: bool = False):",
+                  "timeout: int = CMD_TIMEOUT_S, drain_excess: bool = True):", 1)
+elif w == "l3-probe-stop-at-cap":  # stop at the cap and call it "read something"
+    # The weaker shape the drain replaced, written out rather than switched off: abandon
+    # the stream at the cap and succeed there, before the exit status, stderr or the
+    # deadline could say anything. The three loud-then-fail controls exist for this.
+    # Line-neutral (-1 then +1), for the same reason as above.
+    t = t.replace("                    while procs[-1].stdout.read(65536):   # read and dropped: bounded\n"
+                  "                        pass\n", "                    pass\n", 1)
+    t = t.replace("        if len(out) > CMD_MAX_BYTES and not drain_excess:\n",
+                  "        if len(out) > CMD_MAX_BYTES and drain_excess: return 0, out.decode(\"utf-8\", \"replace\"), None\n"
+                  "        if len(out) > CMD_MAX_BYTES and not drain_excess:\n", 1)
 elif w == "find-grammar":      # the permitted expression: <traversal>* <match>?
     # ONE reversion. `find-allowlist` and `find-grammar` used to be two names for this
     # same replacement, so "29 mutations" counted one twice. The nine controls that name
@@ -542,8 +572,45 @@ elif w == "grep-deref":        # -R follows symlinks out of the checkout
     t = t.replace("            if base in GREP_DEREF_RECURSIVE:", "            if False:", 1)
     t = t.replace('                    if ch == "R":', "                    if False:", 1)
 elif w == "artifact-ancestor": # a recursive root containing build output reads it
-    t = t.replace("    if any((real / d).exists() for d in CMD_BUILD_ARTIFACT_ROOTS):",
+    t = t.replace("    if any(real in (ROOT / d).parents for d in CMD_UNREAD_DIRS) or _holds_unread(real):",
                   "    if False:", 1)
+elif w == "artifact-ancestor-exists":  # ...decided by whether the directories EXIST
+    # The predicate the path rule replaced, restored exactly: on a checkout where nothing
+    # was built, the root is accepted again.
+    t = t.replace("    if any(real in (ROOT / d).parents for d in CMD_UNREAD_DIRS) or _holds_unread(real):",
+                  "    if any((real / d).exists() for d in CMD_BUILD_ARTIFACT_ROOTS) or _holds_unread(real):", 1)
+elif w == "artifact-deep":     # ...looking at direct children only
+    t = t.replace("    for _, dirs, _ in os.walk(top):",
+                  "    for _, dirs, _ in [next(os.walk(top), (None, [], None))]:", 1)
+elif w == "drain-valueerror":  # a drain that dies mid-stream is not an empty stream
+    t = t.replace("            except (OSError, ValueError) as exc:         # pipe torn down by the kill",
+                  "            except OSError as exc:                       # pipe torn down by the kill", 1)
+# The conformance-count governor (9c38136). Each reverts ONE fix, line-neutrally: the four
+# in check_conformance_counts change a pinned citation, so the pin probe dies with them --
+# which is why the count controls run before it.
+elif w == "count-width":       # a wrong-width row is NAMED, not skipped
+    t = t.replace('            problems.append(\n                f"{name}:{n}: expected {MANIFEST_COLUMNS} tab-separated columns, got "',
+                  '            (lambda *a: None)(\n                f"{name}:{n}: expected {MANIFEST_COLUMNS} tab-separated columns, got "', 1)
+elif w == "count-empty-column":    # width is not the whole contract
+    t = t.replace("        if any(not c.strip() for c in cols):", "        if False:", 1)
+elif w == "count-duplicate":   # a repeated fixture path is NAMED
+    t = t.replace("        if fixture in seen:", "        if False:", 1)
+elif w == "count-class":       # an unknown class is NAMED, not dropped from the tally
+    t = t.replace('            problems.append(\n                f"{name}:{n}: class {cls!r} is not one of "',
+                  '            (lambda *a: None)(\n                f"{name}:{n}: class {cls!r} is not one of "', 1)
+elif w == "count-untranscribed":   # untranscribed is a CLASS, not a hardcoded 0
+    t = t.replace('    full = (c["run"], c["untranscribed"], c["vacuous"],',
+                  '    full = (c["run"], 0, c["vacuous"],', 1)
+elif w == "count-suppress":    # an unaccounted inventory is not compared
+    t = t.replace("    if problems:\n        # The counts over a file",
+                  "    if False:\n        # The counts over a file", 1)
+elif w == "count-site":        # a stale count is a failure that names its site
+    t = t.replace("        if got != want:", "        if False:", 1)
+elif w == "count-every-site":  # ...at every site, not the first
+    t = t.replace("        if got != want:", "        if got != want and not problems:", 1)
+elif w == "count-rewrite":     # a sentence that no longer matches is a failure, not a skip
+    t = t.replace('            problems.append(\n                f"{label}: the sentence this is checked in matched',
+                  '            (lambda *a: None)(\n                f"{label}: the sentence this is checked in matched', 1)
 elif w == "ci-statement":      # && / || are not unconditional command starts
     t = t.replace('re.split(r"[\\n;]", "\\n".join(out))',
                   're.split(r"[\\n;]|&&|\\|\\|", "\\n".join(out))', 1)
@@ -590,6 +657,21 @@ applies-first|scripts/test-doc-evidence-coverage.sh
 head-on-main|scripts/test-doc-evidence-coverage.sh
 grep-deref|scripts/check_doc_evidence.py
 artifact-ancestor|scripts/check_doc_evidence.py
+artifact-ancestor-exists|scripts/check_doc_evidence.py
+artifact-deep|scripts/check_doc_evidence.py
+artifact-order|scripts/check_doc_evidence.py
+cmd-artifact-first|scripts/check_doc_evidence.py
+unread-metadata|scripts/check_doc_evidence.py
+drain-valueerror|scripts/check_doc_evidence.py
+count-width|scripts/check_doc_evidence.py
+count-empty-column|scripts/check_doc_evidence.py
+count-duplicate|scripts/check_doc_evidence.py
+count-class|scripts/check_doc_evidence.py
+count-untranscribed|scripts/check_doc_evidence.py
+count-suppress|scripts/check_doc_evidence.py
+count-site|scripts/check_doc_evidence.py
+count-every-site|scripts/check_doc_evidence.py
+count-rewrite|scripts/check_doc_evidence.py
 ci-statement|scripts/test-doc-evidence.sh
 gates-wiring|Makefile
 ci-gating|scripts/test-doc-evidence.sh
@@ -603,6 +685,9 @@ l2-exists|scripts/check_doc_evidence.py
 l2-symlink|scripts/check_doc_evidence.py
 l3-probe|scripts/check_doc_evidence.py
 l3-find-probe|scripts/check_doc_evidence.py
+l3-probe-cap|scripts/check_doc_evidence.py
+cmd-dump-cap|scripts/check_doc_evidence.py
+l3-probe-stop-at-cap|scripts/check_doc_evidence.py
 find-grammar|scripts/check_doc_evidence.py
 exe-path|scripts/check_doc_evidence.py
 tool-resolution|scripts/check_doc_evidence.py

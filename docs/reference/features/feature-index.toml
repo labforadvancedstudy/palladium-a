@@ -552,14 +552,14 @@ implementation = "unimplemented"
 milestone = "post-1.0"
 evidence = [
   "src: Cargo.toml:45 the first of three [[bin]] declarations — pdc, pdm, pls",
-  # `-l`, not bare `-rn`, and the reason is measured rather than stylistic. The
+  # `-l`, not bare `-rn`, and the reason was measured rather than stylistic. The
   # gate proves an absence claim can READ by re-running the same command with a
   # match-everything pattern, and that control DUMPS THE WHOLE SCOPE: over `src/`
   # it was 4,186,140 bytes against a 4,194,304-byte cap — 0.2% of headroom, so
   # any commit adding ~8KB of source turned this row RED for a reason that has
-  # nothing to do with pdfmt. `-l` prints one line per FILE (1,605 bytes, 73
-  # files), which is the SAME scope and the same absence claim — zero matching
-  # files is zero matching lines — with the fragility removed.
+  # nothing to do with pdfmt. Since 2026-10-07 the control reads past that cap
+  # (it bounds the MEASURED run only), so `-l` is now just the cheaper spelling
+  # of the SAME scope and absence claim: zero matching files is zero lines.
   "cmd: grep -rln 'pdfmt' src/ Cargo.toml -> exit 1, 0 lines",
 ]
 

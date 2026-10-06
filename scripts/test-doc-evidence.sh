@@ -297,12 +297,182 @@ expect_red reads_artifacts "a recursive read from a root containing build output
 
 index deref_recursive unimplemented \
   "cmd: grep -Rn zzz_no_such_identifier_anywhere src/ -> exit 1, 0 lines"
-expect_red deref_recursive "-R is refused: it follows symlinks out of the checkout" "-R"
+# The fragment is the REFUSAL's own words. It used to be "-R", which the `command:` echo
+# under every red verdict for this row also contains -- so the case passed whenever the row
+# went red for ANY reason. Measured on 2563001: with the -R refusal switched off, the row
+# still went red (its L3 control over all of src/ is past the 4 MiB cap) and the case
+# passed, so the coverage runner reported grep-deref UNCOVERED.
+expect_red deref_recursive "-R is refused: it follows symlinks out of the checkout" \
+  "follows symlinks while descending"
+
+# CASES 20h-n. CONTAINMENT IS DECIDED BY PATH, NOT BY WHAT HAPPENS TO EXIST. The root read
+# above went red on a built tree and was ACCEPTED on a fresh one, having read .git/: the
+# refusal asked whether target/ and build_output/ existed. These pin each part of the
+# path rule, and the white-box three run it against a checkout where nothing was built.
+index reads_git unimplemented \
+  "cmd: grep -rn zzz_no_such_identifier_anywhere .git -> exit 1, 0 lines"
+expect_red reads_git "a read inside .git is refused: it is the repository's metadata" \
+  "resolves into .git/"
+
+index reads_worktrees unimplemented \
+  "cmd: grep -rn zzz_no_such_identifier_anywhere .worktrees/sibling/src/ -> exit 1, 0 lines"
+expect_red reads_worktrees "a read inside .worktrees is refused: it is another checkout" \
+  "resolves into .worktrees/"
+
+# pdc writes build_output/ relative to its working directory, so it is not only a
+# root-level name, and the old test looked at the first component only.
+index nested_artifact unimplemented \
+  "cmd: grep -c '#line' bootstrap/v3_incremental/build_output/never_built.c -> exit 1, 0 lines"
+expect_red nested_artifact "a build_output/ BELOW the first component is still an artifact" \
+  "resolves into build_output/"
+
+# ...and a recursive root that holds one further down reads it. The old test looked at
+# direct children only.
+mkdir -p "$INREPO/nest/a/build_output" || exit 2
+printf 'generated\n' > "$INREPO/nest/a/build_output/gen.c" || exit 2
+index nested_below unimplemented \
+  "cmd: grep -rn zzz_no_such_identifier_anywhere $INREPO/nest/ -> exit 1, 0 lines"
+expect_red nested_below "a build_output/ two levels below a recursive root is found and refused" \
+  "CONTAINS build output"
+rm -rf "$INREPO/nest"
+
+UNBUILT_OUT=$(python3 - <<'PYEOF' 2>&1
+import pathlib, shutil, sys, tempfile
+sys.path.insert(0, "scripts")
+import check_doc_evidence as C
+# A checkout where nothing was built: no target/, no build_output/, not even a .git.
+root = pathlib.Path(tempfile.mkdtemp()).resolve()
+(root / "src").mkdir()
+(root / "src" / "a.rs").write_text("fn a() {}\n")
+C.ROOT = root
+for rel in (".", "build_output/never_built.c", "src"):
+    _, err = C.contained(rel)
+    print(f"[{rel}] " + (f"REFUSED: {err}" if err else "accepted"))
+shutil.rmtree(root)
+PYEOF
+)
+unbuilt_case() {  # unbuilt_case <case> <the line the operand must produce>
+  if printf '%s\n' "$UNBUILT_OUT" | grep -qF -- "$2"; then
+    printf '  %sok%s   %s\n' "$GREEN" "$NC" "$1"; pass=$((pass+1))
+  else
+    printf '  %sFAIL%s %s\n' "$RED" "$NC" "$1"
+    printf '         (wanted %s)\n' "$2"
+    printf '%s\n' "$UNBUILT_OUT" | sed 's/^/         | /'
+    fail=$((fail+1))
+  fi
+}
+unbuilt_case "a recursive read from the repository root is refused where NOTHING has been built" \
+  "[.] REFUSED: names '.', which CONTAINS build output"
+unbuilt_case "an artifact path is refused AS an artifact before anything has built it" \
+  "[build_output/never_built.c] REFUSED: reads 'build_output/never_built.c', which resolves into build_output/"
+unbuilt_case "a source directory stays a valid scope where nothing has been built" \
+  "[src] accepted"
 
 index find_empty_scope unimplemented \
   "cmd: find $INREPO/empty -type f -> exit 0, 0 lines"
 expect_red find_empty_scope "an absence over an empty scope is refused for FIND too" \
   "produces NOTHING even when asked to match everything"
+
+# CASE 20c. A scope too LOUD for the output cap. The control's only job is to show that
+# the scope is NON-EMPTY, and more output than the cap shows that a fortiori -- but the
+# control ran under the measured run's refusal and reported "could not be shown to read
+# anything". That verdict fires on SOURCE GROWTH: `grep -rn '' src/ --include='*.rs'`
+# measured 4,159,939 bytes against the 4 MiB cap on 2026-10-07, under eight feature-index
+# absence items. The scope is sized from the checker's own cap, so raising the cap cannot
+# make this case vacuous.
+mkdir -p "$INREPO/loud" || exit 2
+python3 - "$INREPO/loud/lines.txt" <<'PYEOF' || exit 2
+import sys
+sys.path.insert(0, "scripts")
+import check_doc_evidence as C
+line = b"zz one matchable line in a scope louder than the output cap\n"
+with open(sys.argv[1], "wb") as fh:
+    fh.write(line * (C.CMD_MAX_BYTES // len(line) + 2))
+PYEOF
+index loud_scope unimplemented \
+  "cmd: grep -rn zzz_no_such_identifier_anywhere $INREPO/loud/ -> exit 1, 0 lines"
+expect_green loud_scope "an absence over a scope LOUDER than the output cap still passes its control"
+
+# CASE 20d. ...and the MEASURED run keeps its cap exactly as it was. Its line count is
+# compared, so a dump there is still a badly scoped item -- and the drain the control is
+# allowed would hand that comparison a PREFIX.
+index loud_measured unimplemented \
+  "cmd: grep -rn zz $INREPO/loud/ -> exit 0, 1 lines"
+expect_red loud_measured "a MEASURED run louder than the output cap is still refused" \
+  "produced more than"
+rm -rf "$INREPO/loud"
+
+# CASES 20e-g. Reading past the cap must not become a way past the OTHER verdicts. White-box,
+# the shape of the segment-status cases below: a saboteur first segment that is louder than
+# the cap and THEN fails. A control that stopped at the cap and called it "read something"
+# would pass all three, so these are what distinguish draining from abandoning.
+ctl_case() {  # ctl_case <name> <timeout> <sh -c body after the loud prefix> <expected fragment>
+  local name=$1 tmo=$2 body=$3 want=$4
+  OUT=$(python3 - "$tmo" "$body" <<'PYEOF' 2>&1
+import sys
+sys.path.insert(0, "scripts")
+import check_doc_evidence as C
+loud = f"head -c {C.CMD_MAX_BYTES + 65536} /dev/zero; "
+seg = {"argv": ["/bin/sh", "-c", loud + sys.argv[2]], "parsed": {"head": "grep"}}
+rc, out, err = C.run_pipeline([seg], timeout=int(sys.argv[1]), drain_excess=True)
+print(f"rc={rc} bytes={len(out)} err={err}")
+PYEOF
+)
+  if printf '%s\n' "$OUT" | grep -qF -- "$want"; then
+    printf '  %sok%s   %s\n' "$GREEN" "$NC" "$name"; pass=$((pass+1))
+  else
+    printf '  %sFAIL%s %s\n' "$RED" "$NC" "$name"
+    printf '         (wanted %s)\n         | %s\n' "$want" "$OUT"
+    fail=$((fail+1))
+  fi
+}
+ctl_case "a control louder than the cap that then exits 3 is a MALFUNCTION" 120 \
+  'exit 3' 'MALFUNCTIONED'
+ctl_case "a control louder than the cap that then writes stderr is refused" 120 \
+  'echo zz >&2' 'wrote to stderr'
+ctl_case "a control louder than the cap that then hangs still times out" 2 \
+  'sleep 30' 'did not finish within 2s'
+
+# CASE 20k. The drain is a loop, so cleanup's close() can land between two reads and the
+# next one raises ValueError. Uncaught, the reader thread dies with nothing recorded and
+# the run reads as an EMPTY stream, which the control reports as "reads nothing". A real
+# pipe cannot be made to lose that race on demand, so the stream is a stand-in that does
+# exactly that: one full read, then a read of a closed file.
+VE_OUT=$(python3 - <<'PYEOF' 2>&1
+import sys
+sys.path.insert(0, "scripts")
+import check_doc_evidence as C
+
+class _ClosedMidDrain:
+    def __init__(self, real):
+        self.real, self.reads = real, 0
+    def read(self, size=-1):
+        self.reads += 1
+        if self.reads == 1:
+            return b"z" * size
+        raise ValueError("read of closed file")
+    def close(self):
+        self.real.close()
+
+class _Popen(C.subprocess.Popen):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.stdout = _ClosedMidDrain(self.stdout)
+
+C.subprocess.Popen = _Popen
+seg = {"argv": ["/bin/sh", "-c", "exit 0"], "parsed": {"head": "grep"}}
+rc, out, err = C.run_pipeline([seg], timeout=10, drain_excess=True)
+print(f"rc={rc} bytes={len(out)} err={err}")
+PYEOF
+)
+if printf '%s\n' "$VE_OUT" | grep -qF -- "could not read the pipeline's output: read of closed file"; then
+  printf '  %sok%s   %s\n' "$GREEN" "$NC" "a drain that fails mid-stream is a harness error, not an EMPTY stream"
+  pass=$((pass+1))
+else
+  printf '  %sFAIL%s %s\n' "$RED" "$NC" "a drain that fails mid-stream is a harness error, not an EMPTY stream"
+  printf '%s\n' "$VE_OUT" | sed 's/^/         | /' | tail -6
+  fail=$((fail+1))
+fi
 
 echo
 echo "== a find expression is forwarded to a real process, so it is enumerated =="
@@ -1040,6 +1210,73 @@ index undeclared unimplemented \
   "conformance: tests/reject/../reject/try_block.pd reject"
 expect_red undeclared "an undeclared fixture is rejected" "not declared in"
 
+# == the conformance-count governor's negative controls =======================
+#
+# RUNS BEFORE THE CITATION-PIN PROBE, deliberately. That probe aborts the script when its
+# green control fails, and check_conformance_counts is itself a pinned citation (from
+# docs/contributing/MILESTONES.md) -- so every mutation of the function breaks that pin,
+# and placed after it these controls never printed, and could never be seen to die.
+#
+# The governor holds three PROSE sites to a recount of tests/conformance-manifest.txt.
+# Its failure modes were established once, by hand, in a review report — and a failure
+# mode nobody re-runs stops existing the moment someone edits the recount. So they are
+# planted hermetically (each control builds its own manifest and its own two documents in
+# a temp tree, reading nothing from this repository) and asserted here.
+#
+# RED-then-green measured against three mutants of the recount, each caught here:
+# restoring the original silent skips fails 4 of the 10 controls with "expected RED, got
+# GREEN"; hardcoding `untranscribed` back to 0 in the expected tuple fails 1 with
+# "expected GREEN, got RED"; and checking row WIDTH without checking that every column is
+# non-empty fails 1 with "expected RED, got GREEN" -- that last one was a real hole, in
+# which `\t\trun\t-\t-\t-` counted as a fixture.
+echo
+echo "== the conformance-count governor goes red on a drifted count and a broken inventory =="
+COUNTS_OUT=$(python3 scripts/check_doc_evidence.py --self-test-counts 2>&1); COUNTS_RC=$?
+counts_case() {
+  if printf '%s\n' "$COUNTS_OUT" | grep -qF -- "$1"; then
+    printf '  %sok%s   %s\n' "$GREEN" "$NC" "$2"; pass=$((pass+1))
+  else
+    printf '  %sFAIL%s %s\n' "$RED" "$NC" "$2"
+    printf '         (the controls did not report: %s)\n' "$1"
+    printf '%s\n' "$COUNTS_OUT" | sed 's/^/         | /' | head -14
+    fail=$((fail+1))
+  fi
+}
+
+if [ "$COUNTS_RC" -ne 0 ]; then
+  # The SAME label as the green line: the coverage runner credits a kill by label, and a
+  # failure printed under a different one is a control that can never be seen to die.
+  printf '  %sFAIL%s the conformance-count controls pass as a suite\n' "$RED" "$NC"
+  printf '         (exit %s)\n' "$COUNTS_RC"
+  printf '%s\n' "$COUNTS_OUT" | sed 's/^/         | /' | head -20
+  fail=$((fail+1))
+else
+  pass=$((pass+1))
+  printf '  %sok%s   the conformance-count controls pass as a suite\n' "$GREEN" "$NC"
+fi
+
+# The fatal green control first: nothing below means anything if a truthful tree is red.
+counts_case "a well-formed inventory whose prose states the truth is GREEN -> green" \
+  "a truthful, well-formed tree is GREEN (the fatal green control)"
+counts_case "an \`untranscribed\` row does NOT false-RED a truthful tree -> green" \
+  "an \`untranscribed\` row does not false-RED: it is a manifest CLASS, not a hardcoded 0"
+counts_case "a wrong-width row is NAMED, not skipped -> red" \
+  "a wrong-width manifest row is NAMED with its line, not silently skipped"
+counts_case "a duplicate path is NAMED, with the line it first appeared on -> red" \
+  "a duplicate fixture path is NAMED, with the line it first appeared on"
+counts_case "an unrecognised class is NAMED, not dropped from the tally -> red" \
+  "an unrecognised class is NAMED, not dropped out of the tally"
+counts_case "a 6-column row with an EMPTY column is NAMED, not counted -> red" \
+  "a 6-column row with an EMPTY column is NAMED: width is not the whole contract"
+counts_case "an unaccounted inventory suppresses the comparison, and says so -> red" \
+  "an unaccounted inventory suppresses the count comparison, and says so"
+counts_case "a stale count is RED and NAMES THE SITE, with have-vs-want -> red" \
+  "a stale count is red, names the SITE, and prints have-vs-want"
+counts_case "a stale count names EVERY site that states it, not just the first -> red" \
+  "a stale count names EVERY site that states it, not just the first"
+counts_case "a REWRITTEN sentence is a failure and never a skip -> red" \
+  "a REWRITTEN sentence is a failure and never a skip"
+
 echo
 echo "== a citation pin must point at something, or it can never be wrong =="
 
@@ -1745,66 +1982,6 @@ expect_class delimiter-only "# ========" "a comment rule of punctuation supports
 expect_class substantive "return b.v;"  "a real statement is substantive"
 expect_class substantive "42"           "a bare number is substantive: a claim can be about a value"
 expect_class substantive "안녕"          "a non-ASCII prose line is substantive: the word-character test is Unicode-aware"
-
-# == the conformance-count governor's negative controls =======================
-#
-# The governor holds three PROSE sites to a recount of tests/conformance-manifest.txt.
-# Its failure modes were established once, by hand, in a review report — and a failure
-# mode nobody re-runs stops existing the moment someone edits the recount. So they are
-# planted hermetically (each control builds its own manifest and its own two documents in
-# a temp tree, reading nothing from this repository) and asserted here.
-#
-# RED-then-green measured against three mutants of the recount, each caught here:
-# restoring the original silent skips fails 4 of the 10 controls with "expected RED, got
-# GREEN"; hardcoding `untranscribed` back to 0 in the expected tuple fails 1 with
-# "expected GREEN, got RED"; and checking row WIDTH without checking that every column is
-# non-empty fails 1 with "expected RED, got GREEN" -- that last one was a real hole, in
-# which `\t\trun\t-\t-\t-` counted as a fixture.
-echo
-echo "== the conformance-count governor goes red on a drifted count and a broken inventory =="
-COUNTS_OUT=$(python3 scripts/check_doc_evidence.py --self-test-counts 2>&1); COUNTS_RC=$?
-counts_case() {
-  if printf '%s\n' "$COUNTS_OUT" | grep -qF -- "$1"; then
-    printf '  %sok%s   %s\n' "$GREEN" "$NC" "$2"; pass=$((pass+1))
-  else
-    printf '  %sFAIL%s %s\n' "$RED" "$NC" "$2"
-    printf '         (the controls did not report: %s)\n' "$1"
-    printf '%s\n' "$COUNTS_OUT" | sed 's/^/         | /' | head -14
-    fail=$((fail+1))
-  fi
-}
-
-if [ "$COUNTS_RC" -ne 0 ]; then
-  printf '  %sFAIL%s the conformance-count controls did not pass (exit %s)\n' \
-    "$RED" "$NC" "$COUNTS_RC"
-  printf '%s\n' "$COUNTS_OUT" | sed 's/^/         | /' | head -20
-  fail=$((fail+1))
-else
-  pass=$((pass+1))
-  printf '  %sok%s   the conformance-count controls pass as a suite\n' "$GREEN" "$NC"
-fi
-
-# The fatal green control first: nothing below means anything if a truthful tree is red.
-counts_case "a well-formed inventory whose prose states the truth is GREEN -> green" \
-  "a truthful, well-formed tree is GREEN (the fatal green control)"
-counts_case "an \`untranscribed\` row does NOT false-RED a truthful tree -> green" \
-  "an \`untranscribed\` row does not false-RED: it is a manifest CLASS, not a hardcoded 0"
-counts_case "a wrong-width row is NAMED, not skipped -> red" \
-  "a wrong-width manifest row is NAMED with its line, not silently skipped"
-counts_case "a duplicate path is NAMED, with the line it first appeared on -> red" \
-  "a duplicate fixture path is NAMED, with the line it first appeared on"
-counts_case "an unrecognised class is NAMED, not dropped from the tally -> red" \
-  "an unrecognised class is NAMED, not dropped out of the tally"
-counts_case "a 6-column row with an EMPTY column is NAMED, not counted -> red" \
-  "a 6-column row with an EMPTY column is NAMED: width is not the whole contract"
-counts_case "an unaccounted inventory suppresses the comparison, and says so -> red" \
-  "an unaccounted inventory suppresses the count comparison, and says so"
-counts_case "a stale count is RED and NAMES THE SITE, with have-vs-want -> red" \
-  "a stale count is red, names the SITE, and prints have-vs-want"
-counts_case "a stale count names EVERY site that states it, not just the first -> red" \
-  "a stale count names EVERY site that states it, not just the first"
-counts_case "a REWRITTEN sentence is a failure and never a skip -> red" \
-  "a REWRITTEN sentence is a failure and never a skip"
 
 echo
 echo "=============================================="
