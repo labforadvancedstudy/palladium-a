@@ -368,6 +368,46 @@ unbuilt_case "an artifact path is refused AS an artifact before anything has bui
 unbuilt_case "a source directory stays a valid scope where nothing has been built" \
   "[src] accepted"
 
+# CASES 20o-q. A `.git` that is a FILE. Submodules and linked checkouts keep one -- a gitfile,
+# `gitdir: <path>` -- and the walk above looked only at DIRECTORY names, so a scope holding
+# one was accepted: a count read the metadata pointer, and an absence over a scope whose
+# only file was that pointer passed its L3 control on metadata alone. White-box on a
+# throwaway root, because a gitfile planted in this checkout is a broken nested repository
+# to every git command that walks past it while the probe runs.
+GITFILE_OUT=$(python3 - <<'PYEOF' 2>&1
+import pathlib, shutil, sys, tempfile
+sys.path.insert(0, "scripts")
+import check_doc_evidence as C
+root = pathlib.Path(tempfile.mkdtemp()).resolve()
+(root / "vendor" / "mod").mkdir(parents=True)
+(root / "vendor" / "mod" / ".git").write_text("gitdir: ../../.git/modules/mod\n")
+C.ROOT = root
+for item in ("cmd: grep -rn gitdir vendor/ -> exit 0, 1 lines",
+             "cmd: grep -rn NEVER_PRESENT vendor/ -> exit 1, 0 lines",
+             "cmd: grep -n gitdir vendor/mod/.git -> exit 0, 1 lines"):
+    problems = C.check_cmd("gitfile", item, {})
+    print(f"[{item[5:].split(' -> ')[0]}] "
+          + ("REFUSED: " + " ".join(problems) if problems else "accepted"))
+shutil.rmtree(root)
+PYEOF
+)
+gitfile_case() {  # gitfile_case <case> <the line the item must produce>
+  if printf '%s\n' "$GITFILE_OUT" | grep -qF -- "$2"; then
+    printf '  %sok%s   %s\n' "$GREEN" "$NC" "$1"; pass=$((pass+1))
+  else
+    printf '  %sFAIL%s %s\n' "$RED" "$NC" "$1"
+    printf '         (wanted %s)\n' "$2"
+    printf '%s\n' "$GITFILE_OUT" | sed 's/^/         | /' | cut -c1-200
+    fail=$((fail+1))
+  fi
+}
+gitfile_case "a scope holding a .git FILE is refused: a count over it reads metadata" \
+  "[grep -rn gitdir vendor/] REFUSED: gitfile: \`cmd:\` names 'vendor/', which CONTAINS build output or repository metadata"
+gitfile_case "an absence over a scope whose only file is a gitfile is refused" \
+  "[grep -rn NEVER_PRESENT vendor/] REFUSED: gitfile: \`cmd:\` names 'vendor/', which CONTAINS build output or repository metadata"
+gitfile_case "a gitfile named directly is refused: it is repository metadata" \
+  "[grep -n gitdir vendor/mod/.git] REFUSED: gitfile: \`cmd:\` reads 'vendor/mod/.git', which resolves into .git/"
+
 index find_empty_scope unimplemented \
   "cmd: find $INREPO/empty -type f -> exit 0, 0 lines"
 expect_red find_empty_scope "an absence over an empty scope is refused for FIND too" \
@@ -434,10 +474,11 @@ ctl_case "a control louder than the cap that then hangs still times out" 2 \
   'sleep 30' 'did not finish within 2s'
 
 # CASE 20k. The drain is a loop, so cleanup's close() can land between two reads and the
-# next one raises ValueError. Uncaught, the reader thread dies with nothing recorded and
-# the run reads as an EMPTY stream, which the control reports as "reads nothing". A real
-# pipe cannot be made to lose that race on demand, so the stream is a stand-in that does
-# exactly that: one full read, then a read of a closed file.
+# next one raises ValueError. In the real flow that close runs only after the join has
+# timed out and the verdict is returned, so there the catch keeps a daemon-thread
+# traceback off the gate's stderr. The stand-in stream below fails mid-drain BEFORE the
+# join returns, which no real pipe does on demand: uncaught, nothing would be recorded and
+# the run would read as an EMPTY stream -- "reads nothing" to the L3 control.
 VE_OUT=$(python3 - <<'PYEOF' 2>&1
 import sys
 sys.path.insert(0, "scripts")

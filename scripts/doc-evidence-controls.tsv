@@ -134,6 +134,9 @@ a build_output/ two levels below a recursive root is found and refused	kill	arti
 a recursive read from the repository root is refused where NOTHING has been built	kill	artifact-ancestor-exists
 an artifact path is refused AS an artifact before anything has built it	kill	artifact-order
 a source directory stays a valid scope where nothing has been built	guard	the path rule must not refuse a real source directory; a rule that refuses everything is not containment
+a scope holding a .git FILE is refused: a count over it reads metadata	kill	unread-gitfile
+an absence over a scope whose only file is a gitfile is refused	kill	unread-gitfile
+a gitfile named directly is refused: it is repository metadata	kill	unread-metadata
 no workflow env, job env or run step supplies a base to the coverage runner	kill	ci-no-base
 a blank target supports no claim	guard	the six the enumeration knew must keep failing under either implementation
 a bare closing brace supports no claim	guard	the six the enumeration knew must keep failing under either implementation

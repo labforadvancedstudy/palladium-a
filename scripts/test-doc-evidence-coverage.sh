@@ -580,8 +580,11 @@ elif w == "artifact-ancestor-exists":  # ...decided by whether the directories E
     t = t.replace("    if any(real in (ROOT / d).parents for d in CMD_UNREAD_DIRS) or _holds_unread(real):",
                   "    if any((real / d).exists() for d in CMD_BUILD_ARTIFACT_ROOTS) or _holds_unread(real):", 1)
 elif w == "artifact-deep":     # ...looking at direct children only
-    t = t.replace("    for _, dirs, _ in os.walk(top):",
-                  "    for _, dirs, _ in [next(os.walk(top), (None, [], None))]:", 1)
+    t = t.replace("    for _, dirs, files in os.walk(top):",
+                  "    for _, dirs, files in [next(os.walk(top), (None, [], []))]:", 1)
+elif w == "unread-gitfile":    # ...and at directory names only, never a `.git` FILE
+    t = t.replace("        if any(f.casefold() in CMD_UNREAD_FILES for f in files):",
+                  "        if False:", 1)
 elif w == "drain-valueerror":  # a drain that dies mid-stream is not an empty stream
     t = t.replace("            except (OSError, ValueError) as exc:         # pipe torn down by the kill",
                   "            except OSError as exc:                       # pipe torn down by the kill", 1)
@@ -659,6 +662,7 @@ grep-deref|scripts/check_doc_evidence.py
 artifact-ancestor|scripts/check_doc_evidence.py
 artifact-ancestor-exists|scripts/check_doc_evidence.py
 artifact-deep|scripts/check_doc_evidence.py
+unread-gitfile|scripts/check_doc_evidence.py
 artifact-order|scripts/check_doc_evidence.py
 cmd-artifact-first|scripts/check_doc_evidence.py
 unread-metadata|scripts/check_doc_evidence.py

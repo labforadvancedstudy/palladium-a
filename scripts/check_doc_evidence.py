@@ -686,17 +686,29 @@ def contained(rel: str):
     return real, None
 
 
+# The one that can be a FILE: submodules and linked checkouts keep `.git` as a gitfile
+# (`gitdir: <path>`), which is repository metadata exactly as the directory is.
+CMD_UNREAD_FILES = {".git"}
+
+
 def _holds_unread(top) -> bool:
-    """Whether a directory holds one of CMD_UNREAD_DIRS at ANY depth. -> bool
+    """Whether a directory holds unread metadata or build output at ANY depth. -> bool
 
     By measurement, because by path it cannot be known: pdc writes build_output/ relative
     to its working directory, so one can appear under any directory it was run from. Every
     depth, because a test of direct children only let `bootstrap/` through while it held
     `bootstrap/<v>/build_output/`. A path that does not exist holds nothing -- os.walk
     yields nothing for it -- so this needs no existence test of its own.
+
+    FILES TOO, for `.git`. Only directories were looked at, so a scope holding a gitfile
+    was accepted -- `grep -rn X vendor/` over `vendor/mod/.git` read the metadata pointer,
+    and an absence over a scope whose only file was that pointer passed its L3 control on
+    metadata alone. Kept to CMD_UNREAD_FILES: other untracked files are a separate question.
     """
-    for _, dirs, _ in os.walk(top):
+    for _, dirs, files in os.walk(top):
         if any(d.casefold() in CMD_UNREAD_DIRS for d in dirs):
+            return True
+        if any(f.casefold() in CMD_UNREAD_FILES for f in files):
             return True
     return False
 
@@ -1077,10 +1089,12 @@ def run_pipeline(segments, timeout: int = CMD_TIMEOUT_S, drain_excess: bool = Fa
                     while procs[-1].stdout.read(65536):   # read and dropped: bounded
                         pass
                 box["out"] = out
-            # ValueError too: the drain is a loop, so the cleanup's close() can land
-            # between two reads, and the next one is then a read of a closed file.
-            # Uncaught, it ends this thread with nothing in `box`, and the run reads as
-            # an EMPTY stream -- which the L3 control reports as "reads nothing".
+            # ValueError too: the drain is a loop, and the `finally` below closes this
+            # stream once the join has timed out, so the next read can be of a closed
+            # file. The verdict has been returned by then, so what this prevents is a
+            # traceback from this daemon thread on the gate's stderr. Raised BEFORE the
+            # join returned, it would leave `box` empty and the run would read as an
+            # EMPTY stream; only the probe's stand-in stream does that, and it pins this.
             except (OSError, ValueError) as exc:         # pipe torn down by the kill
                 box["err"] = exc
 
