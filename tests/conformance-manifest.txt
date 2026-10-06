@@ -132,6 +132,7 @@ tests/regression/for_over_array_param.pd	run	-	expected	-	-
 tests/regression/array_param_mut_write.pd	run	-	expected	-	-
 tests/regression/param_reused_after_call.pd	run	-	expected	-	-
 tests/regression/lifetimes_uninferred.pd	run	-	expected	-	-
+tests/regression/enum_in_composites.pd	run	-	expected	-	-
 
 # tests/reject/ -- NEGATIVE TESTS. Each of these MUST be refused, and that is
 # correct behaviour, so they are owed to no milestone and counted as coverage.

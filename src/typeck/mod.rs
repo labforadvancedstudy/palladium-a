@@ -797,7 +797,7 @@ impl std::fmt::Display for CheckerType {
                         GenericArgValue::Type(t) => write!(f, "{}", t)?,
                         GenericArgValue::Const(c) => match c {
                             ConstValueResolved::Integer(n) => write!(f, "{}", n)?,
-                            ConstValueResolved::ConstParam(name) => write!(f, "{}", name)?,
+                            ConstValueResolved::ConstParam(name) => write!(f, "const {}", name)?,
                         },
                     }
                 }
@@ -2752,13 +2752,13 @@ impl TypeChecker {
                             let param_types: Vec<CheckerType> = method
                                 .params
                                 .iter()
-                                .map(|param| CheckerType::from(&param.ty))
+                                .map(|param| self.with_enum_kinds(&param.ty))
                                 .collect();
 
                             let return_type = method
                                 .return_type
                                 .as_ref()
-                                .map(CheckerType::from)
+                                .map(|ty| self.with_enum_kinds(ty))
                                 .unwrap_or(CheckerType::Unit);
 
                             let func_type =
@@ -3112,7 +3112,7 @@ impl TypeChecker {
                     args: checker_args,
                 }
             }
-            _ => CheckerType::from(ast_type),
+            _ => self.with_enum_kinds(ast_type),
         }
     }
 
@@ -3857,11 +3857,11 @@ impl TypeChecker {
                     }
                 } else {
                     // Not a type parameter, just a regular custom type
-                    Ok(CheckerType::from(ty))
+                    Ok(self.with_enum_kinds(ty))
                 }
             }
             // For other types, just convert normally
-            _ => Ok(CheckerType::from(ty)),
+            _ => Ok(self.with_enum_kinds(ty)),
         }
     }
 
@@ -4470,7 +4470,7 @@ impl TypeChecker {
                         }
                     }
 
-                    // Track this instantiation for code generation
+                    // Track this instantiation for code generation (an Enum argument was "Unknown")
                     let type_arg_strings: Vec<String> = inferred_args
                         .iter()
                         .map(|ct| {
@@ -4478,7 +4478,7 @@ impl TypeChecker {
                                 CheckerType::Int => "i64".to_string(),
                                 CheckerType::Bool => "bool".to_string(),
                                 CheckerType::String => "String".to_string(),
-                                CheckerType::Struct(name) => name.clone(),
+                                CheckerType::Struct(n) | CheckerType::Enum(n) => n.clone(),
                                 CheckerType::Generic { name, args } => {
                                     // Handle nested generics like Box<Box<Int>>
                                     let arg_strs: Vec<String> = args
@@ -4489,13 +4489,13 @@ impl TypeChecker {
                                                 CheckerType::Bool => "bool".to_string(),
                                                 CheckerType::String => "String".to_string(),
                                                 CheckerType::Struct(n) => n.clone(),
+                                                // An enum was "Unknown" here too.
+                                                CheckerType::Enum(n) => n.clone(),
                                                 _ => "Unknown".to_string(),
                                             },
                                             GenericArgValue::Const(c) => match c {
                                                 ConstValueResolved::Integer(n) => n.to_string(),
-                                                ConstValueResolved::ConstParam(name) => {
-                                                    name.clone()
-                                                }
+                                                ConstValueResolved::ConstParam(n) => n.clone(),
                                             },
                                         })
                                         .collect();
@@ -6398,14 +6398,14 @@ impl TypeChecker {
         let mut param_types = Vec::new();
         for (_param_name, param_type) in &generic_func.params {
             let substituted_type = self.substitute_type(param_type, &subst_map)?;
-            param_types.push(CheckerType::from(&substituted_type));
+            param_types.push(self.with_enum_kinds(&substituted_type));
         }
 
         // Substitute return type
         let return_type = match &generic_func.return_type {
             Some(ret_type) => {
                 let substituted = self.substitute_type(ret_type, &subst_map)?;
-                CheckerType::from(&substituted)
+                self.with_enum_kinds(&substituted)
             }
             None => CheckerType::Unit,
         };
@@ -6433,7 +6433,7 @@ impl TypeChecker {
                             "u64" => Ok(crate::ast::Type::U64),
                             "u32" => Ok(crate::ast::Type::U32),
                             "bool" => Ok(crate::ast::Type::Bool),
-                            _ => Ok(crate::ast::Type::Custom(concrete_type.clone())),
+                            _ => Self::type_argument_as_named_type(concrete_type),
                         }
                     }
                     None => Err(CompileError::Generic(format!(
@@ -6650,6 +6650,80 @@ impl TypeChecker {
     /// Check if we're currently in an unsafe context
     pub fn in_unsafe_context(&self) -> bool {
         self.unsafe_depth > 0
+    }
+
+    /// Convert a type with every named leaf given its KIND — `Enum` where the
+    /// name is an enum in scope, `Struct` otherwise — at every depth.
+    ///
+    /// THE FALLBACK OF `ast_type_to_checker_type`, and what the three sites
+    /// that used to call `CheckerType::from` directly now call: impl method
+    /// signatures, generic function instantiation, and both arms of
+    /// `substitute_type_params` — which types a generic struct's literal
+    /// fields and field reads and a generic enum's pattern bindings.
+    /// `CheckerType::from` has no table to consult and calls every named type
+    /// a struct, so a bare `K` was right only where the top-level `Custom` arm
+    /// saw it. Measured on 2563001, each refused with one type named twice:
+    ///
+    /// ```text
+    /// let xs: [K; 4] = [K::A; 4];          expected [K; 4], found [K; 4]
+    /// let t: (K, i64) = (K::B, 5);         expected (K, Int), found (K, Int)
+    /// fn f(k: &K) ... f(&k)                expected K, found K
+    /// impl S { fn get(&self) -> K }        expected K, found K
+    /// fn pick<T>(x: T, k: K) ... pick(5, K::C)    expected K, found K
+    /// struct G<T> { v: T, k: K } ... G { v: 3, k: K::C }    expected K, found K
+    /// ```
+    ///
+    /// KIND ONLY, ON PURPOSE — NOT the alias and `Self` resolution the
+    /// top-level arm also does. Recursing composites through
+    /// `ast_type_to_checker_type` itself was the first version, and it was
+    /// measured against the corpus before it was kept: it expands a type alias
+    /// inside `[Edge; 2]`, `&Row` and `&Graph`, which code generation does not,
+    /// so three `tests/xfail/alias_*.pd` rows went from this compiler's own
+    /// refusal to C that gcc rejects — an outcome no manifest column may
+    /// declare — and two passed. `[Self; 2]` in a method body did the same
+    /// (`struct Self` in the C). Expanding an alias before a type is compared
+    /// AND before it is named in C is the normaliser those rows assign to M3;
+    /// doing the first half alone here trades a diagnostic for a gcc failure.
+    /// So a composite's alias and `Self` leaves stay exactly as they were,
+    /// and only the enum-vs-struct question — which code generation does not
+    /// ask — is answered at every depth.
+    ///
+    /// The enum set is `enum_names`, the precedence-applied answer
+    /// (`enum_names_in_scope`), through the same rewrite the import
+    /// registration uses, so the two cannot disagree about a name.
+    fn with_enum_kinds(&self, ast_type: &crate::ast::Type) -> CheckerType {
+        Self::as_enums_where_known(&self.enum_names, CheckerType::from(ast_type))
+    }
+
+    /// The type a generic function's type argument names, when it names one.
+    ///
+    /// Type arguments are carried as STRINGS (`infer_type_args`) and turned
+    /// back into types by `substitute_type`, which recognises the primitive
+    /// spellings and sends everything else here. A NAME — `K`, `Qq` — is a
+    /// named type and is returned as `Custom`, where `with_enum_kinds` gives
+    /// it its kind. A composite is not a name: `checker_type_to_string` spells
+    /// an array `[K; 2]`, a tuple `(K, K)`, a generic `Box2<K>`, and
+    /// `Custom("[K; 2]")` became the STRUCT `"[K; 2]"`, which displays exactly
+    /// like the array it is compared with. So `id(ys)` over `ys: [K; 2]` was
+    /// refused with `expected [K; 2], found [K; 2]`, and over `[i64; 2]` with
+    /// `expected [i64; 2], found [Int; 2]` — no composite instantiation has
+    /// ever type-checked, and code generation's `monomorphize_function` takes
+    /// the same string as a C name, so admitting one would only move the
+    /// failure into gcc. Refused here, by name, with the workaround that does
+    /// compile: a struct is a name.
+    fn type_argument_as_named_type(concrete_type: &str) -> Result<crate::ast::Type> {
+        let name_char = |c: char| c.is_alphanumeric() || c == '_';
+        let is_name = concrete_type.chars().all(name_char)
+            && concrete_type.starts_with(|c: char| c.is_alphabetic() || c == '_');
+        if is_name {
+            return Ok(crate::ast::Type::Custom(concrete_type.to_string()));
+        }
+        Err(CompileError::Generic(format!(
+            "a generic function instantiated at `{}` is not implemented: a type argument is \
+             carried by name, and an array, a tuple or a generic type has none. Wrap the value \
+             in a struct and pass that, or write the function for the concrete type",
+            concrete_type
+        )))
     }
 }
 
@@ -7695,6 +7769,150 @@ mod tests {
             // Expected
         } else {
             panic!("Expected UnreachablePattern error");
+        }
+    }
+
+    // A NAMED TYPE KEEPS ITS KIND AT EVERY DEPTH, not only at the top.
+    //
+    // `ast_type_to_checker_type` decided enum-vs-struct for a bare `K` and then
+    // handed every composite it had no arm for to `CheckerType::from`, which
+    // has no table to consult and calls every named type a struct. So the
+    // annotation `[K; 4]` was `Array(Struct K)` while `[K::A; 4]` was
+    // `Array(Enum K)`, and on 2563001
+    //
+    // ```text
+    // enum K { A, B, C }
+    // fn main() { let xs: [K; 4] = [K::A; 4]; }
+    // ```
+    //
+    // was refused with `Type mismatch: expected [K; 4], found [K; 4]`. One row
+    // per composite the AST can spell, because the defect was a fallthrough and
+    // a fallthrough is missed one shape at a time.
+    #[test]
+    fn a_composite_over_a_user_enum_keeps_the_enum_kind_at_every_depth() {
+        let mut tc = TypeChecker::new();
+        tc.enum_names.insert("K".to_string());
+        let k = || Type::Custom("K".to_string());
+        let ek = || CheckerType::Enum("K".to_string());
+        let arr = |t: Type, n: usize| Type::Array(Box::new(t), ArraySize::Literal(n));
+        let carr =
+            |t: CheckerType, n: usize| CheckerType::Array(Box::new(t), ArraySizeValue::Literal(n));
+        let reference = |t: Type, mutable: bool| Type::Reference {
+            lifetime: None,
+            mutable,
+            inner: Box::new(t),
+        };
+        let cases: Vec<(&str, Type, CheckerType)> = vec![
+            ("K", k(), ek()),
+            ("[K; 4]", arr(k(), 4), carr(ek(), 4)),
+            ("[[K; 2]; 3]", arr(arr(k(), 2), 3), carr(carr(ek(), 2), 3)),
+            (
+                "(K, i64)",
+                Type::Tuple(vec![k(), Type::I64]),
+                CheckerType::Tuple(vec![ek(), CheckerType::Int]),
+            ),
+            ("&K", reference(k(), false), ek()),
+            ("&mut K", reference(k(), true), ek()),
+            ("&[K; 3]", reference(arr(k(), 3), false), carr(ek(), 3)),
+            (
+                "Box2<[K; 2]>",
+                Type::Generic {
+                    name: "Box2".to_string(),
+                    args: vec![GenericArg::Type(arr(k(), 2))],
+                },
+                CheckerType::Generic {
+                    name: "Box2".to_string(),
+                    args: vec![GenericArgValue::Type(carr(ek(), 2))],
+                },
+            ),
+            (
+                "Future<[K; 2]>",
+                Type::Future {
+                    output: Box::new(arr(k(), 2)),
+                },
+                CheckerType::Generic {
+                    name: "Future".to_string(),
+                    args: vec![GenericArgValue::Type(carr(ek(), 2))],
+                },
+            ),
+        ];
+        // Every shape is converted before anything is asserted, so a failure
+        // names all the shapes that are wrong rather than the first one.
+        let wrong: Vec<String> = cases
+            .into_iter()
+            .filter_map(|(shape, ast, want)| {
+                let got = tc.ast_type_to_checker_type(&ast);
+                (got != want).then(|| format!("{}: got {:?}, want {:?}", shape, got, want))
+            })
+            .collect();
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
+    // AN ALL-CAPITALS TYPE ARGUMENT IS READ AS A CONST PARAMETER by the parser
+    // (`src/parser/mod.rs`, "Assume uppercase identifiers are const params"),
+    // and a const parameter printed exactly like the type of the same name. So
+    // `Box2<K>` over `enum K` was refused with
+    // `Type mismatch: expected Box2<K>, found Box2<K>` — one spelling on both
+    // sides, after the enum-kind repair as before it. The checker could read
+    // `K` as the type, but every program that would then be admitted (spelled
+    // `Kk`, where no misreading happens) already fails at gcc in code
+    // generation's generic struct literal, so this keeps the refusal and makes
+    // it say what was compared: a const parameter against a type.
+    #[test]
+    fn a_const_parameter_reading_is_named_in_a_mismatch() {
+        let err = check(
+            "enum K { A, B }\n\
+             struct Box2<T> { v: T }\n\
+             fn f(b: Box2<K>) -> i64 { return 1; }\n\
+             fn main() { print_int(f(Box2 { v: K::B })); }",
+        )
+        .expect_err("`Box2<K>` is still refused")
+        .to_string();
+        assert!(
+            err.contains("expected Box2<const K>, found Box2<K>"),
+            "the mismatch does not say which side read `K` as a const parameter: {}",
+            err
+        );
+    }
+
+    // A GENERIC FUNCTION'S TYPE ARGUMENT TRAVELS AS A STRING, and the string
+    // is turned back into a type by `substitute_type`, whose fallback made
+    // every unrecognised string a `Custom` name. An array or a tuple has no
+    // name, so `id(ys)` with `ys: [K; 2]` instantiated `id` at the STRUCT
+    // `"[K; 2]"`, which prints exactly like the array it was not — the
+    // enum-kind repair made this the last `expected [K; 2], found [K; 2]` the
+    // sweep could produce. Nothing composite has ever been instantiable this
+    // way (`[i64; 2]` was `expected [i64; 2], found [Int; 2]`), so the
+    // refusal changes what is said, not what is accepted.
+    #[test]
+    fn a_generic_function_instantiated_at_a_composite_type_is_refused_by_name() {
+        let cases = [
+            (
+                "[K; 2]",
+                "enum K { A, B }\nfn id<T>(x: T) -> T { return x; }\n\
+                 fn main() { let ys: [K; 2] = [K::A, K::B]; let zs: [K; 2] = id(ys); }",
+            ),
+            (
+                "(K, K)",
+                "enum K { A, B }\nfn id<T>(x: T) -> T { return x; }\n\
+                 fn main() { let t: (K, K) = (K::A, K::B); let u: (K, K) = id(t); }",
+            ),
+            (
+                "[i64; 2]",
+                "fn id<T>(x: T) -> T { return x; }\n\
+                 fn main() { let ys: [i64; 2] = [1, 2]; let zs: [i64; 2] = id(ys); }",
+            ),
+        ];
+        for (shape, source) in cases {
+            let err = check(source).expect_err(shape).to_string();
+            let want = format!("a generic function instantiated at `{}`", shape);
+            assert!(
+                err.contains(&want),
+                "{}: wanted {:?} in {:?}",
+                shape,
+                want,
+                err
+            );
         }
     }
 }

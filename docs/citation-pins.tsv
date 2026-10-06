@@ -397,6 +397,7 @@ src/typeck/mod.rs	3172-3175	src/typeck/mod.rs	0cfaaf978eca	if func.is_async && S
 src/typeck/mod.rs	3199-3199	docs/specification/language-spec.md	de12aa7cdb7f	// the construct cannot be honoured wherever it sits, while an imported
 src/typeck/mod.rs	4041-4041	docs/specification/language-spec.md	517c4f4b07b2	if let Expr::FieldAccess { object, field, .. } = func.as_ref() {
 src/typeck/mod.rs	4060-4068	src/builtins.rs	8af373d3bc2a	if let Some(builtin) = crate::builtins::lookup(func_name) { if let Some(reaso ... tin { name: func_name.clone(), reason: reason.to_string(), span: None, }); } }
+src/typeck/mod.rs	4487-4487	docs/contributing/citation-and-predicate-debt.md	e92658c899d3	GenericArgValue::Type(t) => match t {
 src/typeck/mod.rs	4487-4487	docs/specification/bootstrap-subset.md	e92658c899d3	GenericArgValue::Type(t) => match t {
 src/typeck/mod.rs	4798-4802	tests/m3_imported_calls.rs	3ad1ebfc685e	if !self.enums.contains_key(enum_name) { return Err(CompileError::Generic(format!( "Undefined enum type: {}", enum_name )));
 src/typeck/mod.rs	4968-4968	src/codegen/mod.rs	4cba7df8d4d6	mutable: _, expr, ..

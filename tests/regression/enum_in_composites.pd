@@ -1,0 +1,118 @@
+// Regression test: a user enum inside every composite (N4-09, N4-10).
+// An array of an enum as a local (both literal forms), a parameter, a
+// reference parameter, a struct field, nested, walked by `for` and written
+// through an index; a tuple and a reference carrying one; a method signature
+// naming one, `&self` matched inside `impl` for one; a generic function
+// instantiated at one.
+//
+// None of this compiled before. The type checker decided enum-or-struct for a
+// bare `K` and called the `K` inside `[K; 4]`, `(K, i64)`, `&K`, a method
+// signature and a generic instantiation a STRUCT, while every expression
+// producing a `K` was an enum, so each line below was refused with one type
+// named on both sides: `Type mismatch: expected [K; 4], found [K; 4]`.
+//
+// Every value printed is a variant code (0, 1, 2), so a wrong index or a
+// wrong variant is a wrong number rather than a silent pass.
+
+enum K {
+    A,
+    B,
+    C,
+}
+
+fn kcode(k: K) -> i64 {
+    match k {
+        K::A => { return 0; }
+        K::B => { return 1; }
+        K::C => { return 2; }
+    }
+}
+
+struct Hand {
+    ks: [K; 3],
+    n: i64,
+}
+
+impl Hand {
+    fn code_of(&self, k: K) -> i64 {
+        return kcode(k) + self.n;
+    }
+}
+
+impl K {
+    fn code(&self) -> i64 {
+        match self {
+            K::A => { return 10; }
+            K::B => { return 11; }
+            K::C => { return 12; }
+        }
+    }
+}
+
+fn first(ks: [K; 3]) -> i64 {
+    return kcode(ks[0]);
+}
+
+fn second(ks: &[K; 3]) -> i64 {
+    return kcode(ks[1]);
+}
+
+fn by_ref(k: &K) -> i64 {
+    match k {
+        K::A => { return 20; }
+        K::B => { return 21; }
+        K::C => { return 22; }
+    }
+}
+
+fn id<T>(x: T) -> T {
+    return x;
+}
+
+fn main() {
+    // Both literal forms against an annotation.
+    let xs: [K; 4] = [K::B; 4];
+    let ys: [K; 3] = [K::C, K::A, K::B];
+    print("Local:");
+    print_int(kcode(xs[3]));
+    print_int(kcode(ys[0]));
+
+    // As a parameter and behind a reference.
+    print("\nParameter:");
+    print_int(first(ys));
+    print_int(second(&ys));
+
+    // Written through an index, then walked.
+    let mut zs: [K; 3] = [K::A, K::A, K::A];
+    zs[1] = K::C;
+    print("\nWalked:");
+    for k in zs {
+        print_int(kcode(k));
+    }
+
+    // Nested.
+    let g: [[K; 2]; 2] = [[K::A, K::B], [K::C, K::A]];
+    print("\nNested:");
+    print_int(kcode(g[1][0]));
+    print_int(kcode(g[0][1]));
+
+    // A struct field, and a method whose signature names the enum.
+    let h: Hand = Hand { ks: [K::B, K::C, K::A], n: 100 };
+    print("\nField:");
+    print_int(kcode(h.ks[1]));
+    print_int(h.code_of(K::B));
+
+    // A tuple component and a reference parameter.
+    let t: (K, i64) = (K::C, 5);
+    let r: K = K::B;
+    print("\nTuple and reference:");
+    print_int(kcode(t.0));
+    print_int(by_ref(&r));
+
+    // `&self` inside `impl K`, and a generic function instantiated at `K`.
+    let m: K = K::A;
+    print("\nMethod and generic:");
+    print_int(m.code());
+    let picked: K = id(r);
+    print_int(kcode(picked));
+}

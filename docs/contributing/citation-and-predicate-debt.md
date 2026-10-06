@@ -88,6 +88,22 @@ Neither is re-derivable without deciding what the sentence SHOULD name, which is
 reading and not an arithmetic. C4 belongs with the C1–C3 rows to **M4 (cross-file
 module imports)**: the insert sites its sentence is about are the ones M4 rewrites.
 
+## Open: one more, found while closing WT-01 unit W2a
+
+Found 2026-10-06 while checking which pins an edit to `src/typeck/mod.rs` would
+move. NOT caused by that edit: the cited line is byte-identical to `2563001` and the
+pin is green, which is the point — a pin proves the range has not moved, never that
+it is the range the sentence means.
+
+| # | Cites | What is actually there | Wrong? |
+|---|---|---|---|
+| C6 | `src/typeck/mod.rs:4487-4487`, from the "empty array literal `[]`" row of the PBS-1 exclusion table in `docs/specification/bootstrap-subset.md` | `GenericArgValue::Type(t) => match t {`, inside the generic-struct instantiation's type-argument stringifier. The refusal the row describes is the one `fn main() { let xs = []; }` prints — `Empty array literals are not supported (cannot infer type)` — raised from the array-literal arm of `check_expression`, not from this line | yes |
+
+Re-derivable by content, unlike C1–C5 — the message is quoted above and appears at
+one raising site — so it is a repair any change touching that table row should make;
+it is recorded rather than made here because this unit did not touch the row and the
+rule above draws the line exactly there.
+
 ## Open: the re-pin guard cannot see a citation MERGED onto an existing one
 
 Not a wrong citation — a **declared hole in a gate**, recorded here because the
