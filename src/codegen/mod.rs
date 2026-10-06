@@ -5156,11 +5156,11 @@ impl CodeGenerator {
         }
 
         let mut types: Vec<Type> = Vec::new();
-        let mut functions: Vec<&Function> = Vec::new();
+        let mut functions: Vec<Function> = Vec::new(); // methods: `Self` resolved, as everywhere
         for item in &program.items {
             match item {
-                Item::Function(func) => functions.push(func),
-                Item::Impl(impl_block) => functions.extend(impl_block.methods.iter()),
+                Item::Function(func) => functions.push(func.clone()),
+                Item::Impl(impl_block) => functions.extend(impl_block.methods_with_self_resolved()),
                 _ => {}
             }
         }

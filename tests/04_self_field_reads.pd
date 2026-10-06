@@ -1,0 +1,62 @@
+// Test 04: a scalar field read through `self` is a COPY, in every receiver form.
+//
+// The shape is the JSON witness's cursor: a `&self` method that reads the same
+// position twice, and a `&mut self` method that records it into a second field
+// (`self.f = self.g`) and then reads it again. Measured before the borrow checker
+// resolved `Self`: every method below was refused with "Use of moved value:
+// self.pos" — the receiver kept its parsed type `&Self`, no struct is called
+// `Self`, so the field's type was unknown and the first read MOVED the `i64`.
+// The same bodies through a parameter spelled `c: &Cursor` were accepted, which
+// is what made `Self` the discriminator rather than the method context.
+//
+// Every value is printed by the CALLER after the call returns, so the numbers
+// are the caller's object, not the callee's view of it.
+
+struct Cursor {
+    pos: i64,
+    err_pos: i64,
+}
+
+impl Cursor {
+    // `&self`: the same scalar field read twice.
+    fn peek_twice(&self) -> i64 {
+        let here: i64 = self.pos;
+        let again: i64 = self.pos;
+        return here + again;
+    }
+
+    // `&mut self`: `self.f = self.g`, then `self.g` read again and written back.
+    fn bump(&mut self) -> i64 {
+        self.err_pos = self.pos;
+        let start: i64 = self.pos;
+        self.pos = start + 1;
+        return start;
+    }
+
+    // A by-value receiver reads its copy the same way. It moves `c`, so it is last.
+    fn consume(self) -> i64 {
+        let a: i64 = self.pos;
+        let b: i64 = self.pos;
+        return a * b + self.err_pos;
+    }
+}
+
+fn main() {
+    let mut c: Cursor = Cursor { pos: 3, err_pos: 0 };
+
+    print("`&self` reads `self.pos` twice:");
+    print_int(c.peek_twice());
+
+    print("`&mut self` copies `self.pos` into `self.err_pos`, reads it, advances it:");
+    print_int(c.bump());
+
+    print("the caller sees both writes:");
+    print_int(c.pos);
+    print_int(c.err_pos);
+
+    print("and the `&self` reader sees the advanced position:");
+    print_int(c.peek_twice());
+
+    print("a by-value receiver reads `self.pos` twice too:");
+    print_int(c.consume());
+}

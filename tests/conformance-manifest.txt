@@ -87,6 +87,8 @@ tests/04_loop_break_value.pd	run	-	expected	-	-
 tests/04_macro_in_value_position.pd	run	-	expected	-	-
 tests/04_method_calls.pd	run	-	expected	-	-
 tests/04_self_place.pd	run	-	expected	-	-
+tests/04_self_field_reads.pd	run	-	expected	-	-
+tests/04_self_type_positions.pd	run	-	expected	-	-
 tests/04_nested_block_tails.pd	run	-	expected	-	-
 tests/04_nested_tuple_literal.pd	run	-	expected	-	-
 tests/04_range_endpoints.pd	run	-	expected	-	-

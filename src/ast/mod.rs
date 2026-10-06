@@ -256,23 +256,23 @@ impl ImplBlock {
     /// checker and the code generator both walk these methods, and if they
     /// resolved `Self` separately they could resolve it differently — which is
     /// the exact defect class this repository has closed twice already
-    /// (`builtins.rs`, `RecursiveLayout`). Both call this.
+    /// (`builtins.rs`, `RecursiveLayout`). Both call this; so does the borrow checker.
     ///
     /// The RETURN type was already being substituted, in codegen's
     /// `collect_impl_method_types` and nowhere else, which is why
     /// `fn new(..) -> Self` worked and `fn area(self)` did not.
     pub fn methods_with_self_resolved(&self) -> Vec<Function> {
+        let resolve = |ty: &Type| substitute_self(ty, &self.for_type);
         self.methods
             .iter()
             .map(|method| {
                 let mut method = method.clone();
                 for param in &mut method.params {
-                    param.ty = substitute_self(&param.ty, &self.for_type);
+                    param.ty = resolve(&param.ty);
                 }
-                method.return_type = method
-                    .return_type
-                    .as_ref()
-                    .map(|ty| substitute_self(ty, &self.for_type));
+                method.return_type = method.return_type.as_ref().map(resolve);
+                // And in the BODY, at any depth — see `substitute_self_in_stmts`.
+                substitute_self_in_stmts(&mut method.body, &self.for_type);
                 method
             })
             .collect()
@@ -1714,5 +1714,282 @@ impl std::fmt::Display for UnaryOp {
             UnaryOp::Not => write!(f, "!"),
             UnaryOp::BitNot => write!(f, "~"),
         }
+    }
+}
+
+/// Resolve `Self` in every type a statement list spells, at any depth — the
+/// body half of `ImplBlock::methods_with_self_resolved`.
+///
+/// THE BODY USED TO BE SKIPPED. Resolution stopped at the signature, so
+/// `let c: Self = ...;` inside a method reached every pass unresolved: the
+/// borrow checker found no struct called `Self` and moved `c.pos: i64` on its
+/// first read, code generation emitted `struct Self c` and gcc refused it, and
+/// the type checker — which resolves a bare `Self` on its own — refused the
+/// nested `let t: (i64, Self) = (1, D { .. })` as
+/// `expected (Int, Self), found (Int, D)`.
+///
+/// A body spells a type in exactly two places — a `let` annotation and an `as`
+/// target — but either can sit inside any block, branch, arm or loop, so the
+/// walk is TOTAL over `Stmt` and `Expr`: every match below names every variant
+/// and none has a catch-all, so a new node kind is a compile error here rather
+/// than a `Self` that silently survives in one more container.
+fn substitute_self_in_stmts(stmts: &mut [Stmt], for_type: &Type) {
+    for stmt in stmts {
+        substitute_self_in_stmt(stmt, for_type);
+    }
+}
+
+fn substitute_self_in_stmt(stmt: &mut Stmt, for_type: &Type) {
+    match stmt {
+        Stmt::Expr(expr) => substitute_self_in_expr(expr, for_type),
+        Stmt::Return(value) => {
+            if let Some(expr) = value {
+                substitute_self_in_expr(expr, for_type);
+            }
+        }
+        Stmt::Let { ty, value, .. } => {
+            if let Some(ty) = ty {
+                *ty = substitute_self(ty, for_type);
+            }
+            substitute_self_in_expr(value, for_type);
+        }
+        Stmt::Assign { target, value, .. } => {
+            match target {
+                AssignTarget::Ident(_) => {}
+                AssignTarget::Index { array, index } => {
+                    substitute_self_in_expr(array, for_type);
+                    substitute_self_in_expr(index, for_type);
+                }
+                AssignTarget::FieldAccess { object, .. } => {
+                    substitute_self_in_expr(object, for_type)
+                }
+                AssignTarget::Deref { expr } => substitute_self_in_expr(expr, for_type),
+            }
+            substitute_self_in_expr(value, for_type);
+        }
+        Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            substitute_self_in_expr(condition, for_type);
+            substitute_self_in_stmts(then_branch, for_type);
+            if let Some(else_branch) = else_branch {
+                substitute_self_in_stmts(else_branch, for_type);
+            }
+        }
+        Stmt::While {
+            condition, body, ..
+        } => {
+            substitute_self_in_expr(condition, for_type);
+            substitute_self_in_stmts(body, for_type);
+        }
+        Stmt::Loop { body, .. } | Stmt::Unsafe { body, .. } => {
+            substitute_self_in_stmts(body, for_type)
+        }
+        Stmt::For { iter, body, .. } => {
+            substitute_self_in_expr(iter, for_type);
+            substitute_self_in_stmts(body, for_type);
+        }
+        Stmt::Break { value, .. } => {
+            if let Some(expr) = value {
+                substitute_self_in_expr(expr, for_type);
+            }
+        }
+        Stmt::Continue { .. } => {}
+        Stmt::Match { expr, arms, .. } => {
+            substitute_self_in_expr(expr, for_type);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    substitute_self_in_expr(guard, for_type);
+                }
+                substitute_self_in_stmts(&mut arm.body, for_type);
+            }
+        }
+    }
+}
+
+fn substitute_self_in_expr(expr: &mut Expr, for_type: &Type) {
+    match expr {
+        Expr::String(_)
+        | Expr::Integer(_)
+        | Expr::Float(_)
+        | Expr::Char(_)
+        | Expr::Bool(_)
+        | Expr::Ident(_) => {}
+        // Unexpanded tokens, not a type: macros are expanded before any pass
+        // that asks for the resolved methods.
+        Expr::MacroInvocation { .. } => {}
+        Expr::ArrayLiteral { elements, .. } | Expr::Tuple { elements, .. } => {
+            for element in elements {
+                substitute_self_in_expr(element, for_type);
+            }
+        }
+        Expr::ArrayRepeat { value, count, .. } => {
+            substitute_self_in_expr(value, for_type);
+            substitute_self_in_expr(count, for_type);
+        }
+        Expr::Index { array, index, .. } => {
+            substitute_self_in_expr(array, for_type);
+            substitute_self_in_expr(index, for_type);
+        }
+        Expr::Call { func, args, .. } => {
+            substitute_self_in_expr(func, for_type);
+            for arg in args {
+                substitute_self_in_expr(arg, for_type);
+            }
+        }
+        Expr::Binary { left, right, .. } => {
+            substitute_self_in_expr(left, for_type);
+            substitute_self_in_expr(right, for_type);
+        }
+        Expr::Range { start, end, .. } => {
+            substitute_self_in_expr(start, for_type);
+            substitute_self_in_expr(end, for_type);
+        }
+        Expr::Unary { operand: inner, .. }
+        | Expr::FieldAccess { object: inner, .. }
+        | Expr::Reference { expr: inner, .. }
+        | Expr::Deref { expr: inner, .. }
+        | Expr::Question { expr: inner, .. }
+        | Expr::Await { expr: inner, .. }
+        | Expr::TupleIndex { expr: inner, .. } => substitute_self_in_expr(inner, for_type),
+        Expr::StructLiteral { fields, .. } => {
+            for (_, value) in fields {
+                substitute_self_in_expr(value, for_type);
+            }
+        }
+        Expr::EnumConstructor { data, .. } => match data {
+            None => {}
+            Some(EnumConstructorData::Tuple(values)) => {
+                for value in values {
+                    substitute_self_in_expr(value, for_type);
+                }
+            }
+            Some(EnumConstructorData::Struct(fields)) => {
+                for (_, value) in fields {
+                    substitute_self_in_expr(value, for_type);
+                }
+            }
+        },
+        Expr::If {
+            condition,
+            then_branch,
+            then_value,
+            else_branch,
+            else_value,
+            ..
+        } => {
+            substitute_self_in_expr(condition, for_type);
+            substitute_self_in_stmts(then_branch, for_type);
+            if let Some(value) = then_value {
+                substitute_self_in_expr(value, for_type);
+            }
+            if let Some(else_branch) = else_branch {
+                substitute_self_in_stmts(else_branch, for_type);
+            }
+            if let Some(value) = else_value {
+                substitute_self_in_expr(value, for_type);
+            }
+        }
+        Expr::Cast { expr, ty, .. } => {
+            substitute_self_in_expr(expr, for_type);
+            *ty = substitute_self(ty, for_type);
+        }
+        Expr::Loop { body, .. } => substitute_self_in_stmts(body, for_type),
+        Expr::Match { expr, arms, .. } => {
+            substitute_self_in_expr(expr, for_type);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    substitute_self_in_expr(guard, for_type);
+                }
+                substitute_self_in_stmts(&mut arm.body, for_type);
+                if let Some(value) = &mut arm.value {
+                    substitute_self_in_expr(value, for_type);
+                }
+            }
+        }
+        Expr::Block { stmts, value, .. } => {
+            substitute_self_in_stmts(stmts, for_type);
+            if let Some(value) = value {
+                substitute_self_in_expr(value, for_type);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// `methods_with_self_resolved` RESOLVES EVERY `Self` THE METHOD SPELLS,
+    /// including the ones in its body.
+    ///
+    /// Measured before the body was walked: `let c: Self = D { pos: 1 };` in a
+    /// method passed the type checker (which resolves a top-level `Self` on its
+    /// own, from `current_impl_type`), was refused by the borrow checker as a use
+    /// of a moved `i64` field, and — read once, so the borrow checker passed it —
+    /// reached gcc as `struct Self c`, "variable has incomplete type". The same
+    /// annotation one level down, `(i64, Self)`, was refused by the type checker
+    /// as `expected (Int, Self), found (Int, D)`.
+    ///
+    /// The oracle is the DERIVED `Debug` of the method, not a second walker: it
+    /// prints every field of every node, so a container this function forgets to
+    /// descend into leaves a `Custom("Self")` behind and fails here. The raw count
+    /// is asserted too, so the program cannot silently stop spelling the cases.
+    #[test]
+    fn every_self_in_a_method_body_is_resolved() {
+        let source = r#"
+            struct D { pos: i64 }
+            impl D {
+                fn every_position(&self, n: i64) -> i64 {
+                    let a: Self = D { pos: 1 };
+                    let t: (i64, Self) = (1, D { pos: 1 });
+                    if n > 0 { let b: Self = D { pos: 2 }; } else { let c: Self = D { pos: 3 }; }
+                    while n > 9 { let d: Self = D { pos: 4 }; }
+                    loop { let e: Self = D { pos: 5 }; break; }
+                    for i in 0..2 { let f: Self = D { pos: 6 }; }
+                    match n { 0 => { let g: Self = D { pos: 7 }; } _ => { let h: Self = D { pos: 8 }; } }
+                    unsafe { let k: Self = D { pos: 9 }; }
+                    let v1: i64 = { let m: Self = D { pos: 10 }; 1 };
+                    let v2: i64 = if n > 0 { let o: Self = D { pos: 11 }; 1 } else { let p: Self = D { pos: 12 }; 2 };
+                    let v3: i64 = loop { let q: Self = D { pos: 13 }; break 1; };
+                    let v4: i64 = match n { 0 => { let r: Self = D { pos: 14 }; 1 } _ => 2 };
+                    let v5: i64 = 1 + { let s: Self = D { pos: 15 }; 1 };
+                    let w = n as Self;
+                    return n;
+                }
+            }
+            fn main() {}
+        "#;
+        let tokens = crate::lexer::Lexer::new(source)
+            .collect_tokens()
+            .expect("lexes");
+        let program = crate::parser::Parser::new(tokens).parse().expect("parses");
+        let impl_block = program
+            .items
+            .iter()
+            .find_map(|item| match item {
+                super::Item::Impl(block) => Some(block),
+                _ => None,
+            })
+            .expect("the program has an impl block");
+
+        let raw = format!("{:?}", impl_block.methods);
+        // The receiver, the 16 `let` annotations above, and the cast target.
+        assert_eq!(
+            raw.matches("Custom(\"Self\")").count(),
+            18,
+            "the fixture no longer spells every position it claims to: {}",
+            raw
+        );
+
+        let resolved = format!("{:?}", impl_block.methods_with_self_resolved());
+        assert_eq!(
+            resolved.matches("Custom(\"Self\")").count(),
+            0,
+            "a `Self` survived resolution: {}",
+            resolved
+        );
+        assert_eq!(resolved.matches("Custom(\"D\")").count(), 18);
     }
 }

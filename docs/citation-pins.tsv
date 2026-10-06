@@ -19,7 +19,7 @@ bootstrap/v2_full_compiler/ast.pd	83-83	docs/contributing/MILESTONES.md	f7f1ef90
 bootstrap/v2_full_compiler/ast.pd	83-83	src/lexer/token.rs	f7f1ef90bc4b	else_branch: Option<Vec<Stmt>>,
 bootstrap/v2_full_compiler/parser.pd	178-178	docs/specification/bootstrap-subset.md	0f84a753b824	let op = if matches!(op_token.token_type, TokenType::Star) {
 docs/contributing/MILESTONES.md	1025-1025	tests/m3_imported_calls.rs	8f08dd52206a	## M3 — Traits and generics (v0.5.0)
-docs/contributing/MILESTONES.md	1085-1092	tests/m3_imported_calls.rs	b5702134e956	## M4 — Modules (v0.6.0) **Waits on**: C0. Split out of the old combined mile ...  are su3's type-alias rows, owned by M3) and the vacuous `12_modules_imports`.
+docs/contributing/MILESTONES.md	1085-1092	tests/m3_imported_calls.rs	3fba8ee4bf6a	## M4 — Modules (v0.6.0) **Waits on**: C0. Split out of the old combined mile ...  are su3's type-alias rows, owned by M3) and the vacuous `12_modules_imports`.
 docs/marketing/Turing.md	67-67	docs/reference/features/advanced/totality-checking.md	1825edf6bd0c	By outlawing `unsafe` blocks inside `#![total(strict)]` crates, the language
 docs/marketing/avp_marketing.md	17-20	docs/reference/features/advanced/totality-checking.md	3bc1a629dd9b	#![total(strict)] // Turing's vision realized: Provable termination fn fibonacci(n: nat) -> nat { #[decreases(n)] // Compiler PROVES this terminates
 docs/specification/bootstrap-subset.md	132-132	src/typeck/mod.rs	22b89ce977e8	**Generics**: excluded from PBS-1. They monomorphize in limited cases, but generic-argument
@@ -261,11 +261,11 @@ src/optimizer/dead_code.rs	35-70	src/optimizer/dead_code_test.rs	8b72f3893594	//
 src/ownership/borrow_checker.rs	127-127	docs/contributing/MILESTONES.md	fa082a7e040b	let returns = match b.ret_mode {
 src/ownership/borrow_checker.rs	127-127	src/builtins.rs	fa082a7e040b	let returns = match b.ret_mode {
 src/ownership/borrow_checker.rs	127-127	src/codegen/mod.rs	fa082a7e040b	let returns = match b.ret_mode {
+src/ownership/borrow_checker.rs	1342-1347	docs/specification/language-spec.md	bdba387015c4	fn check_mutable_borrow_allowed(&self, place: &Place, span: crate::errors::Sp ...  { Place::Local(name) => { if self.mutable_bindings.get(name) != Some(&true) {
 src/ownership/borrow_checker.rs	157-160	tests/d3b_tail_if.rs	0cfaebfd62b1	let functions = crate::builtins::BUILTINS .iter() .map(|b| (b.name.to_string(), FunctionSig::from_builtin(b))) .collect();
 src/ownership/borrow_checker.rs	157-160	tests/m3_imported_calls.rs	0cfaebfd62b1	let functions = crate::builtins::BUILTINS .iter() .map(|b| (b.name.to_string(), FunctionSig::from_builtin(b))) .collect();
 src/ownership/borrow_checker.rs	1579-1581	tests/m3_imported_calls.rs	55ccf3b4f0d6	fn place_type(&self, expr: &Expr) -> Option<Type> { match expr { Expr::Ident(name) => self.local_types.get(name).cloned(),
 src/ownership/borrow_checker.rs	359-368	tests/d3b_tail_if.rs	aa896335d3f2	// First pass: collect function signatures and struct layouts for item in &pr ... ields.clone()); } Item::Function(func) => { self.collect_function_sig(func); }
-src/ownership/borrow_checker.rs	408-414	docs/specification/language-spec.md	4f479bc9111b	Item::Impl(impl_block) => { // Check method bodies from impl blocks for method in &impl_block.methods { self.check_function(method)?; } } _ => {}
 src/ownership/borrow_checker.rs	563-565	docs/specification/language-spec.md	928a2535411c	if param.mutable { params.push(ParamOwnership::BorrowMut); continue;
 src/ownership/borrow_checker.rs	568-577	docs/specification/bootstrap-subset.md	f27c8fc81be9	Type::Array(_, _) => { // An array parameter is a *reference*, not a move. Th ... d // only the mutability of the binding picks the kind. ParamOwnership::Borrow
 src/ownership/borrow_checker.rs	583-584	docs/specification/bootstrap-subset.md	74e443ccb752	// Non-copy types Type::Custom(_) => ParamOwnership::Move,
@@ -423,7 +423,7 @@ src/typeck/mod.rs	744-748	docs/specification/language-spec.md	d9166315602a	crate
 stdlib/MANIFEST.tsv	1-1	docs/reference/features/feature-index.toml	a9011a68453c	# Pinned compile verdict for every .pd under stdlib/.
 tests/advanced_features_test.rs	340-340	docs/contributing/MILESTONES.md	9efc88caac80	#[ignore = "XFAIL: `macro_rules!` — grammar.ebnf:181 defines only `macro name ... ests/reject/macro_rules.pd. Retiring it is the owner's call, not this test's"]
 tests/compiler_comprehensive_test.rs	633-633	docs/contributing/MILESTONES.md	33e1b803ccb2	fn test_missing_return_is_an_error() {
-tests/conformance-manifest.txt	127-127	docs/contributing/MILESTONES.md	be3ef13e1247	tests/projects/hello_pdm/tests/test_math.pd xfail compile Undefined function: ... enerics. This is a correction against the ownership roster, not a reassignment
+tests/conformance-manifest.txt	129-129	docs/contributing/MILESTONES.md	be3ef13e1247	tests/projects/hello_pdm/tests/test_math.pd xfail compile Undefined function: ... enerics. This is a correction against the ownership roster, not a reassignment
 tests/e2e_test.rs	277-277	docs/contributing/MILESTONES.md	da9d5556e31e	fn test_c_keyword_identifier_still_links() {
 tests/e2e_test.rs	322-322	docs/contributing/MILESTONES.md	42427853e62c	fn test_tail_if_function_emits_a_return() {
 tests/m3_imported_calls.rs	1245-1249	docs/contributing/citation-and-predicate-debt.md	c6a8f8acac08	/// filter (`src/resolver/mod.rs:113` is the only hit in `src/`). Every consu ... / `register_imported_functions`. So `import lib2::{helper};` imports the whole
