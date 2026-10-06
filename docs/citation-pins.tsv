@@ -258,12 +258,20 @@ src/main.rs	194-196	tests/d10_llvm_refuses.rs	d4347d793f49	if llvm { driver = dr
 src/optimizer/constant_folding.rs	154-154	src/parser/mod.rs	a47431fb26aa	BinOp::Eq => {
 src/optimizer/constant_folding.rs	154-154	tests/d3b_tail_if.rs	a47431fb26aa	BinOp::Eq => {
 src/optimizer/dead_code.rs	35-70	src/optimizer/dead_code_test.rs	8b72f3893594	// A constant condition tells us exactly which arm runs, so the // other arm  ... ation: saying // "can continue" when it cannot only leaves dead code in place,
+src/ownership/borrow_checker.rs	1005-1005	docs/reference/features/core-language/implicit-lifetimes.md	b101e79789ce	let call_lifetime = self.context.new_lifetime();
+src/ownership/borrow_checker.rs	1005-1005	docs/reference/features/feature-index.toml	b101e79789ce	let call_lifetime = self.context.new_lifetime();
+src/ownership/borrow_checker.rs	1005-1005	docs/specification/language-spec.md	b101e79789ce	let call_lifetime = self.context.new_lifetime();
+src/ownership/borrow_checker.rs	1005-1012	CLAUDE.md	40f5ae3836be	let call_lifetime = self.context.new_lifetime(); let outer_lifetime = self.ca ... _lifetime = outer_lifetime; self.context.end_borrows(&call_lifetime); result?;
+src/ownership/borrow_checker.rs	1005-1012	docs/contributing/claude-md-coverage.md	40f5ae3836be	let call_lifetime = self.context.new_lifetime(); let outer_lifetime = self.ca ... _lifetime = outer_lifetime; self.context.end_borrows(&call_lifetime); result?;
+src/ownership/borrow_checker.rs	1011-1011	docs/reference/features/core-language/implicit-lifetimes.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
+src/ownership/borrow_checker.rs	1011-1011	docs/reference/features/feature-index.toml	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
+src/ownership/borrow_checker.rs	1011-1011	docs/specification/language-spec.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
 src/ownership/borrow_checker.rs	127-127	docs/contributing/MILESTONES.md	fa082a7e040b	let returns = match b.ret_mode {
 src/ownership/borrow_checker.rs	127-127	src/builtins.rs	fa082a7e040b	let returns = match b.ret_mode {
 src/ownership/borrow_checker.rs	127-127	src/codegen/mod.rs	fa082a7e040b	let returns = match b.ret_mode {
 src/ownership/borrow_checker.rs	157-160	tests/d3b_tail_if.rs	0cfaebfd62b1	let functions = crate::builtins::BUILTINS .iter() .map(|b| (b.name.to_string(), FunctionSig::from_builtin(b))) .collect();
 src/ownership/borrow_checker.rs	157-160	tests/m3_imported_calls.rs	0cfaebfd62b1	let functions = crate::builtins::BUILTINS .iter() .map(|b| (b.name.to_string(), FunctionSig::from_builtin(b))) .collect();
-src/ownership/borrow_checker.rs	1579-1581	tests/m3_imported_calls.rs	55ccf3b4f0d6	fn place_type(&self, expr: &Expr) -> Option<Type> { match expr { Expr::Ident(name) => self.local_types.get(name).cloned(),
+src/ownership/borrow_checker.rs	1642-1644	tests/m3_imported_calls.rs	55ccf3b4f0d6	fn place_type(&self, expr: &Expr) -> Option<Type> { match expr { Expr::Ident(name) => self.local_types.get(name).cloned(),
 src/ownership/borrow_checker.rs	359-368	tests/d3b_tail_if.rs	aa896335d3f2	// First pass: collect function signatures and struct layouts for item in &pr ... ields.clone()); } Item::Function(func) => { self.collect_function_sig(func); }
 src/ownership/borrow_checker.rs	408-414	docs/specification/language-spec.md	4f479bc9111b	Item::Impl(impl_block) => { // Check method bodies from impl blocks for method in &impl_block.methods { self.check_function(method)?; } } _ => {}
 src/ownership/borrow_checker.rs	563-565	docs/specification/language-spec.md	928a2535411c	if param.mutable { params.push(ParamOwnership::BorrowMut); continue;
@@ -275,25 +283,17 @@ src/ownership/borrow_checker.rs	69-70	docs/specification/language-spec.md	52913f
 src/ownership/borrow_checker.rs	793-796	docs/reference/features/feature-index.toml	70e994f90146	Stmt::Return(Some(expr)) => { self.check_expr(expr)?; // TODO: Check return value ownership matches function signature }
 src/ownership/borrow_checker.rs	83-83	docs/specification/language-spec.md	d6fcadd1772d	/// How a callee takes each parameter.
 src/ownership/borrow_checker.rs	84-86	docs/specification/language-spec.md	3f7c8868ce02	/// /// The borrowing modes carry no lifetime: the caller-side borrow always  ...  exactly for the call expression, so `check_call_args` supplies that lifetime.
-src/ownership/borrow_checker.rs	904-904	tests/m3_imported_calls.rs	3ca7efc9179c	Expr::Ident(name) => {
-src/ownership/borrow_checker.rs	957-957	tests/m3_imported_calls.rs	e4a8f92b213a	return Err(CompileError::UseOfUninitializedValue {
-src/ownership/borrow_checker.rs	965-965	tests/d3b_tail_if.rs	4379d6381a6b	Expr::Call { func, args, span } => {
-src/ownership/borrow_checker.rs	982-982	docs/reference/features/core-language/implicit-lifetimes.md	b101e79789ce	let call_lifetime = self.context.new_lifetime();
-src/ownership/borrow_checker.rs	982-982	docs/reference/features/feature-index.toml	b101e79789ce	let call_lifetime = self.context.new_lifetime();
-src/ownership/borrow_checker.rs	982-982	docs/specification/language-spec.md	b101e79789ce	let call_lifetime = self.context.new_lifetime();
-src/ownership/borrow_checker.rs	982-989	CLAUDE.md	40f5ae3836be	let call_lifetime = self.context.new_lifetime(); let outer_lifetime = self.ca ... _lifetime = outer_lifetime; self.context.end_borrows(&call_lifetime); result?;
-src/ownership/borrow_checker.rs	982-989	docs/contributing/claude-md-coverage.md	40f5ae3836be	let call_lifetime = self.context.new_lifetime(); let outer_lifetime = self.ca ... _lifetime = outer_lifetime; self.context.end_borrows(&call_lifetime); result?;
-src/ownership/borrow_checker.rs	988-988	docs/reference/features/core-language/implicit-lifetimes.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
-src/ownership/borrow_checker.rs	988-988	docs/reference/features/feature-index.toml	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
-src/ownership/borrow_checker.rs	988-988	docs/specification/language-spec.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
-src/ownership/mod.rs	101-130	docs/reference/features/feature-index.toml	bcc64127c8d1	constraints: Vec<LifetimeConstraint>, /// Places *declared* by each open scop ... ] pub struct LifetimeConstraint { pub longer: Lifetime, pub shorter: Lifetime,
-src/ownership/mod.rs	165-206	docs/specification/bootstrap-subset.md	a93e1b0f2eea	pub fn exit_scope(&mut self) { // End every borrow this scope (or anything ne ... p.extend(states); self.borrows.extend(borrows); } } self.current_scope -= 1; }
-src/ownership/mod.rs	171-172	docs/reference/features/feature-index.toml	6bb90e116f0c	let closing = self.current_scope; self.release_borrows(|borrow| borrow.scope >= closing);
-src/ownership/mod.rs	172-172	docs/reference/features/core-language/implicit-lifetimes.md	c79f31f371ca	self.release_borrows(|borrow| borrow.scope >= closing);
+src/ownership/borrow_checker.rs	927-927	tests/m3_imported_calls.rs	3ca7efc9179c	Expr::Ident(name) => {
+src/ownership/borrow_checker.rs	980-980	tests/m3_imported_calls.rs	e4a8f92b213a	return Err(CompileError::UseOfUninitializedValue {
+src/ownership/borrow_checker.rs	988-988	tests/d3b_tail_if.rs	4379d6381a6b	Expr::Call { func, args, span } => {
+src/ownership/mod.rs	101-133	docs/reference/features/feature-index.toml	a0bf00097abb	constraints: Vec<LifetimeConstraint>, /// How many loop bodies enclose the st ... ] pub struct LifetimeConstraint { pub longer: Lifetime, pub shorter: Lifetime,
+src/ownership/mod.rs	178-228	docs/specification/bootstrap-subset.md	bbba92332589	pub fn exit_scope(&mut self) { // End every borrow this scope (or anything ne ... .release_borrows(|borrow| borrow.scope >= closing); self.current_scope -= 1; }
+src/ownership/mod.rs	184-185	docs/reference/features/feature-index.toml	6bb90e116f0c	let closing = self.current_scope; self.release_borrows(|borrow| borrow.scope >= closing);
+src/ownership/mod.rs	185-185	docs/reference/features/core-language/implicit-lifetimes.md	c79f31f371ca	self.release_borrows(|borrow| borrow.scope >= closing);
 src/ownership/mod.rs	25-33	docs/reference/features/feature-index.toml	75384ea2397d	/// Lifetime representation #[derive(Debug, Clone, PartialEq, Eq, Hash)] pub  ...  lifetime ('a, 'b, etc.) Named(String), /// Anonymous lifetime Anonymous(u32),
-src/ownership/mod.rs	261-263	docs/reference/features/feature-index.toml	c9585753caf3	pub fn end_borrows(&mut self, lifetime: &Lifetime) { self.release_borrows(|borrow| &borrow.lifetime == lifetime); }
 src/ownership/mod.rs	27-27	docs/reference/features/core-language/implicit-lifetimes.md	e06a29f1a329	pub enum Lifetime {
-src/ownership/mod.rs	575-579	docs/reference/features/feature-index.toml	5d7e60bc0988	/// Add a lifetime constraint pub fn add_constraint(&mut self, longer: Lifeti ...  Lifetime) { self.constraints .push(LifetimeConstraint { longer, shorter }); }
+src/ownership/mod.rs	283-285	docs/reference/features/feature-index.toml	c9585753caf3	pub fn end_borrows(&mut self, lifetime: &Lifetime) { self.release_borrows(|borrow| &borrow.lifetime == lifetime); }
+src/ownership/mod.rs	706-710	docs/reference/features/feature-index.toml	5d7e60bc0988	/// Add a lifetime constraint pub fn add_constraint(&mut self, longer: Lifeti ...  Lifetime) { self.constraints .push(LifetimeConstraint { longer, shorter }); }
 src/ownership/mod.rs	71-71	docs/reference/features/core-language/implicit-lifetimes.md	58cffd430bf7	pub scope: u32,
 src/ownership/mod.rs	95-95	docs/reference/features/core-language/implicit-lifetimes.md	a067fdd308d7	current_scope: u32,
 src/package/lockfile.rs	341-341	docs/reference/features/feature-index.toml	6646f3d1b5b4	url: "https://packages.palladium-lang.org".to_string(),

@@ -1700,8 +1700,8 @@ Re-measured from scratch at `abeb665`:
 | `print(p.name); f(p.name); p.n` — field to a builtin, then reused | accepted, prints `abc 3 1` |
 
 None of D6's symptoms reproduce. The call path creates a per-call lifetime and ends its borrows
-when the call finishes: `src/ownership/borrow_checker.rs:982` (`let call_lifetime =
-self.context.new_lifetime();`) and `src/ownership/borrow_checker.rs:988` (`self.context.end_borrows(&call_lifetime);`), with the
+when the call finishes: `src/ownership/borrow_checker.rs:1005` (`let call_lifetime =
+self.context.new_lifetime();`) and `src/ownership/borrow_checker.rs:1011` (`self.context.end_borrows(&call_lifetime);`), with the
 contract stated at `src/ownership/borrow_checker.rs:84-86` — "the caller-side borrow always lasts exactly for the call
 expression".
 

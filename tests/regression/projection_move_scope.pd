@@ -101,5 +101,30 @@ fn main() {
     print_int(gone.inner.v);
     print_int(s.inner.v);
 
+    // A branch: re-assigned on EVERY path counts after it, and each arm moves
+    // the field out of the value as it was before the branch.
+    let mut t: D = D { inner: In { v: 15 } };
+    let early: In = t.inner;
+    if on {
+        t = D { inner: In { v: 16 } };
+    } else {
+        t = c_make(17);
+    }
+    let late: In = t.inner;
+    print_int(early.v);
+    print_int(late.v);
+    let w: D = D { inner: In { v: 18 } };
+    let pick: i64 = 1;
+    match pick {
+        0 => {
+            let x0: In = w.inner;
+            print_int(x0.v);
+        }
+        _ => {
+            let x1: In = w.inner;
+            print_int(x1.v + 2);
+        }
+    }
+
     print("projection_move_scope_ok");
 }

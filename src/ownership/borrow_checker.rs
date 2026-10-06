@@ -1,7 +1,7 @@
 // Borrow checker for Palladium
 // "Ensuring memory safety through static analysis"
 
-use crate::ast::{AssignTarget, Expr, Function, Item, Pattern, Program, Stmt, Type};
+use crate::ast::{AssignTarget, BinOp, Expr, Function, Item, Pattern, Program, Stmt, Type};
 use crate::errors::{CompileError, DiagnosticCode, Result};
 use crate::ownership::{expr_to_place, Lifetime, OwnershipContext, Place, RefKind};
 use std::collections::HashMap;
@@ -782,7 +782,7 @@ impl BorrowChecker {
                     Some(from_place) if !self.is_expr_copy(value) => {
                         self.context.move_value(from_place, target_place, *span)?;
                     }
-                    _ => self.context.reinitialize(target_place),
+                    _ => self.context.reinitialize(target_place, *span)?,
                 }
             }
 
@@ -805,15 +805,25 @@ impl BorrowChecker {
             } => {
                 self.check_expr(condition)?;
 
+                // Each arm starts from the state before the `if`, and the
+                // state after it is their join (`OwnershipContext::join`); a
+                // missing `else` is a path that changes nothing.
+                let entry = self.context.snapshot();
                 self.context.enter_scope();
                 self.check_block_stmts(then_branch)?;
                 self.context.exit_scope();
+                let mut paths = vec![(self.context.snapshot(), leaves_function(then_branch))];
+                self.context.restore(&entry);
 
                 if let Some(else_stmts) = else_branch {
                     self.context.enter_scope();
                     self.check_block_stmts(else_stmts)?;
                     self.context.exit_scope();
+                    paths.push((self.context.snapshot(), leaves_function(else_stmts)));
+                } else {
+                    paths.push((entry, false));
                 }
+                self.join_paths(paths);
             }
 
             Stmt::While {
@@ -821,15 +831,19 @@ impl BorrowChecker {
             } => {
                 self.check_expr(condition)?;
 
+                self.context.enter_loop();
                 self.context.enter_scope();
                 self.check_block_stmts(body)?;
                 self.context.exit_scope();
+                self.context.exit_loop();
             }
 
             Stmt::Loop { body, .. } => {
+                self.context.enter_loop();
                 self.context.enter_scope();
                 self.check_block_stmts(body)?;
                 self.context.exit_scope();
+                self.context.exit_loop();
             }
 
             Stmt::For {
@@ -850,7 +864,9 @@ impl BorrowChecker {
                 self.context.init_owned(place);
                 self.mutable_bindings.insert(var.clone(), false);
 
+                self.context.enter_loop();
                 self.check_block_stmts(body)?;
+                self.context.exit_loop();
                 self.context.exit_scope();
                 self.close_mutability_scope(loop_scope);
             }
@@ -858,7 +874,12 @@ impl BorrowChecker {
             Stmt::Match { expr, arms, .. } => {
                 self.check_expr(expr)?;
 
+                // Every arm starts from the state before the `match`; the
+                // state after it is their join, as for `if`.
+                let entry = self.context.snapshot();
+                let mut paths = Vec::new();
                 for arm in arms {
+                    self.context.restore(&entry);
                     // Opened before the pattern binds anything, so the arm's
                     // bindings do not survive the arm.
                     let arm_scope = self.open_mutability_scope();
@@ -871,7 +892,9 @@ impl BorrowChecker {
 
                     self.context.exit_scope();
                     self.close_mutability_scope(arm_scope);
+                    paths.push((self.context.snapshot(), leaves_function(&arm.body)));
                 }
+                self.join_paths(paths);
             }
 
             // The value a `break` carries is an ordinary expression and can
@@ -989,9 +1012,20 @@ impl BorrowChecker {
                 result?;
             }
 
-            Expr::Binary { left, right, .. } => {
+            Expr::Binary {
+                left, op, right, ..
+            } => {
                 self.check_expr(left)?;
-                self.check_expr(right)?;
+                if matches!(op, BinOp::And | BinOp::Or) {
+                    // The right operand of `&&`/`||` runs on one outcome of the
+                    // left only, so skipping it is a path too.
+                    let entry = self.context.snapshot();
+                    self.check_expr(right)?;
+                    let after = self.context.snapshot();
+                    self.context.join(vec![entry, after]);
+                } else {
+                    self.check_expr(right)?;
+                }
             }
 
             Expr::Unary { operand, .. } => {
@@ -1167,10 +1201,17 @@ impl BorrowChecker {
                 ..
             } => {
                 self.check_expr(condition)?;
+                let entry = self.context.snapshot();
                 self.check_value_block(then_branch, then_value.as_deref())?;
+                let mut paths = vec![(self.context.snapshot(), leaves_function(then_branch))];
+                self.context.restore(&entry);
                 if let Some(stmts) = else_branch {
                     self.check_value_block(stmts, else_value.as_deref())?;
+                    paths.push((self.context.snapshot(), leaves_function(stmts)));
+                } else {
+                    paths.push((entry, false));
                 }
+                self.join_paths(paths);
             }
             Expr::Block { stmts, value, .. } => {
                 self.check_value_block(stmts, value.as_deref())?;
@@ -1179,11 +1220,17 @@ impl BorrowChecker {
                 self.check_expr(expr)?;
             }
             Expr::Loop { body, .. } => {
-                self.check_value_block(body, None)?;
+                self.context.enter_loop();
+                let checked = self.check_value_block(body, None);
+                self.context.exit_loop();
+                checked?;
             }
             Expr::Match { expr, arms, .. } => {
                 self.check_expr(expr)?;
+                let entry = self.context.snapshot();
+                let mut paths = Vec::new();
                 for arm in arms {
+                    self.context.restore(&entry);
                     // Same shape as `Stmt::Match` above, including
                     // `bind_pattern`: without it a payload binding is a name
                     // this pass has never seen, and `Payload::Num(n) => n * 10`
@@ -1203,11 +1250,27 @@ impl BorrowChecker {
                     self.context.exit_scope();
                     self.close_mutability_scope(arm_scope);
                     checked?;
+                    paths.push((self.context.snapshot(), leaves_function(&arm.body)));
                 }
+                self.join_paths(paths);
             }
         }
 
         Ok(())
+    }
+
+    /// Join the end states of a branch's paths (`OwnershipContext::join`). A
+    /// path that LEAVES THE FUNCTION never reaches the code after the branch,
+    /// so it is left out — unless every path does, when what follows is
+    /// unreachable and keeping them all is the conservative choice.
+    fn join_paths(&mut self, paths: Vec<(crate::ownership::FlowState, bool)>) {
+        let reaching = paths.iter().any(|(_, leaves)| !leaves);
+        let joined = paths
+            .into_iter()
+            .filter(|(_, leaves)| !reaching || !leaves)
+            .map(|(state, _)| state)
+            .collect();
+        self.context.join(joined);
     }
 
     /// Check `{ stmts...; value }` in value position, in its own scope.
@@ -1738,6 +1801,26 @@ impl BorrowChecker {
             }
             _ => None,
         }
+    }
+}
+
+/// Whether every path through `stmts` ends in a `return` — the shallow,
+/// syntactic question: the last statement returns, or is an `if`/`else` or a
+/// `match` all of whose arms do. Anything else (a `break`, a `continue`, a
+/// call that never returns) answers no, which keeps the path in the join.
+fn leaves_function(stmts: &[Stmt]) -> bool {
+    match stmts.last() {
+        Some(Stmt::Return(_)) => true,
+        Some(Stmt::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        }) => leaves_function(then_branch) && leaves_function(else_branch),
+        Some(Stmt::Match { arms, .. }) => {
+            !arms.is_empty() && arms.iter().all(|arm| leaves_function(&arm.body))
+        }
+        Some(Stmt::Unsafe { body, .. }) => leaves_function(body),
+        _ => false,
     }
 }
 
