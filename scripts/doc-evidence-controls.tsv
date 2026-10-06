@@ -137,6 +137,13 @@ a source directory stays a valid scope where nothing has been built	guard	the pa
 a scope holding a .git FILE is refused: a count over it reads metadata	kill	unread-gitfile
 an absence over a scope whose only file is a gitfile is refused	kill	unread-gitfile
 a gitfile named directly is refused: it is repository metadata	kill	unread-metadata
+a symlink NAMED .git is refused by that name (a count through it)	kill	written-names
+an absence through a symlink named .git is refused by that name	kill	written-names
+a symlink named target is refused by that name, though it points at source	kill	written-names
+a symlink named build_output is refused by that name, though it points at source	kill	written-names
+a symlink named .worktrees is refused by that name, though it points at source	kill	written-names
+a `..` cannot step an operand out of an excluded name	kill	written-names
+a symlink that LEADS INTO a nested build_output/ is refused where it resolves	kill	cmd-artifact-first
 no workflow env, job env or run step supplies a base to the coverage runner	kill	ci-no-base
 a blank target supports no claim	guard	the six the enumeration knew must keep failing under either implementation
 a bare closing brace supports no claim	guard	the six the enumeration knew must keep failing under either implementation

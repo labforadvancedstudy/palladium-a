@@ -353,8 +353,11 @@ elif w == "cmd-allowlist":     # only the five observation tools may run
 elif w == "cmd-artifact":      # a build artifact is not reproducible from a checkout
     t = t.replace("    if hit is not None:", "    if False:", 1)
 elif w == "cmd-artifact-first":    # ...below the first component too
-    t = t.replace("    hit = next((x for x in parts if x in CMD_UNREAD_DIRS), None)",
-                  "    hit = next((x for x in parts[:1] if x in CMD_UNREAD_DIRS), None)", 1)
+    t = t.replace('    hit, how = next((x for x in parts if x in CMD_UNREAD_DIRS), None), "resolves into"',
+                  '    hit, how = next((x for x in parts[:1] if x in CMD_UNREAD_DIRS), None), "resolves into"', 1)
+elif w == "written-names":     # ...and AS WRITTEN, not only as resolved
+    t = t.replace('    written = [x.casefold() for x in rel.split("/") if x not in ("", ".", "..")]',
+                  "    written = []", 1)
 elif w == "unread-metadata":   # .git and .worktrees are not this checkout's tree
     t = t.replace("                   **CMD_NOT_THE_TREE}", "                   }", 1)
 elif w == "artifact-order":    # the path is judged before it is required to exist
@@ -665,6 +668,7 @@ artifact-deep|scripts/check_doc_evidence.py
 unread-gitfile|scripts/check_doc_evidence.py
 artifact-order|scripts/check_doc_evidence.py
 cmd-artifact-first|scripts/check_doc_evidence.py
+written-names|scripts/check_doc_evidence.py
 unread-metadata|scripts/check_doc_evidence.py
 drain-valueerror|scripts/check_doc_evidence.py
 count-width|scripts/check_doc_evidence.py

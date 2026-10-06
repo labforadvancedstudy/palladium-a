@@ -656,9 +656,17 @@ def contained(rel: str):
     # let `bootstrap/<v>/build_output/` through. Case-folded: on a case-insensitive
     # checkout `TARGET` is the same directory as `target`.
     parts = [x.casefold() for x in real.relative_to(ROOT).parts]
-    hit = next((x for x in parts if x in CMD_UNREAD_DIRS), None)
+    hit, how = next((x for x in parts if x in CMD_UNREAD_DIRS), None), "resolves into"
+    # ...AND AS WRITTEN. Resolution replaces a symlink's NAME with its target's, so
+    # `linked/.git -> pointer` resolved to `linked/pointer` and was read as an ordinary
+    # file. Every component the operand SPELLS is tested too, before any `..` is applied
+    # -- so `target/../src` cannot step a name out of view -- and a link named target,
+    # build_output, .git or .worktrees is refused by that name wherever it points.
+    written = [x.casefold() for x in rel.split("/") if x not in ("", ".", "..")]
+    if hit is None:
+        hit, how = next((x for x in written if x in CMD_UNREAD_DIRS), None), "names"
     if hit is not None:
-        return None, (f"reads {rel!r}, which resolves into {hit}/ — "
+        return None, (f"reads {rel!r}, which {how} {hit}/ — "
                       f"{CMD_UNREAD_DIRS[hit]}. A `cmd:` item must be reproducible from a "
                       f"clean checkout, so generated state is evidence only through the "
                       f"gate that generates it")

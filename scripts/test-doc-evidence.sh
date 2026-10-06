@@ -408,6 +408,67 @@ gitfile_case "an absence over a scope whose only file is a gitfile is refused" \
 gitfile_case "a gitfile named directly is refused: it is repository metadata" \
   "[grep -n gitdir vendor/mod/.git] REFUSED: gitfile: \`cmd:\` reads 'vendor/mod/.git', which resolves into .git/"
 
+# CASES 20r-x. A NAME IS TESTED AS WRITTEN, NOT ONLY AS RESOLVED. resolve() replaces a
+# symlink's name with its target's, so `linked/.git -> pointer` was judged as
+# `linked/pointer` and read as an ordinary file -- a count and an absence both accepted
+# over repository metadata. The same held for a link NAMED target, build_output or
+# .worktrees pointing at ordinary source, and for a `..` written after an excluded name.
+# The last case is the resolved half, which stays: a link that LEADS INTO a nested
+# build_output/ is caught where it resolves, since its own name says nothing.
+SYMLINK_OUT=$(python3 - <<'PYEOF' 2>&1
+import os, pathlib, shutil, sys, tempfile
+sys.path.insert(0, "scripts")
+import check_doc_evidence as C
+root = pathlib.Path(tempfile.mkdtemp()).resolve()
+for d in ("linked", "aliases", "docs", "src", "target", "bootstrap/v/build_output"):
+    (root / d).mkdir(parents=True)
+(root / "linked" / "pointer").write_text("gitdir: pointer\n")
+os.symlink("pointer", root / "linked" / ".git")
+(root / "docs" / "a.md").write_text("ordinary source\n")
+(root / "src" / "a.rs").write_text("fn a() {}\n")
+(root / "bootstrap" / "v" / "build_output" / "gen.c").write_text("generated\n")
+for name in ("target", "build_output", ".worktrees"):
+    os.symlink("../docs", root / "aliases" / name)
+os.symlink("../bootstrap/v/build_output", root / "docs" / "gen")
+C.ROOT = root
+for item in ("cmd: grep -n gitdir linked/.git -> exit 0, 1 lines",
+             "cmd: grep -n NEVER_PRESENT linked/.git -> exit 1, 0 lines",
+             "cmd: grep -rn NEVER_PRESENT aliases/target/ -> exit 1, 0 lines",
+             "cmd: grep -rn NEVER_PRESENT aliases/build_output/ -> exit 1, 0 lines",
+             "cmd: grep -rn NEVER_PRESENT aliases/.worktrees/ -> exit 1, 0 lines",
+             "cmd: grep -rn NEVER_PRESENT target/../src/ -> exit 1, 0 lines",
+             "cmd: grep -rn NEVER_PRESENT docs/gen/ -> exit 1, 0 lines"):
+    problems = C.check_cmd("symlink", item, {})
+    print(f"[{item[5:].split(' -> ')[0]}] "
+          + ("REFUSED: " + " ".join(problems) if problems else "accepted"))
+shutil.rmtree(root)
+PYEOF
+)
+symlink_case() {  # symlink_case <case> <the line the item must produce>
+  if printf '%s\n' "$SYMLINK_OUT" | grep -qF -- "$2"; then
+    printf '  %sok%s   %s\n' "$GREEN" "$NC" "$1"; pass=$((pass+1))
+  else
+    printf '  %sFAIL%s %s\n' "$RED" "$NC" "$1"
+    printf '         (wanted %s)\n' "$2"
+    printf '%s\n' "$SYMLINK_OUT" | sed 's/^/         | /' | cut -c1-200
+    fail=$((fail+1))
+  fi
+}
+symlink_case "a symlink NAMED .git is refused by that name (a count through it)" \
+  "[grep -n gitdir linked/.git] REFUSED: symlink: \`cmd:\` reads 'linked/.git', which names .git/"
+symlink_case "an absence through a symlink named .git is refused by that name" \
+  "[grep -n NEVER_PRESENT linked/.git] REFUSED: symlink: \`cmd:\` reads 'linked/.git', which names .git/"
+symlink_case "a symlink named target is refused by that name, though it points at source" \
+  "[grep -rn NEVER_PRESENT aliases/target/] REFUSED: symlink: \`cmd:\` reads 'aliases/target/', which names target/"
+symlink_case "a symlink named build_output is refused by that name, though it points at source" \
+  "[grep -rn NEVER_PRESENT aliases/build_output/] REFUSED: symlink: \`cmd:\` reads 'aliases/build_output/', which names build_output/"
+symlink_case "a symlink named .worktrees is refused by that name, though it points at source" \
+  "[grep -rn NEVER_PRESENT aliases/.worktrees/] REFUSED: symlink: \`cmd:\` reads 'aliases/.worktrees/', which names .worktrees/"
+symlink_case "a \`..\` cannot step an operand out of an excluded name" \
+  "[grep -rn NEVER_PRESENT target/../src/] REFUSED: symlink: \`cmd:\` reads 'target/../src/', which names target/"
+symlink_case "a symlink that LEADS INTO a nested build_output/ is refused where it resolves" \
+  "[grep -rn NEVER_PRESENT docs/gen/] REFUSED: symlink: \`cmd:\` reads 'docs/gen/', which resolves into build_output/"
+
 index find_empty_scope unimplemented \
   "cmd: find $INREPO/empty -type f -> exit 0, 0 lines"
 expect_red find_empty_scope "an absence over an empty scope is refused for FIND too" \
