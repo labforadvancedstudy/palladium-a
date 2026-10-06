@@ -737,9 +737,16 @@ impl BorrowChecker {
                         self.check_expr(array)?;
                         self.check_expr(index)?;
                         if let Some(base) = expr_to_place(array) {
+                            // A constant index names that element, as it does
+                            // in `expr_to_place`; only a computed one is the
+                            // `dynamic` wildcard that may be any element.
+                            let index = match index.as_ref() {
+                                Expr::Integer(i) => i.to_string(),
+                                _ => "dynamic".to_string(),
+                            };
                             Place::Index {
                                 base: Box::new(base),
-                                index: "dynamic".to_string(),
+                                index,
                             }
                         } else {
                             return Err(CompileError::BorrowChecker {
@@ -807,23 +814,26 @@ impl BorrowChecker {
 
                 // Each arm starts from the state before the `if`, and the
                 // state after it is their join (`OwnershipContext::join`); a
-                // missing `else` is a path that changes nothing.
+                // missing `else` is a path that changes nothing. EVERY arm
+                // joins, also one that ends in `return`: this pass has no
+                // divergence analysis, and an arm judged by its last statement
+                // was measured leaving by `break` (review round 2).
                 let entry = self.context.snapshot();
                 self.context.enter_scope();
                 self.check_block_stmts(then_branch)?;
                 self.context.exit_scope();
-                let mut paths = vec![(self.context.snapshot(), leaves_function(then_branch))];
+                let mut paths = vec![self.context.snapshot()];
                 self.context.restore(&entry);
 
                 if let Some(else_stmts) = else_branch {
                     self.context.enter_scope();
                     self.check_block_stmts(else_stmts)?;
                     self.context.exit_scope();
-                    paths.push((self.context.snapshot(), leaves_function(else_stmts)));
+                    paths.push(self.context.snapshot());
                 } else {
-                    paths.push((entry, false));
+                    paths.push(entry);
                 }
-                self.join_paths(paths);
+                self.context.join(paths);
             }
 
             Stmt::While {
@@ -892,9 +902,9 @@ impl BorrowChecker {
 
                     self.context.exit_scope();
                     self.close_mutability_scope(arm_scope);
-                    paths.push((self.context.snapshot(), leaves_function(&arm.body)));
+                    paths.push(self.context.snapshot());
                 }
-                self.join_paths(paths);
+                self.context.join(paths);
             }
 
             // The value a `break` carries is an ordinary expression and can
@@ -1203,15 +1213,15 @@ impl BorrowChecker {
                 self.check_expr(condition)?;
                 let entry = self.context.snapshot();
                 self.check_value_block(then_branch, then_value.as_deref())?;
-                let mut paths = vec![(self.context.snapshot(), leaves_function(then_branch))];
+                let mut paths = vec![self.context.snapshot()];
                 self.context.restore(&entry);
                 if let Some(stmts) = else_branch {
                     self.check_value_block(stmts, else_value.as_deref())?;
-                    paths.push((self.context.snapshot(), leaves_function(stmts)));
+                    paths.push(self.context.snapshot());
                 } else {
-                    paths.push((entry, false));
+                    paths.push(entry);
                 }
-                self.join_paths(paths);
+                self.context.join(paths);
             }
             Expr::Block { stmts, value, .. } => {
                 self.check_value_block(stmts, value.as_deref())?;
@@ -1250,27 +1260,13 @@ impl BorrowChecker {
                     self.context.exit_scope();
                     self.close_mutability_scope(arm_scope);
                     checked?;
-                    paths.push((self.context.snapshot(), leaves_function(&arm.body)));
+                    paths.push(self.context.snapshot());
                 }
-                self.join_paths(paths);
+                self.context.join(paths);
             }
         }
 
         Ok(())
-    }
-
-    /// Join the end states of a branch's paths (`OwnershipContext::join`). A
-    /// path that LEAVES THE FUNCTION never reaches the code after the branch,
-    /// so it is left out — unless every path does, when what follows is
-    /// unreachable and keeping them all is the conservative choice.
-    fn join_paths(&mut self, paths: Vec<(crate::ownership::FlowState, bool)>) {
-        let reaching = paths.iter().any(|(_, leaves)| !leaves);
-        let joined = paths
-            .into_iter()
-            .filter(|(_, leaves)| !reaching || !leaves)
-            .map(|(state, _)| state)
-            .collect();
-        self.context.join(joined);
     }
 
     /// Check `{ stmts...; value }` in value position, in its own scope.
@@ -1801,26 +1797,6 @@ impl BorrowChecker {
             }
             _ => None,
         }
-    }
-}
-
-/// Whether every path through `stmts` ends in a `return` — the shallow,
-/// syntactic question: the last statement returns, or is an `if`/`else` or a
-/// `match` all of whose arms do. Anything else (a `break`, a `continue`, a
-/// call that never returns) answers no, which keeps the path in the join.
-fn leaves_function(stmts: &[Stmt]) -> bool {
-    match stmts.last() {
-        Some(Stmt::Return(_)) => true,
-        Some(Stmt::If {
-            then_branch,
-            else_branch: Some(else_branch),
-            ..
-        }) => leaves_function(then_branch) && leaves_function(else_branch),
-        Some(Stmt::Match { arms, .. }) => {
-            !arms.is_empty() && arms.iter().all(|arm| leaves_function(&arm.body))
-        }
-        Some(Stmt::Unsafe { body, .. }) => leaves_function(body),
-        _ => false,
     }
 }
 

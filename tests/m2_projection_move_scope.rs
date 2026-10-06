@@ -752,9 +752,7 @@ fn test_a_re_initialisation_on_one_path_does_not_count_after_the_branch() {
 /// paths", not "never owned again": both arms of an `if`/`else`, every link of
 /// an `else if` chain that ends in `else`, every arm of a `match`, both arms of
 /// a value `if`, and an outer `if` whose arms both re-initialise (one of them
-/// through an inner `if`). An arm that LEAVES THE FUNCTION is not a path to the
-/// code after the branch, so it does not have to re-initialise. All of these
-/// were refused on 2563001.
+/// through an inner `if`). All of these were refused on 2563001.
 #[test]
 fn test_a_re_initialisation_on_every_path_counts_after_the_branch() {
     let bodies = [
@@ -772,10 +770,6 @@ fn test_a_re_initialisation_on_every_path_counts_after_the_branch() {
         "fn main() { let mut d: D = mk(1); let a: In = d.inner; let c: bool = true; let e: bool = false;
            if c { if e { d = mk(2); } else { d = mk(3); } } else { d = mk(4); }
            let b: In = d.inner; print_int(a.v + b.v); }",
-        "fn f(c: bool) -> i64 { let mut d: D = mk(1); let a: In = d.inner;
-           if c { d = mk(2); } else { return a.v; }
-           let b: In = d.inner; return a.v + b.v; }
-         fn main() { print_int(f(true)); }",
     ];
     for body in bodies {
         let program = with_d(body);
@@ -791,10 +785,9 @@ fn test_a_re_initialisation_on_every_path_counts_after_the_branch() {
 
 /// EACH ARM STARTS FROM THE STATE BEFORE THE BRANCH. Both arms moving the same
 /// field is one move on every path, not two moves; so is every arm of a
-/// `match` doing it; and an arm that moves and then leaves the function does
-/// not reach the code after the branch. All three were refused on 2563001 and
-/// on 6a3d028 ("Use of moved value: d.inner" in the second arm, or after the
-/// branch), because the walk ran the arms one after the other.
+/// `match` doing it. Both were refused on 2563001 and on 6a3d028 ("Use of
+/// moved value: d.inner" in the second arm), because the walk ran the arms one
+/// after the other.
 #[test]
 fn test_each_arm_starts_from_the_state_before_the_branch() {
     let bodies = [
@@ -804,10 +797,6 @@ fn test_each_arm_starts_from_the_state_before_the_branch() {
            match k { 0 => { let a: In = d.inner; print_int(a.v); }
                      1 => { let b: In = d.inner; print_int(b.v); }
                      _ => { let e: In = d.inner; print_int(e.v); } } }",
-        "fn f(c: bool) -> i64 { let d: D = mk(1);
-           if c { let a: In = d.inner; return a.v; }
-           let b: In = d.inner; return b.v; }
-         fn main() { print_int(f(true)); }",
     ];
     for body in bodies {
         let program = with_d(body);
@@ -1018,6 +1007,167 @@ fn test_a_dynamic_index_write_does_not_revive_a_fixed_element() {
     assert!(
         is_use_of_moved_value(&result),
         "a write through a dynamic index revived a fixed element: {:?}",
+        result
+    );
+}
+
+/// AN ARM THAT CAN LEAVE BY `break` OR `continue` IS A PATH TO WHAT FOLLOWS,
+/// whatever its last statement is. Review round 2 on 6a79265: the arm was
+/// judged by its LAST statement alone, so `…; break; return;` and
+/// `if stop { break; } return;` counted as leaving the function and the arm's
+/// move of `d.inner` was dropped from the join — measured, gpt-6-astra's
+/// break_then_return, conditional_break_then_return and
+/// break_then_nested_return COMPILED and printed `1 1`, where 2563001
+/// refused them. The `continue` spellings are the same hole: the loop's next
+/// test of its condition can exit it.
+#[test]
+fn test_an_arm_that_can_break_or_continue_is_a_path() {
+    let bodies = [
+        "fn main() { let d: D = mk(1); let c: bool = true;
+           loop { if c { let a: In = d.inner; print_int(a.v); break; return; } else { break; } }
+           let b: In = d.inner; print_int(b.v); }",
+        "fn main() { let d: D = mk(1); let c: bool = true; let stop: bool = true;
+           loop { if c { let a: In = d.inner; print_int(a.v); if stop { break; } return; } else { break; } }
+           let b: In = d.inner; print_int(b.v); }",
+        "fn main() { let d: D = mk(1); let c: bool = true;
+           loop { if c { let a: In = d.inner; print_int(a.v); break; if c { return; } else { return; } } else { break; } }
+           let b: In = d.inner; print_int(b.v); }",
+        "fn main() { let d: D = mk(1); let c: bool = true; let mut i: i64 = 0;
+           while i < 1 { i = i + 1; if c { let a: In = d.inner; print_int(a.v); continue; return; } }
+           let b: In = d.inner; print_int(b.v); }",
+        "fn main() { let d: D = mk(1); let c: bool = true; let stop: bool = true; let mut i: i64 = 0;
+           while i < 1 { i = i + 1; if c { let a: In = d.inner; print_int(a.v); if stop { continue; } return; } }
+           let b: In = d.inner; print_int(b.v); }",
+        "fn main() { let d: D = mk(1); let k: i64 = 1;
+           loop { match k { 0 => { let a: In = d.inner; print_int(a.v); if k == 0 { break; } return; }
+                            _ => { break; } } }
+           let b: In = d.inner; print_int(b.v); }",
+    ];
+    for body in bodies {
+        let program = with_d(body);
+        let result = borrow_check(&program);
+        assert!(
+            is_use_of_moved_value(&result),
+            "an arm that can break or continue was dropped from the join: {:?}\n{}",
+            result,
+            program
+        );
+    }
+}
+
+/// EVERY ARM JOINS, INCLUDING ONE THAT ENDS IN `return` — deliberately.
+///
+/// 6a79265 left an arm out of the join when its last statement returned. Two
+/// reviewers broke that in eight shapes: a `break` or `continue` earlier in the
+/// arm (the test above), and the else-if, value-`if`, `match` and reversed
+/// shapes below (grok-4.7's e1, d4, e6, f3). The exclusion was removed rather
+/// than repaired: this pass has no divergence analysis, and joining every arm
+/// is sound by construction. What it costs is precision — each program here is
+/// one Rust accepts, because the arm that moves `d.inner` never reaches the
+/// read after the branch — and every one of them was refused on 2563001 too,
+/// so nothing is lost against main. A divergence analysis that admits them
+/// must flip this test on purpose.
+#[test]
+fn test_a_returning_arm_still_joins() {
+    let bodies = [
+        // grok e1: else-if chain, the moving arm returns
+        "fn main() -> i64 { let mut d: D = mk(1); let n: i64 = 0;
+           if n == 1 { let a: In = d.inner; print_int(a.v); return 0; }
+           else if n == 2 { print_int(7); return 0; }
+           else { print_int(8); }
+           let b: In = d.inner; print_int(b.v); return 0; }",
+        // grok d4: value if
+        "fn main() -> i64 { let mut d: D = mk(1); let n: i64 = 1;
+           let x: i64 = if n == 1 { let a: In = d.inner; print_int(a.v); return 0; 1 } else { 2 };
+           let b: In = d.inner; print_int(b.v); print_int(x); return 0; }",
+        // grok e6: match
+        "fn main() -> i64 { let mut d: D = mk(1); let n: i64 = 1;
+           match n { 1 => { let a: In = d.inner; print_int(a.v); return 0; } _ => { print_int(7); } }
+           let b: In = d.inner; print_int(b.v); return 0; }",
+        // grok f3: the arm that does NOT return is in the middle
+        "fn main() -> i64 { let mut d: D = mk(1); let n: i64 = 2;
+           if n == 1 { let a: In = d.inner; print_int(a.v); return 0; }
+           else if n == 2 { print_int(7); }
+           else { print_int(8); return 0; }
+           let b: In = d.inner; print_int(b.v); return 0; }",
+        // the returning arm inside a loop
+        "fn main() { let d: D = mk(1); let c: bool = false;
+           loop { if c { let a: In = d.inner; print_int(a.v); return; } break; }
+           let b: In = d.inner; print_int(b.v); }",
+        // the else arm returns after a re-initialisation elsewhere
+        "fn f(c: bool) -> i64 { let mut d: D = mk(1); let a: In = d.inner;
+           if c { d = mk(2); } else { return a.v; }
+           let b: In = d.inner; return a.v + b.v; }
+         fn main() { print_int(f(true)); }",
+    ];
+    for body in bodies {
+        let program = with_d(body);
+        let result = borrow_check(&program);
+        assert!(
+            is_use_of_moved_value(&result),
+            "a returning arm was left out of the join: {:?}\n{}",
+            result,
+            program
+        );
+    }
+}
+
+/// A CONSTANT INDEX IS THAT ELEMENT, ON BOTH SIDES. The assignment target used
+/// to record every index as `[dynamic]`, which overlaps every element — so
+/// review round 2 measured `let r = &xs[0]; xs[1] = 7;` REFUSED on 6a79265
+/// ("cannot assign to `xs[dynamic]` because `xs[0]` is borrowed") where
+/// 2563001 compiled it and printed `1 7`. Distinct constants do not overlap,
+/// whether the borrow is still read or not; and a write to `xs[0]` gives that
+/// element a new value as a field write does (refused on 2563001 as well).
+#[test]
+fn test_distinct_constant_indices_do_not_overlap() {
+    let programs = [
+        "fn main() { let mut xs: [i64; 2] = [1, 2]; let r: &i64 = &xs[0]; xs[1] = 7;
+           print_int(*r); print_int(xs[1]); }",
+        "fn main() { let mut xs: [i64; 2] = [1, 2]; let r: &i64 = &xs[0]; xs[1] = 7; print_int(xs[1]); }",
+        "struct In { v: i64 }
+         fn main() { let mut xs: [In; 2] = [In { v: 1 }, In { v: 2 }]; let a: In = xs[0];
+           xs[0] = In { v: 3 }; let b: In = xs[0]; print_int(a.v + b.v); }",
+    ];
+    for program in programs {
+        let result = borrow_check(program);
+        assert!(
+            result.is_ok(),
+            "distinct constant indices were treated as overlapping: {:?}\n{}",
+            result,
+            program
+        );
+    }
+}
+
+/// ...BUT THE SAME CONSTANT, OR AN INDEX THAT IS NOT A CONSTANT, DOES. Writing
+/// `xs[0]` under a live `&xs[0]`, or `xs[i]` under a live `&xs[0]`, is refused
+/// at the assignment (both compiled on 2563001); and a write to `xs[1]` does
+/// not revive a moved `xs[0]`.
+#[test]
+fn test_the_same_or_a_dynamic_index_overlaps() {
+    let writes = [
+        "fn main() { let mut xs: [i64; 2] = [1, 2]; let r: &i64 = &xs[0]; xs[0] = 7; print_int(*r); }",
+        "fn main() { let mut xs: [i64; 2] = [1, 2]; let r: &i64 = &xs[0]; let i: i64 = 1;
+           xs[i] = 7; print_int(*r); }",
+    ];
+    for program in writes {
+        let result = borrow_check(program);
+        assert!(
+            is_assignment_to_a_borrowed_place(&result),
+            "a write to an overlapping index was not refused at the assignment: {:?}\n{}",
+            result,
+            program
+        );
+    }
+    let result = borrow_check(
+        "struct In { v: i64 }
+         fn main() { let mut xs: [In; 2] = [In { v: 1 }, In { v: 2 }]; let a: In = xs[0];
+           xs[1] = In { v: 3 }; let b: In = xs[0]; print_int(a.v + b.v); }",
+    );
+    assert!(
+        is_use_of_moved_value(&result),
+        "a write to xs[1] revived a moved xs[0]: {:?}",
         result
     );
 }
