@@ -1020,6 +1020,49 @@ manifest "$D" 'tests/lib.pd|skip|compile|code=PD0044;msg~No main function found|
 run_case "$D"
 expect_rc 0 && expect_out "skip=1" && ok
 
+# THE ORDER OF THE TWO HALVES. A pin names a code and, optionally, a fragment; the
+# code is compared FIRST, by equality, and a fragment that happens to be in the
+# payload buys nothing when the code is wrong. The premise — that the fragment
+# really is in this refusal's payload — is asserted under the RIGHT code first, or
+# the case below could be passing on a fragment that was never there.
+start "code: a WRONG code with its fragment IN the payload is WRONG_CODE — the code decides first"
+D=$(new_repo codewrongfrag)
+fixture "$D" tests/refused.pd "$bad_program"
+manifest "$D" 'tests/refused.pd|reject|compile|code=PD0013;msg~Expected function, struct|-|premise: right code'
+run_case "$D"
+if [ "$RC" -ne 0 ] || case "$OUT" in *"reject=1"*) false ;; *) true ;; esac; then
+  bad "premise: the fragment did not satisfy the RIGHT code, so it is not in the payload and this case plants nothing"
+else
+  manifest "$D" 'tests/refused.pd|reject|compile|code=PD0030;msg~Expected function, struct|-|wrong code, fragment present'
+  run_case "$D"
+  expect_rc 1 && expect_out "WRONG_CODE" && expect_out "pinned PD0030" && expect_out "carries PD0013" \
+    && expect_not_out "MSG_MISMATCH" && expect_not_out "reject=1" && ok
+fi
+
+# A BARE PIN ACCEPTS EVERY REFUSAL ITS CODE CAN PRINT (suF-a review round 1). PD0006
+# prints two payloads over its four witnesses — "unknown attribute `frobnicate`"
+# (three rows) and "unknown attribute `total`" (one) — and the three frobnicate rows
+# were pinned bare `code=PD0006`, which the comparator decides on the code alone: a
+# program refused for `total` satisfied every one of them. Each frobnicate row's LIVE
+# pin is read from the real manifest and planted over the real `total` refusal, so
+# this goes red the day one of those pins goes bare again. Against the pre-fix
+# manifest every case in this loop is REJECTED, exit 0 — and fails.
+for row in tests/reject/unknown_attribute.pd tests/reject/attribute_with_args.pd \
+           tests/reject/attribute_inner.pd; do
+  start "code: the \`total\` refusal planted at $row's live pin is MSG_MISMATCH, not a witness"
+  pin=$(awk -F'\t' -v p="$row" '$1 !~ /^#/ && $1==p {print $4}' "$REPO/tests/conformance-manifest.txt")
+  D=$(new_repo "codeattr_$(basename "$row" .pd)")
+  cp "$REPO/tests/reject/total_attribute.pd" "$D/tests/planted.pd"
+  manifest "$D" "tests/planted.pd|reject|compile|$pin|-|the total refusal under a frobnicate row's pin"
+  run_case "$D"
+  expect_rc 1 && expect_out "MSG_MISMATCH" && expect_not_out "reject=1" && ok
+done
+start "code: ...paired control: the same plant under total_attribute.pd's own live pin is a witness"
+pin=$(awk -F'\t' '$1 !~ /^#/ && $1=="tests/reject/total_attribute.pd" {print $4}' "$REPO/tests/conformance-manifest.txt")
+manifest "$D" "tests/planted.pd|reject|compile|$pin|-|the total refusal under its own pin"
+run_case "$D"
+expect_rc 0 && expect_out "reject=1" && ok
+
 start "code: a fragment containing ';' is split at the FIRST ';msg~' and still matches"
 # The live case: tests/reject/const_generic_param.pd pins `[Int; N]`.
 D=$(new_repo codesemicolon)

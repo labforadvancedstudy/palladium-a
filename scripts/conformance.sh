@@ -437,7 +437,7 @@ check_stage() {   # check_stage <lineno> <class> <stage>
 # not the one grammar: a bare `PD0001`, `code= PD0001`, `code =PD0001`, a blank
 # after the code, an empty `;msg~`, and a PHRASE — the pre-GI-12 pin, which any
 # log line carrying the words could satisfy. Inside a fragment every character is
-# literal, blanks included: two PD0004 fragments end in one.
+# literal, blanks included: a leading or trailing blank is part of it too.
 PIN_RE='^code=PD[0-9]{4}(;msg~.+)?$'
 check_code_pin() {   # check_code_pin <lineno> <class> <observable>
   [[ $3 =~ $PIN_RE ]] && return 0

@@ -1,37 +1,74 @@
-# GI-12 CODE-PIN MAP — the INPUT of scripts/gen-code-pins.py. NOT AN AUTHORITY.
+# GI-12 CODE-PIN MAP — the INPUT of scripts/gen-code-pins.py, held equal to the
+# manifest's pins by `make check-diagnostic-codes`.
 #
-# WHAT THIS IS. The su0 semantic map, as both review engines approved it: one row
-# per refusal-witness manifest row (122 `reject` + 2 `skip`), saying which stable
-# code that row's refusal carries and, where the code has several witnesses,
-# which fragment of the PRIMARY header's payload tells this row apart. The
-# generator reads it once and writes column 4 of every reject/skip row of
-# tests/conformance-manifest.txt as `code=PD####` or `code=PD####;msg~<fragment>`.
+# WHAT THIS IS. The su0 semantic map, as both review engines approved it, plus the
+# amendments recorded below: one row per refusal-witness manifest row (122
+# `reject` + 2 `skip`), saying which stable code that row's refusal carries and,
+# where the code prints more than one payload, which fragment of the PRIMARY
+# header's payload tells this row apart. The generator writes column 4 of every
+# reject/skip row of tests/conformance-manifest.txt as `code=PD####` or
+# `code=PD####;msg~<fragment>`, re-measuring every payload from the compiler.
 #
-# WHAT IT IS NOT. After the cutover the MANIFEST is the authority, and nothing
-# compares the manifest against this file: a gate that did would make two files
-# answer one question. Edit a pin in the manifest and this file goes stale
-# without anything going red — that is by design, and it is why the generator
-# re-measures every payload from the compiler instead of trusting what is
-# written here. Re-run the generator only to re-derive pins wholesale, and read
-# its diff.
+# ONE QUESTION, TWO SPELLINGS, HELD EQUAL. conformance.sh reads the manifest; the
+# generator reads this file. Until suF-a review round 1 nothing compared them, so a
+# hand edit of a manifest pin left this file stale with nothing going red — and a
+# pin that skipped the generator skipped every check it makes. Now
+# check-diagnostic-codes.sh requires, textually (no compile), that every refusal
+# row's manifest pin is EXACTLY the pin this file dictates and that both name the
+# same refusal rows. A pin is changed HERE, and the manifest is re-derived with the
+# generator, whose diff is the review surface.
 #
 # COLUMNS (TAB-separated, 11, the locked map's own):
 #   code  condition  witnesses  row  class  param_dep  witness_tag
 #   discrimination_required  msg_tilde  candidate_fragment  single_witness_shape
 # `msg_tilde=yes` -> the pin carries `;msg~<candidate_fragment>`; `no` -> bare
-# `code=PD####` (a single-witness code, or a row tagged IDENTICAL because its
-# payload is character-identical to a sibling's). The generator refuses to emit
-# unless every one of those statements is true of the CURRENT compiler.
+# `code=PD####`. THE RULE (spec R9's intent — a fragment tells a row apart from
+# its same-code siblings): partition each code's witnesses into PAYLOAD GROUPS,
+# rows whose primary payloads are character-identical. A code with ONE group (a
+# single witness, or twins and nothing else) may be pinned bare. A code with two
+# or more needs `;msg~F` on EVERY row, where F is in its own group's payload and
+# in no other group's; twins share one fragment. `IDENTICAL` only says a row need
+# not be told apart from its char-identical twins — it is not a licence to be
+# bare. The generator refuses to emit unless every statement here is true of the
+# CURRENT compiler.
+#
+# AMENDMENTS. "Locked" was a process device — the map both engines approved at
+# su0 — and a review-found accepting pin outranks it. Each fragment below was
+# verified by the generator, not by eye.
+#   suF-a review round 1 (2026-10-06), all three engines naming the first item:
+#   1. PD0006 attribute_inner, attribute_with_args, unknown_attribute: bare ->
+#      ``;msg~`frobnicate` ``. PD0006 prints two payloads (``unknown attribute
+#      `frobnicate` `` x3, ``unknown attribute `total` `` x1), so the bare pins
+#      accepted a `total` refusal at a frobnicate row — the old phrase pin did not.
+#   2. PD0001 bool_split_is_not_nested + enum_payload_collective_coverage ->
+#      `missing patterns Q::W`; guarded_wildcard_only + nonexhaustive_int_match
+#      -> ``a `_` or binding arm``. PD0001 prints eight payloads, and each bare pair
+#      accepted the other six. On all seven rows discrimination_required and
+#      msg_tilde went no -> yes; witness_tag stays IDENTICAL (each is still
+#      char-identical to its twin).
+#   3. PD0004 for_binder_shadows_item, pattern_binder_shadows_item,
+#      const_local_shadows_item: the fragment carried `declared at line N`, so a
+#      comment edit in the fixture broke the pin. Now binder kind + name
+#      (``the loop variable `LIMIT` ``, ``the pattern binding `LIMIT` ``,
+#      ``the local `LIMIT` ``); the `@` row's `` `@` `` was already that shape.
+#
+# KNOWN QUIRKS, recorded so the record is complete. Three fragments end mid-word,
+# where the su0 map cut them: PD0002 const_shl_negative_left `…which C leaves u`,
+# PD0019 shadow_builtin `…a function is decla`, PD0008 macro_body_string_literal
+# `…the token stream s`. A fragment is a substring of one payload line, so these
+# are as selective as their whole-word forms (the generator measures it) and are
+# left as approved. The fourth, PD0004 pattern_binder's `…a loca`, went with
+# amendment 3.
 code	condition	witnesses	row	class	param_dep	witness_tag	discrimination_required	msg_tilde	candidate_fragment	single_witness_shape
 PD0001	Non-exhaustive match expression	10	tests/reject/bool_match_true_guarded.pd	reject	no	REGRESSION	yes	yes	missing patterns true	-
 PD0001	Non-exhaustive match expression	10	tests/reject/bool_split_ignores_guarded.pd	reject	no	REGRESSION	yes	yes	missing patterns F::On	-
-PD0001	Non-exhaustive match expression	10	tests/reject/bool_split_is_not_nested.pd	reject	no	IDENTICAL	no	no	-	-
+PD0001	Non-exhaustive match expression	10	tests/reject/bool_split_is_not_nested.pd	reject	no	IDENTICAL	yes	yes	missing patterns Q::W	-
 PD0001	Non-exhaustive match expression	10	tests/reject/bool_split_needs_irrefutable_rest.pd	reject	no	REGRESSION	yes	yes	missing patterns E::Pair	-
 PD0001	Non-exhaustive match expression	10	tests/reject/bool_split_values_not_positions.pd	reject	no	REGRESSION	yes	yes	missing patterns E::P —	-
-PD0001	Non-exhaustive match expression	10	tests/reject/enum_payload_collective_coverage.pd	reject	no	IDENTICAL	no	no	-	-
+PD0001	Non-exhaustive match expression	10	tests/reject/enum_payload_collective_coverage.pd	reject	no	IDENTICAL	yes	yes	missing patterns Q::W	-
 PD0001	Non-exhaustive match expression	10	tests/reject/enum_payload_not_exhaustive.pd	reject	no	REGRESSION	yes	yes	missing patterns P::Num	-
-PD0001	Non-exhaustive match expression	10	tests/reject/guarded_wildcard_only.pd	reject	yes	IDENTICAL	no	no	-	-
-PD0001	Non-exhaustive match expression	10	tests/reject/nonexhaustive_int_match.pd	reject	yes	IDENTICAL	no	no	-	-
+PD0001	Non-exhaustive match expression	10	tests/reject/guarded_wildcard_only.pd	reject	yes	IDENTICAL	yes	yes	a `_` or binding arm	-
+PD0001	Non-exhaustive match expression	10	tests/reject/nonexhaustive_int_match.pd	reject	yes	IDENTICAL	yes	yes	a `_` or binding arm	-
 PD0001	Non-exhaustive match expression	10	tests/reject/bool_match_missing_false.pd	reject	no	REGRESSION	yes	yes	missing patterns false	-
 PD0002	the initialiser of a top-level const/static has no value in the target's arithmetic (typeck:2105-2111, one `refuse` closure; doc :2100-2104 'exactly these three')	6	tests/reject/const_divide_by_zero.pd	reject	yes	-	yes	yes	the initialiser of `X` has no value: division by zero	-
 PD0002	the initialiser of a top-level const/static has no value in the target's arithmetic (typeck:2105-2111, one `refuse` closure; doc :2100-2104 'exactly these three')	6	tests/reject/const_overflows_i64.pd	reject	yes	-	yes	yes	the initialiser of `X` has no value: 9223372036854775807 + 1 overflows i64	-
@@ -44,17 +81,17 @@ PD0003	a cast among the numeric primitives and `X`, or between `X` and `X` — `
 PD0003	a cast among the numeric primitives and `X`, or between `X` and `X` — `X` crosses only to its code point, because that is the only correspondence it is defined by	4	tests/reject/char_does_not_cast_to_bool.pd	reject	yes	-	yes	yes	a cast from Char to Bool	-
 PD0003	a cast among the numeric primitives and `X`, or between `X` and `X` — `X` crosses only to its code point, because that is the only correspondence it is defined by	4	tests/reject/char_does_not_cast_to_float.pd	reject	no	-	yes	yes	a cast from Char to Float	-
 PD0004	a local binding may not shadow a top-level item (typeck:2009-2018, one Err, `what` is the binder kind)	4	tests/reject/at_binding_shadows_item.pd	reject	yes	-	yes	yes	`@`	-
-PD0004	a local binding may not shadow a top-level item (typeck:2009-2018, one Err, `what` is the binder kind)	4	tests/reject/for_binder_shadows_item.pd	reject	yes	-	yes	yes	the loop variable `LIMIT` has the name of the top-level item declared at line 16: a local 	-
-PD0004	a local binding may not shadow a top-level item (typeck:2009-2018, one Err, `what` is the binder kind)	4	tests/reject/pattern_binder_shadows_item.pd	reject	yes	-	yes	yes	the pattern binding `LIMIT` has the name of the top-level item declared at line 14: a loca	-
-PD0004	a local binding may not shadow a top-level item (typeck:2009-2018, one Err, `what` is the binder kind)	4	tests/reject/const_local_shadows_item.pd	reject	yes	-	yes	yes	the local `LIMIT` has the name of the top-level item declared at line 11: a local binding 	-
+PD0004	a local binding may not shadow a top-level item (typeck:2009-2018, one Err, `what` is the binder kind)	4	tests/reject/for_binder_shadows_item.pd	reject	yes	-	yes	yes	the loop variable `LIMIT`	-
+PD0004	a local binding may not shadow a top-level item (typeck:2009-2018, one Err, `what` is the binder kind)	4	tests/reject/pattern_binder_shadows_item.pd	reject	yes	-	yes	yes	the pattern binding `LIMIT`	-
+PD0004	a local binding may not shadow a top-level item (typeck:2009-2018, one Err, `what` is the binder kind)	4	tests/reject/const_local_shadows_item.pd	reject	yes	-	yes	yes	the local `LIMIT`	-
 PD0005	a top-level name is declared twice and the program has one namespace (typeck:2294-2303, one Err, `what` is the kind)	4	tests/reject/const_collides_with_enum.pd	reject	yes	-	yes	yes	`Colour`	-
 PD0005	a top-level name is declared twice and the program has one namespace (typeck:2294-2303, one Err, `what` is the kind)	4	tests/reject/const_collides_with_function.pd	reject	yes	-	yes	yes	`f`	-
 PD0005	a top-level name is declared twice and the program has one namespace (typeck:2294-2303, one Err, `what` is the kind)	4	tests/reject/const_collides_with_type_alias.pd	reject	yes	-	yes	yes	`Meters`	-
 PD0005	a top-level name is declared twice and the program has one namespace (typeck:2294-2303, one Err, `what` is the kind)	4	tests/reject/function_collides_with_const.pd	reject	yes	-	yes	yes	`const`	-
-PD0006	unknown attribute `X`	4	tests/reject/attribute_inner.pd	reject	yes	IDENTICAL	no	no	-	-
-PD0006	unknown attribute `X`	4	tests/reject/attribute_with_args.pd	reject	yes	IDENTICAL	no	no	-	-
+PD0006	unknown attribute `X`	4	tests/reject/attribute_inner.pd	reject	yes	IDENTICAL	yes	yes	`frobnicate`	-
+PD0006	unknown attribute `X`	4	tests/reject/attribute_with_args.pd	reject	yes	IDENTICAL	yes	yes	`frobnicate`	-
 PD0006	unknown attribute `X`	4	tests/reject/total_attribute.pd	reject	yes	-	yes	yes	`total`	-
-PD0006	unknown attribute `X`	4	tests/reject/unknown_attribute.pd	reject	yes	IDENTICAL	no	no	-	-
+PD0006	unknown attribute `X`	4	tests/reject/unknown_attribute.pd	reject	yes	IDENTICAL	yes	yes	`frobnicate`	-
 PD0007	`X` on a top-level `X` is not implemented: nothing exports `X` and nothing emits a definition for an imported one, so the keyword would promise a visibility that does not	3	tests/reject/pub_const_item.pd	reject	yes	-	yes	yes	`const`	-
 PD0007	`X` on a top-level `X` is not implemented: nothing exports `X` and nothing emits a definition for an imported one, so the keyword would promise a visibility that does not	3	tests/reject/pub_static_item.pd	reject	yes	-	yes	yes	`LIMIT`	-
 PD0007	`X` on a top-level `X` is not implemented: nothing exports `X` and nothing emits a definition for an imported one, so the keyword would promise a visibility that does not	3	tests/reject/pub_static_mut_item.pd	reject	yes	-	yes	yes	`COUNTER`	-

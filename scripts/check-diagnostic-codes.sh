@@ -24,8 +24,12 @@
 #      Every reject row (stage compile) and skip row MUST pin
 #      `code=PD####[;msg~<fragment>]`, exactly: no bare `PD####`, no spaces, no
 #      phrase, no tombstoned or unregistered code. The SET of refusal rows is
-#      pinned by digest (R5), so a compensated retype goes red; and the counts
-#      conformance prints are a REQUIREMENT here, not an observation.
+#      pinned by digest (R5, over path, class AND stage), so a compensated retype
+#      goes red; its SIZE is a committed constant beside the digest, and both the
+#      manifest's code-pinned rows and the counts conformance prints are held to
+#      it — a REQUIREMENT here, not an observation. Every pin must be exactly the
+#      pin docs/contributing/diagnostic-pin-map.tsv dictates (a textual check,
+#      no compile), and the pin grammar is one literal in three files.
 #   4. PARSER SELF-TESTS. The shared parser (scripts/lib/diag-parse.sh) is
 #      handed planted mutants and must report each one correctly. The mutants run
 #      in a temp dir against temp manifests. THE LIVE CORPUS IS NEVER MUTATED —
@@ -33,6 +37,10 @@
 #   5. FIRST-WITNESS EMISSION. Each active code's first_witness is compiled for
 #      real, and its stderr must carry that code. This is the only check that
 #      proves the registry describes THIS BINARY and not a past one.
+#   6. WIRING. The mutants call the check FUNCTIONS, so they stay green if the
+#      LIVE call of a check is deleted. Every live check therefore runs through
+#      `live`, which records that it reached a verdict, and the run ends by
+#      requiring every label in LIVE_REQUIRED: a missing one is RED, by name.
 #
 # THREE-VALUED EXIT, and the aggregation may not swallow the third.
 #   0 = every check passed.
@@ -50,6 +58,16 @@ cd "$(dirname "$0")/.." || exit 2
 PDC=./target/release/pdc
 REGISTRY=docs/contributing/diagnostic-codes.tsv
 MANIFEST=${CONFORMANCE_MANIFEST:-tests/conformance-manifest.txt}
+PIN_MAP=docs/contributing/diagnostic-pin-map.tsv
+GENERATOR=scripts/gen-code-pins.py
+
+# THE PIN GRAMMAR — column 4 of a reject (stage compile) or skip row. The same
+# literal is written in scripts/conformance.sh (`PIN_RE`, which refuses to READ any
+# other spelling) and scripts/gen-code-pins.py (`PIN_GRAMMAR`, which refuses to
+# WRITE one). Three copies of one regex are three programs the day one is edited,
+# so `check_pin_grammar_copies` holds all three to this one, character for
+# character.
+PIN_RE='^code=PD[0-9]{4}(;msg~.+)?$'
 
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; YELLOW=$'\033[0;33m'; NC=$'\033[0m'
 
@@ -74,6 +92,8 @@ ROOT="$PWD"
 [ -r "$REGISTRY" ] || { echo "error: registry $REGISTRY not readable" >&2; exit 2; }
 [ -r "$MANIFEST" ] || { echo "error: manifest $MANIFEST not readable" >&2; exit 2; }
 [ -r scripts/lib/diag-parse.sh ] || { echo "error: shared parser missing" >&2; exit 2; }
+[ -r "$PIN_MAP" ]   || { echo "error: pin map $PIN_MAP not readable" >&2; exit 2; }
+[ -r "$GENERATOR" ] || { echo "error: pin generator $GENERATOR not readable" >&2; exit 2; }
 
 . scripts/lib/diag-parse.sh
 
@@ -87,6 +107,48 @@ ok()   { printf '  %sok%s   %s\n' "$GREEN" "$NC" "$1"; }
 bad()  { printf '  %sRED%s  %s\n' "$RED" "$NC" "$1"; fails=$((fails+1)); }
 absta(){ printf '  %sNO VERDICT%s  %s\n' "$YELLOW" "$NC" "$1"; abstained=$((abstained+1)); }
 note() { printf '  %s--%s   %s\n' "$YELLOW" "$NC" "$1"; }
+
+# THE LIVE CALLS, AND THE PROOF THAT EACH ONE HAPPENED.
+#
+# The planted mutants below call `check_codes_pinned`, `check_membership`,
+# `check_code_counts` and the rest DIRECTLY, on temp copies — which proves each
+# function can go red and proves nothing about whether this run ever asks it
+# about the live pair. Deleting a live call left every mutant green (suF-a review
+# round 1). So a live check is ONE statement — `live <label> <ok-text> <check>
+# [args...]` — that runs the check, prints its verdict, and records the label;
+# deleting the call deletes the record, and `check_live_reached` at the end of the
+# run names every label of LIVE_REQUIRED that was never recorded. A label is
+# recorded whatever the verdict, because a check that ran and went RED has
+# already said so: what this catches is the check that never ran.
+#
+# <ok-text> is printed as is, or — when it names a function — that function's
+# output AFTER the check ran, for an ok line that reports what the check produced.
+LIVE_REQUIRED=("registry" "inventory" "pin grammar" "every active code pinned"
+               "R5 membership" "refusal-set size" "map = manifest" "pin grammar copies"
+               "first-witness emission" "counts requirement")
+LIVE_REACHED=()
+live() {                     # label, ok-text | ok-function, check, args...
+  local label=$1 text=$2 out rc l; shift 2
+  out=$("$@"); rc=$?
+  if [ "$rc" -eq 0 ]; then
+    declare -F "$text" >/dev/null && text=$("$text")
+    ok "$text"
+  else
+    while IFS= read -r l; do bad "$label: $l"; done <<<"${out:-the check returned $rc and said nothing}"
+  fi
+  LIVE_REACHED+=("$label")
+}
+check_live_reached() {       # -> the unreached labels, one per line; 0 none / 1 some
+  local want got hit n=0
+  for want in "${LIVE_REQUIRED[@]}"; do
+    hit=0
+    for got in ${LIVE_REACHED[@]+"${LIVE_REACHED[@]}"}; do
+      [ "$got" = "$want" ] && hit=1
+    done
+    [ "$hit" -eq 1 ] || { echo "$want"; n=$((n+1)); }
+  done
+  [ "$n" -eq 0 ]
+}
 
 # THE AGGREGATION RULE, WRITTEN DOWN BECAUSE TWO NON-ZERO STATES CAN COEXIST.
 # A run can hold both a measured defect and a measurement that failed, and the
@@ -306,11 +368,10 @@ check_compiler_inventory() { # $1 = registry -> 0 clean / 1 complained
 # `exit=<N>` — a rule the cutover left alone — and is the one exemption.
 check_manifest_pins() {      # $1 = registry, $2 = manifest -> 0 clean / 1 complained
   local reg=$1 man=$2 n=0 path cls stage obs rest code
-  local pin_re='^code=PD[0-9]{4}(;msg~.+)?$'
   while IFS=$'\t' read -r path cls stage obs rest; do
     case "$cls" in reject|skip) ;; *) continue ;; esac
     [ "$cls" = reject ] && [ "$stage" = run ] && continue
-    if [[ ! $obs =~ $pin_re ]]; then
+    if [[ ! $obs =~ $PIN_RE ]]; then
       echo "$path: class=$cls observable '$obs' is not exactly code=PD####[;msg~<fragment>]"; n=$((n+1)); continue
     fi
     code=${obs:5:6}
@@ -341,37 +402,67 @@ check_codes_pinned() {       # $1 = registry, $2 = manifest -> 0 clean / 1 compl
 }
 
 # R5 — THE MEMBERSHIP PIN. A digest of the EXACT SET of refusal rows, as sorted
-# `path<TAB>class` lines over every `reject` and `skip` row of the manifest. Not a
-# count: retyping reject A to xfail and xfail B to reject keeps every count where
-# it was and changes this. SCOPED TO THE REFUSAL ROWS ON PURPOSE — those are the
-# rows this gate certifies, and a digest over the whole manifest would turn every
-# unrelated xfail-to-run payoff into a red here.
+# `path<TAB>class<TAB>stage` lines over every `reject` and `skip` row of the
+# manifest. Not a count: retyping reject A to xfail and xfail B to reject keeps
+# every count where it was and changes this. THE STAGE IS IN IT because a
+# `reject|compile -> reject|run (exit=N)` retype keeps path and class, and moves
+# the row out of the code-pinned set: it stops being judged by a code at all.
+# SCOPED TO THE REFUSAL ROWS ON PURPOSE — those are the rows this gate certifies,
+# and a digest over the whole manifest would turn every unrelated xfail-to-run
+# payoff into a red here.
 #
 # RE-PINNING IS A DECISION. Adding, removing or retyping a refusal row changes
 # the digest; the run prints the new one, and the edit below is where a reviewer
 # reads which rows moved. `scripts/gen-code-pins.py` prints the same digest
 # (`refusal-rows`) before and after it writes, computed the same way.
-#   was 15378d68… at the GI-12 cutover: 122 reject + 2 skip.
-REFUSAL_SET_SHA=15378d68a9620429096add7db130d874f61d88e77497ea5e1f07518712beaf12
+#   was 15378d68… at the GI-12 cutover, over `path<TAB>class`: 122 reject + 2 skip.
+#   re-pinned e6554cd0… at suF-a review round 1: the SAME 124 rows (122
+#   reject|compile + 2 skip|compile), now hashed with their stage.
+REFUSAL_SET_SHA=e6554cd0fa978da4734b8216551a35c505c482fe9974b3b2434c27acdc4bb910
+# THE SIZE OF THAT SET, pinned beside it and re-pinned by the same deliberate
+# edit. Every row of the set is at stage compile and pins a code, so this is also
+# the number of code-pinned refusal rows and the `coded=` conformance must report.
+# It is a COMMITTED number on purpose: the counts requirement used to be held to a
+# count taken from the live manifest, and deleting refusal rows lowered both sides
+# together (suF-a review round 1).
+REFUSAL_SET_SIZE=124
 refusal_set_digest() {       # $1 = manifest -> sha256 on stdout
-  awk -F'\t' 'NF>=2 && $1 !~ /^#/ && ($2=="reject" || $2=="skip") {print $1 "\t" $2}' "$1" \
+  awk -F'\t' 'NF>=2 && $1 !~ /^#/ && ($2=="reject" || $2=="skip") {print $1 "\t" $2 "\t" $3}' "$1" \
     | LC_ALL=C sort | shasum -a 256 | cut -d' ' -f1
 }
 check_membership() {         # $1 = manifest -> 0 clean / 1 complained
   local got
   got=$(refusal_set_digest "$1")
   if [ "$got" != "$REFUSAL_SET_SHA" ]; then
-    echo "the set of refusal rows changed: digest $got, pinned $REFUSAL_SET_SHA ($(awk -F'\t' 'NF>=2 && $1 !~ /^#/ && ($2=="reject" || $2=="skip")' "$1" | wc -l | tr -d ' ') reject/skip rows now). A row was added, removed or retyped; re-pin REFUSAL_SET_SHA deliberately, naming the rows"
+    echo "the set of refusal rows changed: digest $got, pinned $REFUSAL_SET_SHA ($(awk -F'\t' 'NF>=2 && $1 !~ /^#/ && ($2=="reject" || $2=="skip")' "$1" | wc -l | tr -d ' ') reject/skip rows now). A row was added, removed or retyped (class or stage); re-pin REFUSAL_SET_SHA and REFUSAL_SET_SIZE deliberately, naming the rows"
     return 1
   fi
   return 0
 }
 
-# THE COUNTS LINE IS A REQUIREMENT. Conformance tallies what its coded comparator
-# saw over the refusal rows; every one of them must have reached it CODED, and
-# none uncoded, malformed or unreadable. A sweep that adjudicated fewer rows than
-# the manifest declares is not green here even if its own exit was.
-#   $1 = the `diagnostic-codes:` line (may be empty), $2 = refusal rows that pin a code
+# The manifest's code-pinned refusal rows, counted, against the committed size.
+# R5 already refuses a changed set; this is the half that makes REFUSAL_SET_SIZE a
+# statement about the manifest and not only about conformance's tally.
+code_pinned_rows() {         # $1 = manifest -> count on stdout
+  awk -F'\t' '$1 !~ /^#/ && ($2=="reject" || $2=="skip") && $4 ~ /^code=PD/' "$1" | wc -l | tr -d ' '
+}
+check_refusal_size() {       # $1 = manifest -> 0 clean / 1 complained
+  local got
+  got=$(code_pinned_rows "$1")
+  if [ "$got" != "$REFUSAL_SET_SIZE" ]; then
+    echo "$got refusal row(s) pin a code, and the committed refusal-set size is $REFUSAL_SET_SIZE — rows were added or removed; re-pin REFUSAL_SET_SIZE with REFUSAL_SET_SHA, deliberately"
+    return 1
+  fi
+  return 0
+}
+
+# THE COUNTS LINE IS A REQUIREMENT, held to a COMMITTED number. Exactly this:
+# conformance's `diagnostic-codes:` line must parse, its `coded=` must EQUAL $2,
+# and its `uncoded=`, `malformed=` and `unreadable=` must each be 0. The live call
+# passes REFUSAL_SET_SIZE — not a count of the live manifest, which a deleted row
+# lowers in step with the sweep. It does not say WHICH rows were coded; that every
+# refusal row is in the set and pins a code is R5's and check_refusal_size's.
+#   $1 = the `diagnostic-codes:` line (may be empty), $2 = the required coded count
 check_code_counts() {
   local line=$1 want=$2 c u m r
   if [ -z "$line" ]; then
@@ -385,10 +476,73 @@ check_code_counts() {
     echo "the counts line does not parse: $line"; return 1
   fi
   if [ "$c" -ne "$want" ] || [ "$u" -ne 0 ] || [ "$m" -ne 0 ] || [ "$r" -ne 0 ]; then
-    echo "conformance adjudicated coded=$c uncoded=$u malformed=$m unreadable=$r; the manifest pins $want refusal row(s), so the requirement is coded=$want and the rest 0"
+    echo "conformance adjudicated coded=$c uncoded=$u malformed=$m unreadable=$r; the committed refusal-set size is $want, so the requirement is coded=$want and the rest 0"
     return 1
   fi
   return 0
+}
+
+# B7 — THE MAP AND THE MANIFEST SAY THE SAME THING. TEXTUAL, no compile: the
+# generator measured every payload when it wrote the pins, and this asks only that
+# nothing has been written since by any other hand. Every refusal row's column 4
+# must be EXACTLY the pin the map dictates — `code=<code>`, plus `;msg~<fragment>`
+# where the map says `msg_tilde=yes` — and the map and the manifest must name the
+# same refusal rows, with the same class. The domain is the generator's own: a
+# reject row at stage `run` pins `exit=<N>` and is outside both. The map's header
+# is its first line that is neither blank nor a `#` comment, as the generator
+# reads it.
+check_map_pins() {           # $1 = pin map, $2 = manifest -> 0 clean / 1 complained
+  awk -F'\t' '
+    FNR == NR {
+      sub(/\r$/, "")
+      if ($0 == "" || $0 ~ /^#/) next
+      if (!hdr) { hdr = 1; next }
+      if (NF != 11) { printf "map row %s has %d columns, not 11\n", $4, NF; bad++; next }
+      if ($4 in want) { printf "%s: in the map twice\n", $4; bad++; next }
+      if ($9 == "yes")     want[$4] = "code=" $1 ";msg~" $10
+      else if ($9 == "no") want[$4] = "code=" $1
+      else { printf "%s: the map says msg_tilde=%s, which dictates no pin\n", $4, $9; bad++; want[$4] = "" }
+      cls[$4] = $5
+      next
+    }
+    { sub(/\r$/, "") }
+    $1 ~ /^#/ || NF < 4 { next }
+    ($2 == "reject" || $2 == "skip") && !($2 == "reject" && $3 == "run") {
+      seen[$1] = 1
+      if (!($1 in want)) { printf "%s: a %s row of the manifest that the map does not name\n", $1, $2; bad++; next }
+      if ($2 != cls[$1]) { printf "%s: the manifest says class %s, the map says %s\n", $1, $2, cls[$1]; bad++ }
+      if (want[$1] != "" && $4 != want[$1]) {
+        printf "%s: the manifest pins %s and the map dictates %s — a pin is changed in the map and re-derived by scripts/gen-code-pins.py, never by hand\n", $1, $4, want[$1]; bad++
+      }
+    }
+    END {
+      for (p in want) if (!(p in seen)) { printf "%s: in the map, but not a reject/skip row of the manifest\n", p; bad++ }
+      exit (bad > 0)
+    }' "$1" "$2"
+}
+
+# B6 — ONE PIN GRAMMAR. The literal in scripts/gen-code-pins.py (`PIN_GRAMMAR`) and
+# the one in scripts/conformance.sh (`PIN_RE`) must each be exactly this file's
+# PIN_RE: a writer that accepts a pin the reader refuses, or the reverse, is the
+# drift two copies of one regex invite. Read as TEXT, each from its one defining
+# line; a file with no such line, or two, is a complaint, not a skip.
+check_pin_grammar_copies() { # $1 = gen-code-pins.py, $2 = conformance.sh -> 0 clean / 1 complained
+  local gen conf n=0 k
+  gen=$(sed -n 's/^PIN_GRAMMAR = re\.compile(r"\(.*\)")$/\1/p' "$1")
+  conf=$(sed -n "s/^PIN_RE='\(.*\)'\$/\1/p" "$2")
+  k=$(printf '%s' "$gen" | grep -c '^')
+  if [ "$k" -ne 1 ]; then
+    echo "$1: $k \`PIN_GRAMMAR = re.compile(r\"…\")\` line(s), want exactly 1"; n=$((n+1))
+  elif [ "$gen" != "$PIN_RE" ]; then
+    echo "$1's PIN_GRAMMAR is '$gen', and the grammar is '$PIN_RE' — the writer and the reader disagree"; n=$((n+1))
+  fi
+  k=$(printf '%s' "$conf" | grep -c '^')
+  if [ "$k" -ne 1 ]; then
+    echo "$2: $k \`PIN_RE='…'\` line(s), want exactly 1"; n=$((n+1))
+  elif [ "$conf" != "$PIN_RE" ]; then
+    echo "$2's PIN_RE is '$conf', and the grammar is '$PIN_RE' — the reader and this gate disagree"; n=$((n+1))
+  fi
+  [ "$n" -eq 0 ]
 }
 
 # ---------------------------------------------------------------------------
@@ -398,41 +552,37 @@ echo "=============================================="
 echo "diagnostic codes: registry, inventory, parser"
 echo "=============================================="
 
-out=$(check_registry "$REGISTRY"); rc=$?
-if [ "$rc" -eq 0 ]; then
-  ok "registry coherent ($(registry_rows "$REGISTRY" | wc -l | tr -d ' ') rows: $(awk -F'\t' '$3=="active"' <(registry_rows "$REGISTRY") | wc -l | tr -d ' ') active, $(awk -F'\t' '$3=="tombstone"' <(registry_rows "$REGISTRY") | wc -l | tr -d ' ') tombstone)"
-else
-  while IFS= read -r l; do bad "registry: $l"; done <<<"$out"
-fi
+# Each live check is ONE `live` statement: the call and the record that it ran
+# cannot be separated (see LIVE_REQUIRED above).
+live "registry" "registry coherent ($(registry_rows "$REGISTRY" | wc -l | tr -d ' ') rows: $(awk -F'\t' '$3=="active"' <(registry_rows "$REGISTRY") | wc -l | tr -d ' ') active, $(awk -F'\t' '$3=="tombstone"' <(registry_rows "$REGISTRY") | wc -l | tr -d ' ') tombstone)" \
+  check_registry "$REGISTRY"
 
-out=$(check_compiler_inventory "$REGISTRY"); rc=$?
-if [ "$rc" -eq 0 ]; then
-  ok "binary and registry agree on every code the binary knows ($(awk -F'\t' '$2=="active"' "$TMPROOT/dump" | wc -l | tr -d ' ') active, $(awk -F'\t' '$2=="tombstone"' "$TMPROOT/dump" | wc -l | tr -d ' ') tombstone)"
-else
-  while IFS= read -r l; do bad "inventory: $l"; done <<<"$out"
-fi
+# The counts come from the dump the check itself writes, so the ok line is a
+# function `live` calls AFTER the check, not text computed before it.
+inventory_ok() {
+  printf 'binary and registry agree on every code the binary knows (%s active, %s tombstone)' \
+    "$(awk -F'\t' '$2=="active"' "$TMPROOT/dump" | wc -l | tr -d ' ')" \
+    "$(awk -F'\t' '$2=="tombstone"' "$TMPROOT/dump" | wc -l | tr -d ' ')"
+}
+live "inventory" inventory_ok check_compiler_inventory "$REGISTRY"
 
-out=$(check_manifest_pins "$REGISTRY" "$MANIFEST"); rc=$?
-pinned=$(awk -F'\t' '$1 !~ /^#/ && ($2=="reject" || $2=="skip") && $4 ~ /^code=PD/' "$MANIFEST" | wc -l | tr -d ' ')
-if [ "$rc" -eq 0 ]; then
-  ok "every refusal row pins an active code, exactly ($pinned row(s) pinned by code)"
-else
-  while IFS= read -r l; do bad "manifest: $l"; done <<<"$out"
-fi
+live "pin grammar" "every refusal row pins an active code, exactly ($(code_pinned_rows "$MANIFEST") row(s) pinned by code)" \
+  check_manifest_pins "$REGISTRY" "$MANIFEST"
 
-out=$(check_codes_pinned "$REGISTRY" "$MANIFEST"); rc=$?
-if [ "$rc" -eq 0 ]; then
-  ok "every active code is pinned by at least one refusal row"
-else
-  while IFS= read -r l; do bad "manifest: $l"; done <<<"$out"
-fi
+live "every active code pinned" "every active code is pinned by at least one refusal row" \
+  check_codes_pinned "$REGISTRY" "$MANIFEST"
 
-out=$(check_membership "$MANIFEST"); rc=$?
-if [ "$rc" -eq 0 ]; then
-  ok "the set of refusal rows is the pinned one (R5 digest ${REFUSAL_SET_SHA:0:12}…)"
-else
-  bad "membership: $out"
-fi
+live "R5 membership" "the set of refusal rows is the pinned one (R5 digest ${REFUSAL_SET_SHA:0:12}… over path, class, stage)" \
+  check_membership "$MANIFEST"
+
+live "refusal-set size" "the manifest's code-pinned refusal rows are the committed $REFUSAL_SET_SIZE" \
+  check_refusal_size "$MANIFEST"
+
+live "map = manifest" "every refusal row's pin is exactly the one $PIN_MAP dictates, and the two name the same rows" \
+  check_map_pins "$PIN_MAP" "$MANIFEST"
+
+live "pin grammar copies" "the pin grammar is one literal: $GENERATOR PIN_GRAMMAR = scripts/conformance.sh PIN_RE = this gate's PIN_RE" \
+  check_pin_grammar_copies "$GENERATOR" scripts/conformance.sh
 
 # ---------------------------------------------------------------------------
 # 4 — first-witness emission, against THIS binary
@@ -518,7 +668,7 @@ check_first_witness_emission() {
 
 echo
 echo "first-witness emission (real compiles):"
-out=$(check_first_witness_emission "$REGISTRY")
+out=$(check_first_witness_emission "$REGISTRY"); LIVE_REACHED+=("first-witness emission")
 while IFS= read -r l; do
   [ -n "$l" ] || continue
   case "$l" in
@@ -782,27 +932,134 @@ else
     "\$1==\"$r5_reject\"{\$2=\"xfail\"} \$1==\"$r5_xfail\"{\$2=\"reject\"} {print}" same
   membership_case "M23c a reject <-> skip swap keeps both counts and is still refused" \
     "\$1==\"$r5_reject\"{\$2=\"skip\"} \$1==\"$r5_skip\"{\$2=\"reject\"} {print}" same
+  # The STAGE retype: path and class unchanged, so a `path<TAB>class` digest could
+  # not see it — and the row has left the code-pinned set for an `exit=<N>` rule.
+  membership_case "M23e a stage retype (reject|compile -> reject|run, exit=1) keeps path and class and is still refused" \
+    "\$1==\"$r5_reject\"{\$3=\"run\"; \$4=\"exit=1\"} {print}" same
   out=$(check_membership "$MANIFEST") \
     && ok "M23d meta-control: the unmutated live manifest passes the same function" \
     || bad "M23d meta-control: the unmutated manifest failed the membership pin — M23a-c are uninformative: $out"
 fi
 
-# M24 — THE COUNTS REQUIREMENT, over lines this run did not produce.
+# M24 — THE COUNTS REQUIREMENT, over lines this run did not produce. Each line is
+# derived from the committed size and is wrong in EXACTLY ONE field, so each case
+# is RED for its own clause alone: with `coded=` one short as well (as M24d and
+# M24e once were), deleting the clause under test would have left the case red
+# through `coded != want`, and the mutant would have proved nothing about it.
 counts_case() {              # name, line, want, expected rc
   local out; out=$(check_code_counts "$2" "$3"); local rc=$?
   if [ "$rc" = "$4" ]; then ok "$1"; else bad "$1: rc=$rc, expected $4: ${out:-<nothing>}"; fi
 }
+N=$REFUSAL_SET_SIZE
 counts_case "M24a every refusal row coded, nothing else, is green" \
-  "diagnostic-codes: coded=124 uncoded=0 malformed=0 unreadable=0" 124 0
-counts_case "M24b one row short of the manifest is RED" \
-  "diagnostic-codes: coded=123 uncoded=0 malformed=0 unreadable=0" 124 1
+  "diagnostic-codes: coded=$N uncoded=0 malformed=0 unreadable=0" "$N" 0
+counts_case "M24b one row short of the committed size is RED" \
+  "diagnostic-codes: coded=$((N-1)) uncoded=0 malformed=0 unreadable=0" "$N" 1
 counts_case "M24c an uncoded refusal is RED even if the coded count is reached" \
-  "diagnostic-codes: coded=124 uncoded=1 malformed=0 unreadable=0" 124 1
-counts_case "M24d a malformed refusal is RED" \
-  "diagnostic-codes: coded=123 uncoded=0 malformed=1 unreadable=0" 124 1
-counts_case "M24e an unreadable capture is RED" \
-  "diagnostic-codes: coded=123 uncoded=0 malformed=0 unreadable=1" 124 1
-counts_case "M24f no counts line at all is RED, not skipped" "" 124 1
+  "diagnostic-codes: coded=$N uncoded=1 malformed=0 unreadable=0" "$N" 1
+counts_case "M24d a malformed refusal is RED even if the coded count is reached" \
+  "diagnostic-codes: coded=$N uncoded=0 malformed=1 unreadable=0" "$N" 1
+counts_case "M24e an unreadable capture is RED even if the coded count is reached" \
+  "diagnostic-codes: coded=$N uncoded=0 malformed=0 unreadable=1" "$N" 1
+counts_case "M24f no counts line at all is RED, not skipped" "" "$N" 1
+
+# M26 — THE SIZE IS A COMMITTED NUMBER (B1). A manifest with one refusal row
+# deleted lowers the live count, and must not lower the requirement with it.
+awk -F'\t' -v p="$r5_reject" '$1!=p' "$MANIFEST" >"$M/man_short.txt"
+if cmp -s "$MANIFEST" "$M/man_short.txt"; then
+  bad "M26: the deletion changed nothing, so this mutant proves nothing"
+else
+  out=$(check_refusal_size "$M/man_short.txt")
+  if [ $? -ne 0 ] && printf '%s' "$out" | grep -q "the committed refusal-set size is $REFUSAL_SET_SIZE"; then
+    ok "M26 a manifest one refusal row short is RED against the committed size ($(code_pinned_rows "$M/man_short.txt") vs $REFUSAL_SET_SIZE)"
+  else
+    bad "M26 a short manifest passed the size check: ${out:-<nothing>}"
+  fi
+fi
+out=$(check_refusal_size "$MANIFEST") \
+  && ok "M26b meta-control: the live manifest has the committed number of code-pinned refusal rows" \
+  || bad "M26b meta-control: the live manifest failed the size check — M26 is uninformative: $out"
+
+# M25 — THE GENERATOR FAILS CLOSED (A1). `--self-test` decides planted inputs with
+# the generator's own `decide()`, compiling nothing: a two-group code pinned bare
+# must be REFUSED, naming the group, and its paired controls must be written.
+gen_out=$(python3 "$GENERATOR" --self-test 2>&1); gen_rc=$?
+case "$gen_rc" in
+  0) if printf '%s\n' "$gen_out" | grep -q 'ok   G1 a two-group code with a bare pin is REFUSED'; then
+       ok "M25 the generator refuses a two-group code pinned bare ($(printf '%s\n' "$gen_out" | tail -1))"
+     else
+       bad "M25 the generator self-test exited 0 without deciding G1: $(printf '%s' "$gen_out" | tail -3)"
+     fi ;;
+  1) bad "M25 the generator decided a planted case wrongly: $(printf '%s\n' "$gen_out" | grep 'FAIL' | head -3)" ;;
+  *) absta "M25 the generator self-test could not run (exit $gen_rc): $(printf '%s' "$gen_out" | tail -2)" ;;
+esac
+
+# M27 — ONE PIN GRAMMAR (B6). Each copy drifts once, on a temp copy of its file;
+# the check must name the file that drifted. A copy whose defining line vanishes
+# is a complaint too, not a skip.
+grammar_case() {             # name, source file, sed program, which arg (gen|conf), expected
+  local name=$1 src=$2 prog=$3 which=$4 want=$5 out
+  sed "$prog" "$src" >"$M/grammar_copy"
+  if cmp -s "$src" "$M/grammar_copy"; then
+    bad "$name: the drift changed nothing, so this mutant proves nothing"; return
+  fi
+  if [ "$which" = gen ]; then out=$(check_pin_grammar_copies "$M/grammar_copy" scripts/conformance.sh)
+  else out=$(check_pin_grammar_copies "$GENERATOR" "$M/grammar_copy"); fi
+  if [ $? -ne 0 ] && printf '%s' "$out" | grep -q -- "$want"; then ok "$name"
+  else bad "$name: expected a complaint containing '$want', got: ${out:-<nothing>}"; fi
+}
+grammar_case "M27a the generator's PIN_GRAMMAR drifting ({4} -> {3}) is RED" \
+  "$GENERATOR" '/^PIN_GRAMMAR = /s/{4}/{3}/' gen "PIN_GRAMMAR is '^code=PD\[0-9\]{3}"
+grammar_case "M27b conformance.sh's PIN_RE drifting (.+ -> .*) is RED" \
+  scripts/conformance.sh "/^PIN_RE=/s/\.+/.*/" conf "PIN_RE is '^code=PD\[0-9\]{4}(;msg~\.\*)"
+grammar_case "M27c a PIN_RE definition that is no longer one line is RED, not skipped" \
+  scripts/conformance.sh "/^PIN_RE=/s/^/# /" conf "0 \`PIN_RE="
+out=$(check_pin_grammar_copies "$GENERATOR" scripts/conformance.sh) \
+  && ok "M27d meta-control: the live copies pass the same function" \
+  || bad "M27d meta-control: the live copies failed — M27a-c are uninformative: $out"
+
+# M28 — THE MAP HOLDS THE MANIFEST (B7). A pin edited by hand — here the A1 defect
+# itself, a frobnicate row put back to bare `code=PD0006` — and a map that lost a
+# row must each be RED; the live pair must pass the same function.
+awk -F'\t' -v OFS='\t' '$1=="tests/reject/unknown_attribute.pd"{$4="code=PD0006"} {print}' \
+  "$MANIFEST" >"$M/man_hand.txt"
+if cmp -s "$MANIFEST" "$M/man_hand.txt"; then
+  bad "M28a: the hand edit changed nothing, so this mutant proves nothing"
+else
+  out=$(check_map_pins "$PIN_MAP" "$M/man_hand.txt")
+  if [ $? -ne 0 ] && printf '%s' "$out" | grep -q "tests/reject/unknown_attribute.pd: the manifest pins code=PD0006 and the map dictates code=PD0006;msg~"; then
+    ok "M28a a manifest pin edited by hand (unknown_attribute.pd back to bare) is RED against the map"
+  else
+    bad "M28a a hand-edited pin passed the map check: ${out:-<nothing>}"
+  fi
+fi
+awk -F'\t' '$4!="tests/reject/total_attribute.pd"' "$PIN_MAP" >"$M/map_short.tsv"
+if cmp -s "$PIN_MAP" "$M/map_short.tsv"; then
+  bad "M28b: the deletion changed nothing, so this mutant proves nothing"
+else
+  out=$(check_map_pins "$M/map_short.tsv" "$MANIFEST")
+  if [ $? -ne 0 ] && printf '%s' "$out" | grep -q "tests/reject/total_attribute.pd: a reject row of the manifest that the map does not name"; then
+    ok "M28b a refusal row the map does not name is RED"
+  else
+    bad "M28b a row missing from the map passed: ${out:-<nothing>}"
+  fi
+fi
+out=$(check_map_pins "$PIN_MAP" "$MANIFEST") \
+  && ok "M28c meta-control: the live map and manifest pass the same function" \
+  || bad "M28c meta-control: the live pair failed — M28a-b are uninformative: $out"
+
+# M29 — THE WIRING ASSERTION ITSELF. With one required label unrecorded it must
+# name that label; with every one recorded it must pass. The live run's own
+# assertion is at the end, after the counts requirement has run.
+out=$( LIVE_REACHED=("${LIVE_REQUIRED[@]:1}"); check_live_reached ); rc=$?
+if [ "$rc" -ne 0 ] && [ "$out" = "${LIVE_REQUIRED[0]}" ]; then
+  ok "M29a a live check that never ran is named (${LIVE_REQUIRED[0]})"
+else
+  bad "M29a an unrecorded live check was not named: rc=$rc, said '${out:-<nothing>}'"
+fi
+out=$( LIVE_REACHED=("${LIVE_REQUIRED[@]}"); check_live_reached ) \
+  && ok "M29b paired control: every label recorded passes" \
+  || bad "M29b paired control: a complete record was refused: $out"
 
 # M15 — A WITNESS THAT DOES NOT REFUSE. The registry row is re-pointed at a
 # fixture pdc ACCEPTS (a `run`-class corpus row), which is the shape a witness
@@ -1030,12 +1287,24 @@ apply_conformance_verdict "$verdict" "$conf_rc" "$summary" "$conf_log"
 # corpus produced no verdict at all — that is already an abstention above, and a
 # second complaint about the same missing run would be a double count.
 if [ "$verdict" != NO_VERDICT ]; then
-  out=$(check_code_counts "$(grep -m1 '^diagnostic-codes: ' "$conf_log")" "$pinned")
-  if [ $? -eq 0 ]; then
-    ok "requirement: conformance adjudicated all $pinned pinned refusal rows by code, and nothing uncoded, malformed or unreadable"
-  else
-    bad "requirement: $out"
-  fi
+  live "counts requirement" "requirement: conformance adjudicated the committed $REFUSAL_SET_SIZE refusal rows by code, and nothing uncoded, malformed or unreadable" \
+    check_code_counts "$(grep -m1 '^diagnostic-codes: ' "$conf_log")" "$REFUSAL_SET_SIZE"
+else
+  LIVE_REACHED+=("counts requirement")    # no corpus verdict: already an abstention
+fi
+
+# ---------------------------------------------------------------------------
+# 7 — WIRING: every live check above reached a verdict on THIS run.
+# ---------------------------------------------------------------------------
+echo
+echo "wiring (every live check ran):"
+out=$(check_live_reached)
+if [ $? -eq 0 ]; then
+  ok "wiring: all ${#LIVE_REQUIRED[@]} live checks reached a verdict (${LIVE_REQUIRED[*]})"
+else
+  while IFS= read -r l; do
+    bad "wiring: the live check '$l' never ran — its call is gone, and its mutants stay green without it"
+  done <<<"$out"
 fi
 
 finish

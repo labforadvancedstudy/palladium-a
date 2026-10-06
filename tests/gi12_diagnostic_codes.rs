@@ -146,9 +146,12 @@
 //!
 //! IDENTICAL PAYLOADS, at the largest group in the corpus. PD0006 has four
 //! witnesses and three of them print a CHARACTER-IDENTICAL sentence: three
-//! attribute shapes, one refusal, and no fragment that could tell them apart.
-//! The test asserts the identity rather than inventing a discriminator, for the
-//! reason PD0013's two-witness test does.
+//! attribute shapes, one refusal, and no fragment that could tell them apart
+//! from EACH OTHER. The test asserts the identity rather than inventing a
+//! discriminator among them, for the reason PD0013's two-witness test does —
+//! and asserts the fragment they share, `frobnicate`, which tells the three
+//! from the fourth: a bare pin on them accepted the fourth's refusal (suF-a
+//! review round 1).
 //!
 //! WHAT IS NOT CLAIMED. Nothing here reads the manifest. Since the cutover every
 //! reject and skip row pins a code, and `scripts/conformance.sh` adjudicates those
@@ -1837,12 +1840,14 @@ fn each_one_witness_condition_of_su4_is_on_the_refusal_the_registry_names() {
 ///
 /// The three are three attribute SHAPES — `#[name]`, `#[name(args)]`, `#![name]`
 /// — and the shape does not reach the message, so no fragment can tell them
-/// apart and the map gives them none. That is asserted here rather than assumed:
-/// if a later edit puts the shape into the payload, the map owes an answer about
-/// whether three rules were hiding in one, and this is where the question
-/// surfaces. The fourth writes `#[total]`, and its fragment has to select it and
-/// no sibling — the ordinary compound-pin contract, on a group where three of
-/// the four rows cannot carry one.
+/// apart from each other. That is asserted here rather than assumed: if a later
+/// edit puts the shape into the payload, the map owes an answer about whether
+/// three rules were hiding in one, and this is where the question surfaces.
+/// The fourth writes `#[total]`, and the two payloads are two GROUPS of one
+/// code: a bare `code=PD0006` decides on the code alone, so it accepted a
+/// `total` refusal at a frobnicate row (suF-a review round 1). Each group's
+/// fragment therefore selects its own group and not the other — `frobnicate`
+/// the three, `total` the fourth — and both directions are asserted here.
 #[test]
 fn the_attribute_rule_is_one_code_over_three_identical_payloads_and_one_named() {
     let identical = [
@@ -1877,7 +1882,18 @@ fn the_attribute_rule_is_one_code_over_three_identical_payloads_and_one_named() 
         "the fourth witness lost the name its pin selects it by: {}",
         payload
     );
+    assert!(
+        !payload.contains("`frobnicate`"),
+        "the fragment `frobnicate` also selects total_attribute.pd — an accepting pin: {}",
+        payload
+    );
     for (fixture, sibling) in &payloads {
+        assert!(
+            sibling.contains("`frobnicate`"),
+            "{} lost the name its group's pin selects it by: {}",
+            fixture,
+            sibling
+        );
         assert!(
             !sibling.contains("`total`"),
             "the fragment `total` also selects {} — an accepting pin",
