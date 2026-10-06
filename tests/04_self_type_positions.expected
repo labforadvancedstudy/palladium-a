@@ -1,0 +1,7 @@
+`other: &Self` read twice:
+11
+`-> (i64, Self)`:
+30
+4
+`let c: Self` and `let t: (i64, Self)` in the body:
+206
