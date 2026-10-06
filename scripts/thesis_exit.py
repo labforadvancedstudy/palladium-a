@@ -971,8 +971,23 @@ _SH_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _SH_ASSIGN = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=")
 _SH_REF = re.compile(r"\$\{?[#!]?([A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*])")
 _SH_CLOSERS = frozenset({"then", "elif", "else", "fi", "do", "done", "esac", "}", "in"})
-_SH_PREFIXES = frozenset({"command", "builtin", "exec", "nohup", "time", "env", "!"})
 _SH_GREPS = frozenset({"grep", "egrep", "fgrep"})
+# THE SUBSET, as the two lists the walk consults. A command handed the declared pin must be
+# an in-file function, a `pd_diag_*` call, or one of _SH_PIN_OK (printf/echo only while
+# their output is not leaving for a file or a pipe; `[`/`test` and `[[ ]]` also pair their
+# operands, see `_ShReach._pair`). A command in _SH_UNREAD moves data or
+# names code in a way nothing below follows, so on the refusal path it makes both halves
+# unmet; at the top level the four in _SH_TOP_LEVEL are read, because the script needs
+# them there (`set` L160, `trap … EXIT` L189, `read` in the manifest and fixture loops,
+# `declare -a/-F`).
+_SH_PIN_OK = frozenset({"local", "[", "test", "return", "printf", "echo"})
+_SH_UNREAD = frozenset({"eval", "alias", "trap", "export", "readonly", "declare", "typeset",
+                        "read", "mapfile", "readarray", "getopts", "source", ".", "exec",
+                        "command", "builtin", "env", "xargs", "nohup", "time", "set",
+                        "shift", "unset", "let", "hash", "enable"})
+_SH_TOP_LEVEL = frozenset({"set", "trap", "read", "declare"})
+_SH_DEPTH = 32
+DIAG_PARSE_SH = "scripts/lib/diag-parse.sh"
 REFUSAL_CLASSES = ("reject", "skip")
 
 
@@ -1078,7 +1093,9 @@ def _sh_tokens(src):
 
     COMMENTS ARE DROPPED HERE, which is what makes the rest of the reader immune to the
     defect its predecessors had: nothing written in a comment can satisfy or defeat a check
-    downstream. Heredoc bodies are skipped as data."""
+    downstream. Heredoc bodies are skipped as data — so one whose body EXPANDS something
+    (unquoted delimiter, and a `$` or backtick in it) is code this reader would not see,
+    and is refused here, as is process substitution."""
     toks, i, n, pending = [], 0, len(src), []
     while i < n:
         c = src[i]
@@ -1089,14 +1106,20 @@ def _sh_tokens(src):
         elif c == "\n":
             toks.append(("N", "\n", i))
             i += 1
-            for delim, tabs in pending:
+            for delim, tabs, quoted in pending:
+                start = i
                 while i < n:
                     k = src.find("\n", i)
                     k = n if k < 0 else k
                     body, i = (src[i:k].lstrip("\t") if tabs else src[i:k]), k + 1
                     if body == delim:
                         break
+                if not quoted and re.search(r"\$[({\w@*#?$!-]|`", src[start:i]):
+                    raise _ShParseError(f"the heredoc ending `{delim}` expands its body, which "
+                                        "this reader does not read")
             pending = []
+        elif c in "<>" and src[i + 1:i + 2] == "(":
+            raise _ShParseError(f"process substitution `{c}(` at offset {i} is not read")
         elif c == "#":
             k = src.find("\n", i)
             i = n if k < 0 else k
@@ -1128,7 +1151,8 @@ def _sh_tokens(src):
                 while src[i:i + 1] in (" ", "\t"):
                     i += 1
                 j = _sh_end_word(src, i)
-                pending.append((re.sub(r"[\"'\\]", "", src[i:j]), m.group(0).endswith("-")))
+                delim = re.sub(r"[\"'\\]", "", src[i:j])
+                pending.append((delim, m.group(0).endswith("-"), delim != src[i:j]))
         elif (op := next((o for o in _SH_OPS if src.startswith(o, i)), None)):
             toks.append(("O", op, i))
             i += len(op)
@@ -1173,6 +1197,8 @@ class _ShParser:
         while True:
             k, v, o = self.peek()
             if k == "N" or (k == "O" and v in (";", "&", "&&", "||", "|", "|&")):
+                if v in ("|", "|&") and nodes:
+                    nodes[-1]["pipe"] = v          # its stdout (and with `|&`, stderr) leaves
                 self.i += 1
             elif k == "E":
                 if stop_words or stop_ops:
@@ -1320,6 +1346,8 @@ def _sh_word(text):
             k = _sh_end_dollar(text, j)
             m = re.fullmatch(r"([A-Za-z_]\w*|[0-9]+|[@*])(\[[^\]]*\])?", text[j + 2:k - 1])
             refs.update(m2.group(1) for m2 in _SH_REF.finditer(text[j:k]))
+            if text.startswith("${!", j):
+                refs.add("${!}")           # indirection: names its value at run time
             norm.append(f"${m.group(1)}" if m and not m.group(2) else text[j:k])
             exps, plain, j = exps + 1, (m.group(1) if m else None), k
         elif c == "$" and (m := re.match(r"[A-Za-z_]\w*|[0-9@*#?$!-]", text[j + 1:])):
@@ -1334,7 +1362,7 @@ def _sh_word(text):
 
 def _sh_glob(word, value):
     """Does `case` pattern `word` match `value`? Quoted text is literal, as in bash. An
-    expansion in a class pattern is undecidable here and is REFUSED rather than guessed."""
+    expansion or a bracket expression in a class pattern is REFUSED rather than guessed."""
     rx, j, dq = [], 0, False
     while j < len(word):
         c = word[j]
@@ -1347,15 +1375,11 @@ def _sh_glob(word, value):
             j = k
         elif c == '"':
             dq, j = not dq, j + 1
-        elif c in "$`":
-            raise _ShParseError(f"a pattern of the class dispatch expands something ({word!r})")
+        elif c in "$`" or (c == "[" and not dq):
+            raise _ShParseError(f"a pattern of the class dispatch is not read ({word!r})")
         elif not dq and c in "*?":
             rx.append(".*" if c == "*" else ".")
             j += 1
-        elif not dq and c == "[" and (k := word.find("]", j + 2)) > 0:
-            body = word[j + 1:k]
-            rx.append("[" + ("^" + body[1:] if body[:1] in "!^" else body) + "]")
-            j = k + 1
         else:
             rx.append(re.escape(c))
             j += 1
@@ -1378,15 +1402,17 @@ def _sh_arm_reach(arms):
 
 
 class _ShReach:
-    """The walk over conformance.sh, from its main body.
+    """The walk over conformance.sh, from its main body, and the subset it holds it to.
 
     Both refusal classes start LIVE. Every `case` whose subject is the manifest class
     narrows the live set to the classes each arm really runs for; code where neither is
     live is not walked at all. Every call to an in-file function is followed with its
     arguments bound, so `$1`, a `local x=$2` alias and a helper two calls down carry the
-    same value they had at the call site. What it collects: each grep handed the declared
-    fingerprint (`sinks`), each call of the shared parser (`parses`), what is sourced, and
-    where pdc's stderr goes.
+    same value they had at the call site — to _SH_DEPTH calls, past which it RAISES. THE
+    REFUSAL PATH (`path`) is each arm of the class dispatch that runs for reject or skip
+    and every function body the walk enters. What falls outside the subset lands in
+    `unmet`, per half, with the construct and its line; the walk also collects each call
+    of the shared parser (`parses`), what is sourced, and pdc's stderr captures.
     """
 
     def __init__(self, src):
@@ -1397,11 +1423,19 @@ class _ShReach:
         for nd, _f in self._nodes(self.tree):
             if nd["kind"] == "func":
                 self.funcs.setdefault(nd["name"], []).append(nd)
-        self.sinks, self.parses, self.sourced, self._seen = [], [], set(), set()
+        self.parses, self.sourced, self.captures, self._seen = [], set(), set(), set()
+        self.unmet = {"existence": {}, "absence": {}}
         self.fp, self.fp_plain, self.cls_plain = self._global_taint()
 
     def line(self, off):
         return bisect.bisect_right(self._nl, off) + 1
+
+    def _flag(self, halves, what, off, env):
+        via = "".join(f" <- {n} (conformance.sh:{ln})" for n, ln in reversed(env["chain"]))
+        why = (f"{what} (conformance.sh:{self.line(off)}{via}) for "
+               f"{'/'.join(sorted(env['live']))} rows")
+        for half in halves:
+            self.unmet[half][why] = None
 
     def _nodes(self, nodes, func=None):
         """(node, enclosing function or None), depth first, function bodies included."""
@@ -1417,8 +1451,7 @@ class _ShReach:
 
     @staticmethod
     def _decls(nd):
-        """(name, value-word or None, made-by-local/declare/typeset) for one command.
-        `export` and `readonly` assign too, and what they assign is global."""
+        """(name, value-word or None, made-by-local/declare/typeset) for one command."""
         if nd["kind"] != "simple":
             return
         words = [w for w, _o in nd["words"]]
@@ -1426,14 +1459,14 @@ class _ShReach:
         while n < len(words) and (m := _SH_ASSIGN.match(words[n])):
             yield m.group(1), words[n][m.end():], False
             n += 1
-        if n < len(words) and words[n] in ("local", "declare", "typeset", "export",
-                                           "readonly"):
-            scoped = words[n] in ("local", "declare", "typeset")
+        if n < len(words) and words[n] in ("local", "declare", "typeset"):
             for w in words[n + 1:]:
                 if (m := _SH_ASSIGN.match(w)):
-                    yield m.group(1), w[m.end():], scoped
-                elif _SH_IDENT.fullmatch(w) and scoped:
+                    yield m.group(1), w[m.end():], True
+                elif _SH_IDENT.fullmatch(w):
                     yield w, None, True
+        elif n < len(words) and words[n] == "read":         # assigns its operands
+            yield from ((w, None, False) for w in words[n + 1:] if _SH_IDENT.fullmatch(w))
 
     def _locals_of(self, func):
         return {nm for nd, f in self._nodes(func["body"], func) if f is func
@@ -1441,20 +1474,24 @@ class _ShReach:
 
     def _global_taint(self):
         """File-wide and flow-insensitive: which names can hold the declared fingerprint —
-        `M_FP`, the manifest's column-4 array, and anything assigned from it — which hold it
-        UNTRANSFORMED, and which hold the manifest class (`M_CLASS`) untransformed. ROOTED
-        AT THE TWO ARRAYS, so renaming the loop's `fp` or `class` changes nothing, and
-        renaming an array leaves nothing tainted, which fails CLOSED."""
+        `M_FP`, the manifest's column-4 array, anything assigned from it, and any global a
+        function assigns from a positional parameter, which may have been handed the pin
+        (that is how `fail()` records its message, so it is followed, not refused) — which
+        hold it UNTRANSFORMED, and which hold the manifest class (`M_CLASS`) untransformed.
+        ROOTED AT THE TWO ARRAYS, so renaming the loop's `fp` or `class` changes nothing,
+        and renaming an array leaves nothing tainted, which fails CLOSED. That a name
+        holding either untransformed is never assigned anything ELSE is `_assign`'s check."""
         local = {id(f): self._locals_of(f) for fs in self.funcs.values() for f in fs}
-        assigns = [(nm, val) for nd, f in self._nodes(self.tree)
+        assigns = [(nm, val, f is not None) for nd, f in self._nodes(self.tree)
                    for nm, val, _d in self._decls(nd)
                    if val is not None and (f is None or nm not in local[id(f)])]
         fp, fpp, clp = {"M_FP"}, {"M_FP"}, {"M_CLASS"}
         while True:
             size = (len(fp), len(fpp), len(clp))
-            for nm, val in assigns:
+            for nm, val, in_func in assigns:
                 refs, plain, _s, _n = _sh_word(val)
-                if refs & fp:
+                if refs & (fp | {"${!}"}) or (in_func and any(r.isdigit() or r in ("@", "*")
+                                                              for r in refs)):
                     fp.add(nm)
                 if plain in fpp:
                     fpp.add(nm)
@@ -1463,42 +1500,66 @@ class _ShReach:
             if size == (len(fp), len(fpp), len(clp)):
                 return fp, fpp, clp
 
-    def _eval(self, word, params, local):
+    def _eval(self, word, env):
         """A word as the walk carries it: (holds-the-fingerprint, is-the-fingerprint-
-        untransformed, is-the-class-untransformed, normalised text)."""
-        refs, plain, _subs, norm = _sh_word(word)
+        untransformed, is-the-class-untransformed, normalised text, KNOWN). Known is a
+        literal, or the shared parser's output — `$(pd_diag_parse …)`, or another
+        `$(pd_diag_* …)` over known arguments — the only things the pin may be matched
+        against."""
+        refs, plain, subs, norm = _sh_word(word)
+        params, local = env["params"], env["local"]
 
         def tainted(r):
             if r.isdigit():
                 return 0 < int(r) <= len(params) and params[int(r) - 1][0]
             if r in ("@", "*"):
                 return any(p[0] for p in params)
-            return local[r][0] if r in local else r in self.fp
+            return local[r][0] if r in local else r in self.fp or r == "${!}"
 
         if plain is not None and plain.isdigit() and 0 < int(plain) <= len(params):
             return params[int(plain) - 1]
         if plain in local:
             return local[plain]
+        call = ([w for k, w, _o in _sh_tokens(subs[0][1]) if k == "W"]
+                if len(subs) == 1 and norm == f"$({subs[0][1]})" else [""])
+        parsed = call[0] == "pd_diag_parse" or (call[0].startswith("pd_diag_") and all(
+            self._eval(w, env)[4] for w in call[1:]))
         return (any(tainted(r) for r in refs), plain in self.fp_plain,
-                plain in self.cls_plain, norm)
+                plain in self.cls_plain, norm, parsed or not (refs or subs))
 
     def _bind_locals(self, func, params):
         """`local x=$1` and every later `x=…`, to fixpoint, for ONE activation. A local
-        assigned twice holds the fingerprint if either value does, and is an untransformed
-        copy only if both are — the direction that makes the existence half HARDER."""
+        assigned twice holds the fingerprint, or the pin or class untransformed, if either
+        value does — so a second assignment that does not is `_assign`'s to report — and
+        is known only if both are."""
         names = self._locals_of(func)
         vals = {nm: [val for nd, f in self._nodes(func["body"], func) if f is func
                      for n2, val, _d in self._decls(nd) if n2 == nm and val is not None]
                 for nm in names}
-        local = {nm: (False, False, False, "") for nm in names}
+        scope = {"params": params, "local": {nm: (False, False, False, "", False)
+                                             for nm in names}}
         for _ in range(len(names) + 1):
             for nm, vs in vals.items():
-                got = [self._eval(v, params, local) for v in vs]
+                got = [self._eval(v, scope) for v in vs]
                 if got:
-                    local[nm] = (any(g[0] for g in got), all(g[1] for g in got),
-                                 all(g[2] for g in got),
-                                 got[0][3] if all(g[3] == got[0][3] for g in got) else "")
-        return local
+                    scope["local"][nm] = (
+                        any(g[0] for g in got), any(g[1] for g in got), any(g[2] for g in got),
+                        got[0][3] if all(g[3] == got[0][3] for g in got) else "",
+                        all(g[4] for g in got))
+        return scope["local"]
+
+    def _assign(self, nm, val, nd, env):
+        """A name — global or local — that holds the pin or the class untransformed may be
+        assigned only an untransformed copy of the same. The two arrays are exempt where the
+        manifest builds them: at the top level, by `=( … )` or `+=( … )`."""
+        got = self._eval(val, env) if val is not None else (False,) * 3
+        held = env["local"].get(nm) or (False, nm in self.fp_plain, nm in self.cls_plain)
+        built = nm in ("M_FP", "M_CLASS") and not env["path"] and (val or "").startswith("(")
+        for kind, n in (("pin", 1), ("class", 2)):
+            if held[n] and not got[n] and not built:
+                self._flag(("existence",), f"`{nm}`, which holds the declared {kind}, is "
+                           f"assigned {'`' + val + '`' if val is not None else 'by a command'}",
+                           nd["off"], env)
 
     def walk(self, nodes, env):
         if not env["live"]:
@@ -1506,66 +1567,114 @@ class _ShReach:
         for nd in nodes:
             if nd["kind"] == "func":
                 continue                       # a definition runs nothing
+            here = {**env, "out": env["out"] or bool(nd.get("pipe"))
+                    or any(">" in op for op, _w in nd.get("redirs", ()))}
             for _op, (w, o) in nd.get("redirs", ()):
                 self._subs(w, o, env)
             if nd["kind"] == "simple":
-                self._simple(nd, env)
+                self._simple(nd, here)
             elif nd["kind"] == "group":
                 for w, o in nd["words"]:
                     self._subs(w, o, env)
-                self.walk(nd["kids"], env)
+                if nd["words"] and _SH_IDENT.fullmatch(nd["words"][0][0]):
+                    self._assign(nd["words"][0][0], None, nd, env)    # `for x in …`
+                self.walk(nd["kids"], here)
             elif nd["kind"] == "case":
                 w, o = nd["subject"]
                 self._subs(w, o, env)
-                is_class = self._eval(w, env["params"], env["local"])[2]
-                reach = (_sh_arm_reach(nd["arms"]) if is_class
+                subject = self._eval(w, env)
+                for p, po in (p for pats, _b, _t in nd["arms"] for p in pats):
+                    self._subs(p, po, env)
+                    self._pair((subject, self._eval(p, env)), "a `case` pattern", po, env)
+                reach = (_sh_arm_reach(nd["arms"]) if subject[2]
                          else [env["live"]] * len(nd["arms"]))
                 for (_p, body, _t), runs in zip(nd["arms"], reach):
-                    self.walk(body, {**env, "live": env["live"] & runs})
+                    self.walk(body, {**here, "live": env["live"] & runs,
+                                     "path": env["path"] or subject[2]})
 
     def _subs(self, word, off, env):
         for at, text in _sh_word(word)[2]:
-            self.walk(_ShParser(text, off + at).parse(), env)
+            self.walk(_ShParser(text, off + at).parse(), {**env, "out": False})
+        for m in re.finditer(r"\$\{([A-Za-z_]\w*|[0-9]+)(?:\[[^\]]*\])?(##?|%%?|/[/#%]?)", word):
+            self._pair((self._eval("$" + m.group(1), env),          # `${x#pat}` is a match
+                        self._eval(word[m.end():_sh_end_dollar(word, m.start()) - 1], env)),
+                       "a `${…" + m.group(2) + "…}` pattern", off, env)
+
+    def _pair(self, operands, what, off, env):
+        """THE MATCHER RULE: two operands of one comparison or match, one holding the
+        fingerprint and another neither a literal nor the shared parser's output, is a
+        leak — whatever the operator, since `=` on an extracted piece of the log is as much
+        an attribution as a glob over all of it."""
+        if any(a[0] and any(not b[4] for b in operands[:i] + operands[i + 1:])
+               for i, a in enumerate(operands)):
+            self._flag(("absence",), f"the declared fingerprint is matched by {what} against "
+                       "what is neither a literal nor the shared parser's output", off, env)
 
     def _simple(self, nd, env):
-        words = list(nd["words"])
-        for w, o in words:
+        for w, o in nd["words"]:
             self._subs(w, o, env)
-        while words and (_SH_ASSIGN.match(words[0][0]) or words[0][0] in _SH_PREFIXES):
+        for nm, val, _d in self._decls(nd):
+            self._assign(nm, val, nd, env)
+        words = [w for w, _o in nd["words"]]
+        while words and (_SH_ASSIGN.match(words[0]) or words[0] == "!"):
             words.pop(0)
         if not words:
             return
-        name = self._eval(words[0][0], env["params"], env["local"])[3]
-        args = []
-        for w, _o in words[1:]:
-            if _sh_word(w)[1] == "@":          # `"$@"` forwards every argument, in place
-                args.extend(env["params"])
+        top = not env["path"]
+        if words[0].startswith("[["):
+            self._pair([self._eval(w, env) for k, w, _o in _sh_tokens(words[0][2:-2])
+                        if k == "W"], "`[[ … ]]`", nd["off"], env)
+            return
+        name = "let" if words[0].startswith("((") else self._eval(words[0], env)[3]
+        args = tuple(a for w in words[1:] for a in (     # `"$@"` forwards each, in place
+            env["params"] if _sh_word(w)[1] == "@" else (self._eval(w, env),)))
+        opts = {c for a in args if a[3][:1] == "-" for c in a[3][1:]}
+        if name in ("[", "test"):
+            # At the top level the verdict chain compares the WHOLE pin, untransformed, by
+            # `[` (L1039, `[ "$detail" != "$fp" ]`); that one shape is not paired there.
+            self._pair([a for a in args if not (top and a[1])], f"`{name}`", nd["off"], env)
+        if name in (".", "source") and [a[3] for a in args] == [DIAG_PARSE_SH]:
+            self.sourced.add(DIAG_PARSE_SH)
+        elif (name in _SH_UNREAD and not (top and name in _SH_TOP_LEVEL)
+              or not top and name != "$PDC"
+              and any(_sh_word(words[0])[0::2])          # a command named by an expansion
+              or name in ("local", "declare") and opts & {"n", "g"}
+              or name == "printf" and "v" in opts
+              or name == "trap" and [a[3] for a in args][-1:] != ["EXIT"]):
+            self._flag(("existence", "absence"), f"`{' '.join(words[:2])[:40]}`, which this "
+                       "reader does not read", nd["off"], env)
+            return
+        fed = (self._eval(words[0], env),) + args + tuple(
+            self._eval(w, env) for _op, (w, _o) in nd["redirs"])
+        if any(a[0] for a in fed) and not (
+                name in self.funcs or name.startswith("pd_diag_")
+                or name in _SH_PIN_OK and not (env["out"] and name in ("printf", "echo"))):
+            self._flag(("absence",), f"the declared fingerprint is handed to `{name[:40]}`"
+                       + (", which matches it against text" if name in _SH_GREPS
+                          or name in ("awk", "sed") else ""), nd["off"], env)
+        if name == "$PDC":
+            red = sorted((op, self._eval(w, env)[3]) for op, (w, _o) in nd["redirs"]) + [
+                ("|&", "")] * (nd.get("pipe") == "|&")
+            if [op for op, _t in red] == ["2>", ">"] and red[0][1] != red[1][1]:
+                self.captures.add(red[0][1])
             else:
-                args.append(self._eval(w, env["params"], env["local"]))
-        args = tuple(args)
-        where = env["chain"] + ((name, self.line(nd["off"])),)
-        if name in _SH_GREPS and any(a[0] for a in args):
-            self.sinks.append((env["live"], where))
+                self._flag(("existence",), f"pdc runs with `{' '.join(o + t for o, t in red)}`;"
+                           " only `>X 2>Y`, two files, is a stderr-only capture", nd["off"], env)
         elif name == "pd_diag_parse":
             self.parses.append((env["live"], args[0][3] if args else "", any(env["pinned"])))
-        elif name in (".", "source") and args:
-            self.sourced.add(args[0][3])
-        key = (name, env["live"], args, any(env["pinned"]))
-        if name not in self.funcs or key in self._seen or len(where) > 32:
+        where = env["chain"] + ((name, self.line(nd["off"])),)
+        key = (name, env["live"], args, any(env["pinned"]), env["out"])
+        if name not in self.funcs or key in self._seen:
             return
+        if len(where) > _SH_DEPTH:
+            raise _ShParseError(f"the walk passed {_SH_DEPTH} nested calls at conformance.sh:"
+                                f"{where[-1][1]}; it stops there, so nothing past it is read")
         self._seen.add(key)
         for func in self.funcs[name]:
             self.walk(func["body"], {"params": args, "local": self._bind_locals(func, args),
-                                     "live": env["live"], "chain": where,
+                                     "live": env["live"], "chain": where, "path": True,
+                                     "out": env["out"],
                                      "pinned": env["pinned"] + (any(a[1] for a in args),)})
-
-    def pdc_stderr(self):
-        """Where pdc's stderr is captured ON ITS OWN: the `2>` target of the command named
-        `$PDC`. A merged `2>&1` is not a capture, and the merged log is not one either."""
-        return {_sh_word(w)[3] for nd, _f in self._nodes(self.tree)
-                if nd["kind"] == "simple" and nd["words"]
-                and _sh_word(nd["words"][0][0])[3] == "$PDC"
-                for op, (w, _o) in nd["redirs"] if op == "2>"}
 
 
 _WIRING_CACHE: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
@@ -1574,57 +1683,67 @@ _WIRING_CACHE: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
 def code_attribution_wiring(conformance_source: str) -> tuple[list[str], list[str]]:
     """GI-12's two halves (spec R3), read off conformance.sh -> (missing, leaking).
 
-    BOTH EMPTY is the only state in which a reject or skip row is judged by its code.
+    BOTH EMPTY is the only state in which a reject or skip row is judged by its code — as
+    PROVEN WITHIN THE SUBSET BELOW; ANYTHING OUTSIDE IT IS REPORTED UNMET. This is a static
+    reading. The BEHAVIOURAL evidence that a phrase cannot satisfy a reject row is the
+    conformance runner's F12, R6 and echo/note/help cases (scripts/test-conformance-
+    runner.sh) and this file's cross-layer probe, which run the real script.
 
     ① EXISTENCE — `missing`. From the arm of the class dispatch that runs for `reject`,
       and separately from the one that runs for `skip`, a path reaches `pd_diag_parse` —
-      the one shared parser: sourced from scripts/lib/diag-parse.sh, not redefined here —
-      on pdc's STDERR capture (the `2>` target of the `$PDC` command, never the merged
-      log), from inside a call that was handed the declared pin UNTRANSFORMED. Function
+      the one shared parser: sourced from scripts/lib/diag-parse.sh, no `pd_diag_*`
+      defined here — on pdc's STDERR capture, from inside a call that was handed the
+      declared pin UNTRANSFORMED. The capture is the `2>` target of a `$PDC` command
+      whose redirections are exactly `>X 2>Y`, two different files: any other fd
+      operation on it, `&>` or `|&`, is unmet. So is a name that holds the pin or the
+      class untransformed being assigned anything else, anywhere the walk goes. Function
       names are not consulted: `coded_pin_verdict` is what does this today, and renaming
       it changes nothing.
-    ② ABSENCE — `leaking`. No path a reject or skip row can run hands the declared
-      fingerprint to grep, directly or through any depth of in-file calls. That is how
-      `declared_phrase_match` -> `grep_status` is reached, and why it has to sit under an
-      arm that runs for neither class: a phrase match hoisted above the dispatch runs for
-      every row and is caught. Every grep mode counts — `-E` over the declaration is no
-      more an attribution than `-F` — so `grep_status` is a sink for its pattern whatever
-      mode it is handed.
+    ② ABSENCE — `leaking`. Anywhere the walk goes, the declared fingerprint, or anything
+      computed from it, may only be assigned (and followed), handed to an in-file function
+      (followed) or a `pd_diag_*` call, or handed to `local`, `[`/`test`, `return`, or
+      printf/echo whose output is not leaving for a file or a pipe. Handed to any other
+      command — grep, awk and sed among them — it is a leak. So is pairing it with what is
+      neither a literal nor the shared parser's output (`$(pd_diag_parse …)`, or a
+      `$(pd_diag_* …)` over such) in ONE MATCHER, whatever the operator: the operands of
+      `[`, `test` and `[[ ]]`, a `case` subject and its pattern, and the value and pattern
+      of `${x#…}`/`${x%…}`/`${x/…}`. A phrase match hoisted above the dispatch runs for
+      every row and is caught the same way.
 
-    WHY TWO. An absence check alone fails OPEN: unbolt the comparator and nothing is left
-    that matches by substring either, so absence holds over a dispatch that adjudicates
-    nothing. An existence check alone fails open the other way, with the phrase match
-    bolted on beside the comparator. `wiring_matches_declaration` already says the first
-    half of this about GI-11.
+    THE SUBSET, on the refusal path — each arm of the class dispatch that runs for reject
+    or skip, and every function body the walk enters: simple commands; `case`/`if`/`while`/
+    `for`; `local`; assignment; calls to in-file functions, followed to _SH_DEPTH deep
+    (deeper raises, and reads unmet); `pd_diag_*`; `$PDC` as above. Unmet on BOTH halves,
+    with the construct named: each command in _SH_UNREAD (eval, alias, trap, export,
+    declare, read, mapfile, source or `.` of anything but the shared parser, set, shift,
+    …), `local -n`, `printf -v`, a command named by an expansion, `(( ))`; and wherever it
+    is read, a heredoc that expands its body or a process substitution. A global that a
+    function assigns from a positional parameter is taken to hold the fingerprint. At the
+    top level outside the dispatch — where the manifest is read, the cleanup trap is set
+    and the fixture runs by path — `set`, `trap … EXIT`, `read`, `declare` without -n/-g
+    and a command named by an expansion are read as well.
 
-    HOW IT READS. A tokenizer that knows quoting, `$( )`, `${ }`, backticks, comments and
-    heredocs; a parser for commands, nested `case` arms and function bodies; and the walk in
-    `_ShReach`. Comments and string literals are not commands, so spelling the comparator
-    call in either satisfies nothing — the defect the retired detectors had, where the line
-    asking the question could contain the answer. The fingerprint and the class are tracked
-    from the manifest ARRAYS, so renaming locals changes nothing and renaming an array fails
-    closed.
-
-    WHAT IT CANNOT SEE, said rather than implied:
+    WHAT IT DOES NOT PROVE, said rather than implied:
       * What a call COMPUTES. ① proves the pin and the capture meet in a call that reaches
         the shared parser; a comparator that parses and then ignores the pin passes it.
-        That behaviour is pinned by scripts/test-conformance-runner.sh, not here.
-      * Matching that is not grep: `case` and `[[ == ]]` globbing, `=~`, awk, sed, a
-        Python helper. The comparator's own `msg~` test is a `case` glob on the header
-        payload, which is exactly why globbing cannot simply be flagged.
-      * Data leaving through a file, a pipe, stdin, the environment or `eval`; a grep
-        invoked through a variable or `xargs`; a global set inside a function from `$1`.
       * Control flow inside an arm: a call after an unconditional `return`, or under a
         condition that is always false, counts as made.
-      * A class dispatch spelled `if [ "$class" = … ]`: ① does not find it and ② does not
-        treat it as a guard. Both fail CLOSED.
+      * At the top level, `[`/`test` comparing the WHOLE pin, untransformed, with anything:
+        the verdict chain's run-stage check is one (L1039, `[ "$detail" != "$fp" ]`, and
+        `detail` is read off the log on another branch), so that one shape is not paired
+        there. A transformed pin, or the same comparison on the refusal path, is. What
+        catches it is BEHAVIOURAL: scripts/test-conformance-runner.sh's case "the row's OWN
+        PIN, written in the fixture and echoed into the log, does not satisfy it" puts
+        that exact pin text in the log over a refusal with another code and requires
+        WRONG_CODE — measured RED with `[ "$(grep -o …"$log"…)" = "$fp" ]` planted there.
+      * A class dispatch spelled `if [ "$class" = … ]`: ① does not find it and the walk
+        does not treat it as the refusal path. Both fail CLOSED or under-scope; neither
+        reads met by accident.
+      * The two manifest arrays are trusted as built at the top level by `=( … )`/`+=(…)`.
       * `case` patterns inside `$( )`: the pattern's `)` ends the substitution here.
-      * WHAT IT IS KEYED ON, so a rename there is not mistaken for a refactor: the arrays
-        `M_FP` and `M_CLASS`, the command `$PDC`, the parser `pd_diag_parse`, the path
-        scripts/lib/diag-parse.sh and the command names `grep`/`egrep`/`fgrep`. Renaming
-        any of the first five fails closed; grep under another name is a blind spot.
-    Each of those either fails closed or is named here. None of this is a proof that code
-    attribution is the only path a reject row can take.
+      * WHAT IT IS KEYED ON: the arrays `M_FP` and `M_CLASS`, the command `$PDC`, the
+        names `pd_diag_*` and the path scripts/lib/diag-parse.sh. Renaming any of them
+        fails closed.
     """
     hit = _WIRING_CACHE.get(conformance_source)
     if hit is None:
@@ -1637,29 +1756,26 @@ def _code_attribution_wiring(src: str) -> tuple[tuple[str, ...], tuple[str, ...]
     try:
         reach = _ShReach(src)
         reach.walk(reach.tree, {"params": (), "local": {}, "chain": (), "pinned": (),
-                                "live": frozenset(REFUSAL_CLASSES)})
-        captures = reach.pdc_stderr()
+                                "live": frozenset(REFUSAL_CLASSES), "path": False,
+                                "out": False})
     except _ShParseError as exc:
         why = f"scripts/conformance.sh could not be read as shell ({exc})"
         return (why,), (why,)
-    missing = []
-    if not captures:
+    missing = list(reach.unmet["existence"])
+    if not reach.captures:
         missing.append("no `$PDC` command captures its stderr on its own (`2>` to a file)")
-    if "scripts/lib/diag-parse.sh" not in reach.sourced:
-        missing.append("scripts/lib/diag-parse.sh, the one shared parser, is not sourced")
-    if "pd_diag_parse" in reach.funcs:
-        missing.append("`pd_diag_parse` is redefined inside conformance.sh, so the parser "
-                       "reached is not the shared one")
+    if DIAG_PARSE_SH not in reach.sourced:
+        missing.append(f"{DIAG_PARSE_SH}, the one shared parser, is not sourced")
+    if any(n.startswith("pd_diag_") for n in reach.funcs):
+        missing.append("a `pd_diag_*` function is defined inside conformance.sh, so the "
+                       "parser reached is not the shared one")
     for cls in REFUSAL_CLASSES:
-        if not any(cls in live and arg in captures and pinned
+        if not any(cls in live and arg in reach.captures and pinned
                    for live, arg, pinned in reach.parses):
             missing.append(f"no path from the `{cls}` arm of the class dispatch reaches the "
                            f"shared parser on pdc's stderr inside a call handed the "
                            f"declared pin")
-    leaking = [f"the declared fingerprint reaches grep for {'/'.join(sorted(live))} rows: "
-               + " -> ".join(f"{n} (conformance.sh:{ln})" for n, ln in where)
-               for live, where in reach.sinks]
-    return tuple(missing), tuple(leaking)
+    return tuple(missing), tuple(reach.unmet["absence"])
 
 
 def wiring_matches_declaration(source: str,
@@ -1978,15 +2094,29 @@ EXPECTED_THESIS_CONTRACT = {
 EXPECTED_THESIS_IDS = frozenset(EXPECTED_THESIS_CONTRACT)
 
 
-# THE REFUSAL-PIN GRAMMAR, character for character conformance.sh's `PIN_RE` (and
-# check-diagnostic-codes.sh's `pin_re`): since the GI-12 cutover it is the only thing a
-# reject or skip row's column 4 may hold, so a value in this grammar is a refusal the
-# manifest CAN pin, and a value outside it is one it cannot.
+# THE REFUSAL-PIN GRAMMAR: check-diagnostic-codes.sh's top-level `PIN_RE` with its `^…$`
+# dropped, because `fullmatch` supplies them here. That file is the reference — it checks
+# the generator's `PIN_GRAMMAR` and conformance.sh's `PIN_RE` textually equal to its own —
+# and this fourth copy is bound to it by `code_pin_drift`, a self-test case with a drift
+# mutant. Since the GI-12 cutover it is the only thing a reject or skip row's column 4 may
+# hold, so a value in this grammar is a refusal the manifest CAN pin, and a value outside
+# it is one it cannot.
 CODE_PIN = re.compile(r"code=PD[0-9]{4}(;msg~.+)?")
 
 
 def is_code_pin(fp: str) -> bool:
     return CODE_PIN.fullmatch(fp) is not None
+
+
+def code_pin_drift(gate_source: str, pattern: str = CODE_PIN.pattern) -> list[str]:
+    """[] when `pattern` is the anchored `PIN_RE='^…$'` line of check-diagnostic-codes.sh
+    (`gate_source`), anchors dropped; else what disagrees."""
+    ref = re.findall(r"^PIN_RE='\^(.*)\$'$", gate_source, re.M)
+    if len(ref) != 1:
+        return [f"check-diagnostic-codes.sh has {len(ref)} anchored `PIN_RE='^…$'` lines, "
+                "want exactly 1"]
+    return [] if ref == [pattern] else [f"CODE_PIN is {pattern!r} and check-diagnostic-"
+                                        f"codes.sh's PIN_RE is {ref[0]!r}"]
 
 
 def _validate_contract(contract=None):
@@ -3084,8 +3214,21 @@ VARIANT_OF_BASE = {
 # Both are true of the merged tree and neither branch's digest is, which is the whole
 # reason this pin exists. Recomputed here via `--print-case-digest`.
 # Superseded: 1dd2b683... (base), 2bc2aabd... (lexical), bc01d66e... (builtins-exit),
-# 60351814... (pre-GI-12-cutover), 8cfb27f5... (suF-a).
-EXPECTED_CASE_SHA = "bf4f266ef732eed6781d66dcd96f902f8ddf03f229699208e05c1edde7bf6beb"
+# 60351814... (pre-GI-12-cutover), 8cfb27f5... (suF-a), bf4f266e... (suF-b).
+#
+# RE-PINNED for suF-b review round 1, when the GI-12 reader became a whitelist on the
+# refusal path. 319 -> 327 labels, verified by diffing the CASE-NAME SET: ONE CHANGED —
+# the `export` case, whose expectation moved from (True, False) to (False, False)
+# because `export` on the refusal path is now outside what the reader reads, and whose
+# label says so — and EIGHT ADDED: the five panel mutants verbatim, `eval`/`declare -n`/
+# `printf -v` outside the subset, the depth bound raising, and CODE_PIN bound to
+# check-diagnostic-codes.sh's PIN_RE. No control removed or weakened.
+# THEN 327 -> 329 in the same round (76f604a4... superseded): the two shapes it had
+# disclosed as residuals — a `${t#*"$frag"}` pattern over the log, and `[ … = ${fp:5:6} ]`
+# against a piece of the log — became cases that fail ABSENCE when the matcher rule was
+# applied to `[`/`test`/`[[` operands and `${…#…}` patterns. Label sets diffed: two
+# ADDED, none changed or removed.
+EXPECTED_CASE_SHA = "8a4f0ceb06bc6515a3a4005199c7cdb3d98b4a53f9fab11fb6d46d89b1ac157f"
 
 EXPECTED_UNCOVERED = frozenset({
     "the real `make` subprocess: a control would need a deliberately broken build. Its "
@@ -5141,10 +5284,13 @@ def self_test() -> int:
                              "coded_pin_verdict() {\n"),
                       _conf_arm, _conf_arm + '        attribute_row "$log" "$fp"\n')),
          (True, False), drives_main=False)
-    case("...and so does a pin copied through `export` before it is grepped",
+    # Was (True, False): `export` was followed as an assignment. On the refusal path it is
+    # now outside the subset, so the arm is not read at all and BOTH halves are unmet.
+    case("...and a pin copied through `export` before it is grepped fails BOTH: `export` "
+         "on the refusal path is outside what this reader reads",
          _gi12(mutate(_conf, _conf_arm, _conf_arm + '        export LEAK="$fp"\n'
                       '        grep -qF -- "$LEAK" "$log"\n')),
-         (True, False), drives_main=False)
+         (False, False), drives_main=False)
     case("...and so does a helper that reads the pin as a GLOBAL, with no argument at all",
          _gi12(mutate(mutate(_conf, "coded_pin_verdict() {\n",
                              'attribute_row() { grep_status F "$fp" "$TMPROOT/diag"; }\n'
@@ -5156,7 +5302,78 @@ def self_test() -> int:
          _gi12(mutate(_conf, '    case "$class" in\n      xfail)\n',
                       "    " + _conf_phrase + '\n    case "$class" in\n      xfail)\n')),
          (True, False), drives_main=False)
-    _skip_only = _gi12(mutate(_conf, _conf_arm, "      skip)\n        " + _conf_phrase
+
+    def _gi12_says(src, half, needle):
+        """(`_gi12(src)`, and does `half`'s unmet list NAME `needle`)."""
+        missing, leaking = code_attribution_wiring(src)
+        return ((not missing, not leaking),
+                any(needle in w for w in (missing if half == "existence" else leaking)))
+
+    # THE FIVE PANEL MUTANTS of suF-b review round 1, verbatim: each is an edit under which
+    # a reject row is judged by a phrase, by the wrong pin, or on a merged capture, and
+    # which the reader then read as both halves met. Each must fail its half AND name what.
+    _pdc_line = '"$PDC" compile "$f" -o "$out" >"$TMPROOT/pdc_stdout" 2>"$TMPROOT/pdc_stderr"'
+    case("panel 1 (grok-4.7): `smuggle(){ LEAK=$1; }` then `smuggle \"$fp\"; grep -qF -- "
+         "\"$LEAK\" \"$log\"` in the arm fails ABSENCE: a global set from `$1` holds the pin",
+         _gi12_says(mutate(mutate(_conf, "coded_pin_verdict() {\n",
+                                  "smuggle(){ LEAK=$1; }\ncoded_pin_verdict() {\n"),
+                           _conf_arm, _conf_arm + '        smuggle "$fp"; grep -qF -- "$LEAK" '
+                           '"$log"\n'), "absence", "handed to `grep`"),
+         ((True, False), True), drives_main=False)
+    case("panel 2 (gpt-6-astra): `fp=\"code=PD0001\"` before the comparator call fails "
+         "EXISTENCE: the name that held the pin no longer only holds it",
+         _gi12_says(mutate(_conf, _conf_arm, _conf_arm + '        fp="code=PD0001"\n'),
+                    "existence", "`fp`, which holds the declared pin"),
+         ((False, True), True), drives_main=False)
+    case("panel 3 (gpt-6-astra): `1>&2` after pdc's `2>` capture fails EXISTENCE: the "
+         "capture is no longer stderr alone",
+         _gi12_says(mutate(_conf, _pdc_line, _pdc_line + " 1>&2"), "existence", "1>&2"),
+         ((False, True), True), drives_main=False)
+    case("panel 4 (gpt-6-astra): an unquoted heredoc whose body runs `declared_phrase_match` "
+         "fails BOTH: a body that expands is code this reader does not read",
+         _gi12_says(mutate(_conf, _conf_arm, _conf_arm
+                           + '        if [ "$(cat <<EOF\n$(declared_phrase_match "$fp" "$log"; '
+                           "printf '%s' \"$?\")\nEOF\n)\" = 0 ]; then\n          "
+                           "pin_verdict=MATCH\n        fi\n"), "absence", "heredoc"),
+         ((False, False), True), drives_main=False)
+    case("panel 5 (fable): `case \"$log\" in *\"${fp#*;msg~}\"*)` fails ABSENCE: a `case` "
+         "glob is a matcher, and its subject is not the shared parser's output",
+         _gi12_says(mutate(_conf, _conf_arm, _conf_arm + '        case "$log" in '
+                           '*"${fp#*;msg~}"*) pin_verdict=MATCH;; esac\n'),
+                    "absence", "`case` pattern"),
+         ((True, False), True), drives_main=False)
+    case("OUTSIDE THE SUBSET on the refusal path, both halves, named: `eval`, `declare -n`, "
+         "`printf -v`",
+         [_gi12_says(mutate(_conf, _conf_arm, _conf_arm + "        " + line + "\n"),
+                     "absence", "`" + named)
+          for line, named in (("eval 'grep -qF -- \"$f\"\"p\" \"$log\"'", "eval"),
+                              ('declare -n LEAK=fp; grep -qF -- "$LEAK" "$log"', "declare -n"),
+                              ('printf -v LEAK %s "$fp"', "printf -v"))],
+         [((False, False), True)] * 3, drives_main=False)
+    # THE TWO RESIDUALS round 1 disclosed instead of closing — both are the matcher rule
+    # applied to operands it had skipped: a `${…#…}` pattern built from the pin, and `=`
+    # between a piece extracted from the log and a transformed pin. Each fails ABSENCE.
+    case("a `${t#*\"$frag\"}` pattern over the log, compared by `[`, fails ABSENCE: the "
+         "expansion is a match of the pin against the log",
+         _gi12_says(mutate(_conf, _conf_arm, _conf_arm + '        t=$(cat "$log"); [ "${t#*"'
+                           '${fp#*;msg~}"}" != "$t" ] && pin_verdict=MATCH\n'),
+                    "absence", "a `${…#…}` pattern"),
+         ((True, False), True), drives_main=False)
+    case("...and so does `[ \"$(grep -o … \"$log\" | head -1)\" = \"${fp:5:6}\" ]`: `=` "
+         "between the pin and a piece of the log is a match too",
+         _gi12_says(mutate(_conf, _conf_arm, _conf_arm + '        [ "$(grep -o "PD[0-9]*" '
+                           '"$log" | head -1)" = "${fp:5:6}" ] && pin_verdict=MATCH\n'),
+                    "absence", "matched by `[`"),
+         ((True, False), True), drives_main=False)
+    _deep = "".join(f'd{i}() {{ d{i + 1} "$@"; }}\n' for i in range(_SH_DEPTH + 8))
+    case("calls nested past the depth bound RAISE and read unmet on both halves: the walk "
+         "does not quietly stop following",
+         _gi12_says(mutate(mutate(_conf, "coded_pin_verdict() {\n",
+                                  _deep + "coded_pin_verdict() {\n"),
+                           _conf_arm, _conf_arm + '        d0 "$fp"\n'),
+                    "existence", f"passed {_SH_DEPTH} nested calls"),
+         ((False, False), True), drives_main=False)
+    _skip_only =_gi12(mutate(_conf, _conf_arm, "      skip)\n        " + _conf_phrase
                               + " ;;\n      reject)\n"))
     case("the SKIP arm alone regressed fails both halves — and existence names `skip` "
          "and not `reject`, so the two classes are proved separately",
@@ -5196,6 +5413,15 @@ def self_test() -> int:
          "not a silent lift",
          _why(_drive(conformance_source=_unbolted)),
          "2 HARNESS=the gate's declared models do not match its ")
+    _cdc = (ROOT / "scripts/check-diagnostic-codes.sh").read_text()
+    case("CODE_PIN is check-diagnostic-codes.sh's PIN_RE with the anchors dropped, and a "
+         "drift on either side, or a second reference line, is caught",
+         [code_pin_drift(_cdc),
+          bool(code_pin_drift(_cdc, CODE_PIN.pattern.replace("{4}", "{3}"))),
+          bool(code_pin_drift(mutate(_cdc, "PIN_RE='^code=PD[0-9]{4}",
+                                     "PIN_RE='^code=PD[0-9]{5}"))),
+          bool(code_pin_drift(_cdc + "\nPIN_RE='^x$'\n"))],
+         [[], True, True, True], drives_main=False)
 
     # MF5. Module-level I/O escaped the three-state boundary entirely.
     # THE CONTROL THAT MEASURES THE REQUIREMENT: run the real command against a tree whose
