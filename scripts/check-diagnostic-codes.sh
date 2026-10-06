@@ -17,13 +17,15 @@
 #      (`pdc --dump-diagnostic-codes`) is an active registry row. Asked of the
 #      binary, not of a grep over the source: a grep reads a code named in a
 #      comment as emitted and a code built by `format!` as absent.
-#      ONE DIRECTION ONLY, and deliberately: the reverse — every registry row is
-#      emittable — becomes true at the cutover, when the last emission slice
-#      lands. Claiming it now would be a check that passes by being false.
-#   3. MANIFEST PIN GRAMMAR. `code=PD####` optionally `;msg~<fragment>`, exact.
-#      No bare `PD####`, no spaces, no tombstoned code. VACUOUS TODAY, and it
-#      says so: the manifest is still phrase-authority until the cutover, so this
-#      check is proven by planted mutants rather than by the live corpus.
+#      THE REVERSE DIRECTION is two checks, both below: every active code is
+#      PINNED by at least one manifest row (3), and EMITTED by its first witness
+#      (5). Neither could hold before the cutover; both are required after it.
+#   3. MANIFEST PINS — the manifest is CODE-AUTHORITY since the GI-12 cutover.
+#      Every reject row (stage compile) and skip row MUST pin
+#      `code=PD####[;msg~<fragment>]`, exactly: no bare `PD####`, no spaces, no
+#      phrase, no tombstoned or unregistered code. The SET of refusal rows is
+#      pinned by digest (R5), so a compensated retype goes red; and the counts
+#      conformance prints are a REQUIREMENT here, not an observation.
 #   4. PARSER SELF-TESTS. The shared parser (scripts/lib/diag-parse.sh) is
 #      handed planted mutants and must report each one correctly. The mutants run
 #      in a temp dir against temp manifests. THE LIVE CORPUS IS NEVER MUTATED —
@@ -297,12 +299,19 @@ check_compiler_inventory() { # $1 = registry -> 0 clean / 1 complained
   [ "$n" -eq 0 ]
 }
 
+# EVERY refusal row, not every row that happens to look like a pin. Before the
+# cutover this read only observables already spelled `code=…`, which was right
+# while phrases were the authority and is a hole after: a reject row that kept a
+# phrase would simply not be looked at. A reject row at stage `run` pins
+# `exit=<N>` — a rule the cutover left alone — and is the one exemption.
 check_manifest_pins() {      # $1 = registry, $2 = manifest -> 0 clean / 1 complained
   local reg=$1 man=$2 n=0 path cls stage obs rest code
+  local pin_re='^code=PD[0-9]{4}(;msg~.+)?$'
   while IFS=$'\t' read -r path cls stage obs rest; do
-    case "$obs" in code=*|*';msg~'*|*'code ='*) ;; *) continue ;; esac
-    if [[ ! $obs =~ ^code=PD[0-9]{4}(\;msg~.+)?$ ]]; then
-      echo "$path: observable '$obs' is not exactly code=PD####[;msg~<fragment>]"; n=$((n+1)); continue
+    case "$cls" in reject|skip) ;; *) continue ;; esac
+    [ "$cls" = reject ] && [ "$stage" = run ] && continue
+    if [[ ! $obs =~ $pin_re ]]; then
+      echo "$path: class=$cls observable '$obs' is not exactly code=PD####[;msg~<fragment>]"; n=$((n+1)); continue
     fi
     code=${obs:5:6}
     local status
@@ -314,6 +323,72 @@ check_manifest_pins() {      # $1 = registry, $2 = manifest -> 0 clean / 1 compl
     esac
   done < <(grep -v '^#' "$man")
   [ "$n" -eq 0 ]
+}
+
+# The reverse of check_compiler_inventory's direction, on the manifest side: an
+# ACTIVE code that no refusal row pins is a number with no corpus witness to it
+# being enforced — the registry would describe a rule the gate never exercises.
+check_codes_pinned() {       # $1 = registry, $2 = manifest -> 0 clean / 1 complained
+  local reg=$1 man=$2 n=0 code
+  local pinned
+  pinned=$(awk -F'\t' '$1 !~ /^#/ && ($2=="reject" || $2=="skip") && $4 ~ /^code=PD[0-9][0-9][0-9][0-9]/ {print substr($4, 6, 6)}' "$man" | sort -u)
+  while IFS= read -r code; do
+    [ -n "$code" ] || continue
+    printf '%s\n' "$pinned" | grep -qx -- "$code" \
+      || { echo "$code: active in the registry, and no reject or skip row pins it"; n=$((n+1)); }
+  done < <(awk -F'\t' '$3=="active"{print $1}' <(registry_rows "$reg"))
+  [ "$n" -eq 0 ]
+}
+
+# R5 — THE MEMBERSHIP PIN. A digest of the EXACT SET of refusal rows, as sorted
+# `path<TAB>class` lines over every `reject` and `skip` row of the manifest. Not a
+# count: retyping reject A to xfail and xfail B to reject keeps every count where
+# it was and changes this. SCOPED TO THE REFUSAL ROWS ON PURPOSE — those are the
+# rows this gate certifies, and a digest over the whole manifest would turn every
+# unrelated xfail-to-run payoff into a red here.
+#
+# RE-PINNING IS A DECISION. Adding, removing or retyping a refusal row changes
+# the digest; the run prints the new one, and the edit below is where a reviewer
+# reads which rows moved. `scripts/gen-code-pins.py` prints the same digest
+# (`refusal-rows`) before and after it writes, computed the same way.
+#   was 15378d68… at the GI-12 cutover: 122 reject + 2 skip.
+REFUSAL_SET_SHA=15378d68a9620429096add7db130d874f61d88e77497ea5e1f07518712beaf12
+refusal_set_digest() {       # $1 = manifest -> sha256 on stdout
+  awk -F'\t' 'NF>=2 && $1 !~ /^#/ && ($2=="reject" || $2=="skip") {print $1 "\t" $2}' "$1" \
+    | LC_ALL=C sort | shasum -a 256 | cut -d' ' -f1
+}
+check_membership() {         # $1 = manifest -> 0 clean / 1 complained
+  local got
+  got=$(refusal_set_digest "$1")
+  if [ "$got" != "$REFUSAL_SET_SHA" ]; then
+    echo "the set of refusal rows changed: digest $got, pinned $REFUSAL_SET_SHA ($(awk -F'\t' 'NF>=2 && $1 !~ /^#/ && ($2=="reject" || $2=="skip")' "$1" | wc -l | tr -d ' ') reject/skip rows now). A row was added, removed or retyped; re-pin REFUSAL_SET_SHA deliberately, naming the rows"
+    return 1
+  fi
+  return 0
+}
+
+# THE COUNTS LINE IS A REQUIREMENT. Conformance tallies what its coded comparator
+# saw over the refusal rows; every one of them must have reached it CODED, and
+# none uncoded, malformed or unreadable. A sweep that adjudicated fewer rows than
+# the manifest declares is not green here even if its own exit was.
+#   $1 = the `diagnostic-codes:` line (may be empty), $2 = refusal rows that pin a code
+check_code_counts() {
+  local line=$1 want=$2 c u m r
+  if [ -z "$line" ]; then
+    echo "conformance printed no \`diagnostic-codes:\` line, so what its comparator saw is unknown"; return 1
+  fi
+  c=$(printf '%s' "$line" | sed -n 's/.* coded=\([0-9]*\).*/\1/p')
+  u=$(printf '%s' "$line" | sed -n 's/.* uncoded=\([0-9]*\).*/\1/p')
+  m=$(printf '%s' "$line" | sed -n 's/.* malformed=\([0-9]*\).*/\1/p')
+  r=$(printf '%s' "$line" | sed -n 's/.* unreadable=\([0-9]*\).*/\1/p')
+  if [ -z "$c" ] || [ -z "$u" ] || [ -z "$m" ] || [ -z "$r" ]; then
+    echo "the counts line does not parse: $line"; return 1
+  fi
+  if [ "$c" -ne "$want" ] || [ "$u" -ne 0 ] || [ "$m" -ne 0 ] || [ "$r" -ne 0 ]; then
+    echo "conformance adjudicated coded=$c uncoded=$u malformed=$m unreadable=$r; the manifest pins $want refusal row(s), so the requirement is coded=$want and the rest 0"
+    return 1
+  fi
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -333,18 +408,30 @@ fi
 out=$(check_compiler_inventory "$REGISTRY"); rc=$?
 if [ "$rc" -eq 0 ]; then
   ok "binary and registry agree on every code the binary knows ($(awk -F'\t' '$2=="active"' "$TMPROOT/dump" | wc -l | tr -d ' ') active, $(awk -F'\t' '$2=="tombstone"' "$TMPROOT/dump" | wc -l | tr -d ' ') tombstone)"
-  note "the reverse direction (every registry row is emittable) becomes checkable at the cutover"
 else
   while IFS= read -r l; do bad "inventory: $l"; done <<<"$out"
 fi
 
 out=$(check_manifest_pins "$REGISTRY" "$MANIFEST"); rc=$?
-pinned=$(grep -c $'\tcode=PD' "$MANIFEST" || true)
+pinned=$(awk -F'\t' '$1 !~ /^#/ && ($2=="reject" || $2=="skip") && $4 ~ /^code=PD/' "$MANIFEST" | wc -l | tr -d ' ')
 if [ "$rc" -eq 0 ]; then
-  ok "manifest code= pins well-formed and active ($pinned row(s) pinned by code)"
-  [ "$pinned" -eq 0 ] && note "VACUOUS on the live manifest — phrase authority holds until the cutover; the grammar is proven by the planted mutants below"
+  ok "every refusal row pins an active code, exactly ($pinned row(s) pinned by code)"
 else
   while IFS= read -r l; do bad "manifest: $l"; done <<<"$out"
+fi
+
+out=$(check_codes_pinned "$REGISTRY" "$MANIFEST"); rc=$?
+if [ "$rc" -eq 0 ]; then
+  ok "every active code is pinned by at least one refusal row"
+else
+  while IFS= read -r l; do bad "manifest: $l"; done <<<"$out"
+fi
+
+out=$(check_membership "$MANIFEST"); rc=$?
+if [ "$rc" -eq 0 ]; then
+  ok "the set of refusal rows is the pinned one (R5 digest ${REFUSAL_SET_SHA:0:12}…)"
+else
+  bad "membership: $out"
 fi
 
 # ---------------------------------------------------------------------------
@@ -511,15 +598,15 @@ fi
 # `mut_borrow_of_immutable.pd` until su4 coded it PD0012 — and su4 is the LAST
 # emission slice, so the corpus no longer holds an uncoded reject row to point
 # at. Rather than keep a pointer there is nothing to point at, the control now
-# ASSEMBLES its own subject: a program written here whose refusal is the
-# ASSIGNMENT arm of the type checker's `type_mismatch` helper — a rule the locked
-# 72-condition map allocates no number to, and one that
+# compiles its own subject: `scripts/lib/unjudged-refusal.pd`, whose refusal is
+# the ASSIGNMENT arm of the type checker's `type_mismatch` helper — a rule the
+# locked 72-condition map allocates no number to, and one that
 # `tests/gi12_diagnostic_codes.rs` independently asserts stays uncoded in
-# `the_assignment_arm_sharing_the_type_mismatch_helper_stays_uncoded`. Two
-# derivations of the same premise, in two files: a future slice that codes that
-# arm cannot quietly turn this control into a tautology, because it goes red here
-# AND there, and moving this program is then the same edit the slices have been
-# making all along.
+# `the_assignment_arm_sharing_the_type_mismatch_helper_stays_uncoded`. ONE FILE,
+# read by both: this gate and the Rust test used to carry a literal each, and two
+# literals are two programs the day one of them is edited. A future slice that
+# codes that arm cannot quietly turn this control into a tautology, because it
+# goes red here AND there, and moving the program is one edit.
 #
 # A REAL COMPILE, not a synthesised capture. The state under test is a COMPILER
 # state — that a refusal from an unjudged site carries no code — and a capture
@@ -529,18 +616,14 @@ fi
 # empty capture also parses as NO_CODE, so the guard is what keeps this control
 # from passing by having nothing to read), and it must refuse with the sentence
 # the arm above is named for.
-cat >"$M/uncoded.pd" <<'PD'
-fn main() {
-    let mut n: i64 = 1;
-    n = 'a';
-    print_int(n);
-}
-PD
-( cd "$TMPROOT/run" && "$OLDPWD/$PDC" compile "$M/uncoded.pd" -o m3 >/dev/null 2>"$M/m3" )
+UNCODED_SUBJECT=scripts/lib/unjudged-refusal.pd
+( cd "$TMPROOT/run" && "$OLDPWD/$PDC" compile "$OLDPWD/$UNCODED_SUBJECT" -o m3 >/dev/null 2>"$M/m3" )
 m3_rc=$?
 m3_plain=$(sed $'s/\033\\[[0-9;]*m//g' "$M/m3" | head -1)
-if [ "$m3_rc" -ne 1 ]; then
-  bad "M3 uncoded control: the assembled program exited $m3_rc instead of refusing (1), so it says nothing about NO_CODE"
+if [ ! -f "$UNCODED_SUBJECT" ]; then
+  bad "M3 uncoded control: its subject $UNCODED_SUBJECT is missing, so it says nothing about NO_CODE"
+elif [ "$m3_rc" -ne 1 ]; then
+  bad "M3 uncoded control: the subject program exited $m3_rc instead of refusing (1), so it says nothing about NO_CODE"
 elif ! printf '%s' "$m3_plain" | grep -q 'Type mismatch: expected Int, found Char'; then
   bad "M3 uncoded control: the program reached a different refusal ($m3_plain), so this control is no longer about the assignment arm"
 else
@@ -613,7 +696,7 @@ fi
 # The manifest mutants need a temp manifest, never the live one. `NF==6` and not
 # `head`: the first non-comment line of the real manifest is BLANK, and a mutant
 # planted on a blank line mutates nothing while looking like it did.
-mkman() { awk -F'\t' 'NF==6 && $1 !~ /^#/' "$MANIFEST" | head -3 >"$M/man.txt"; }
+mkman() { awk -F'\t' 'NF==6 && $1 !~ /^#/ && ($2=="reject" || $2=="skip")' "$MANIFEST" | head -3 >"$M/man.txt"; }
 mkman
 [ "$(wc -l <"$M/man.txt" | tr -d ' ')" -eq 3 ] \
   || { absta "could not slice 3 manifest rows to mutate"; finish; }
@@ -639,6 +722,87 @@ mutate_manifest "M12 a pin to an unregistered code is refused" \
   "code=PD0777" "not in the registry"
 mutate_manifest "M12b a whitespace variant of a well-formed pin is refused" \
   "code= PD0003" "is not exactly code=PD"
+# M12c — THE HOLE THE CUTOVER CLOSED IN THIS FUNCTION. It used to read only
+# observables already spelled `code=…`, so a refusal row that kept a PHRASE was
+# never looked at. Now every refusal row must pin a code.
+mutate_manifest "M12c a refusal row that still pins a PHRASE is refused" \
+  "No main function found" "is not exactly code=PD"
+mutate_manifest "M12d a bare PD#### with no code= is refused" \
+  "PD0003" "is not exactly code=PD"
+
+# M22 — EVERY ACTIVE CODE IS PINNED. A registry with one more active row than any
+# manifest row pins must go red; the live pair must not.
+awk -F'\t' -v OFS='\t' '{print} $1=="PD0003"{$1="PD0998"; $2="planted_unpinned_rule"; print}' \
+  "$REGISTRY" >"$M/reg.tsv"
+if cmp -s "$REGISTRY" "$M/reg.tsv"; then
+  bad "M22: the mutation changed nothing, so this mutant proves nothing"
+else
+  out=$(check_codes_pinned "$M/reg.tsv" "$MANIFEST")
+  if printf '%s' "$out" | grep -q "PD0998: active in the registry, and no reject or skip row pins it"; then
+    ok "M22 an active code that no refusal row pins is refused"
+  else
+    bad "M22 an unpinned active code was accepted: ${out:-<nothing>}"
+  fi
+fi
+
+# M23 — R5, THE MEMBERSHIP PIN, over temp copies of the WHOLE live manifest. The
+# compensated retype is the case a count cannot see, so the mutant first proves
+# the counts really are unchanged — otherwise it would only be another single
+# retype wearing a better name.
+membership_case() {          # name, awk program over the manifest, [require-same-counts]
+  local name=$1 prog=$2 same=${3:-}
+  awk -F'\t' -v OFS='\t' "$prog" "$MANIFEST" >"$M/man_r5.txt"
+  if cmp -s "$MANIFEST" "$M/man_r5.txt"; then
+    bad "$name: the mutation changed nothing, so this mutant proves nothing"; return
+  fi
+  if [ -n "$same" ]; then
+    local before after
+    before=$(awk -F'\t' 'NF==6 && $1 !~ /^#/ {print $2}' "$MANIFEST" | sort | uniq -c | tr -s ' ')
+    after=$(awk -F'\t' 'NF==6 && $1 !~ /^#/ {print $2}' "$M/man_r5.txt" | sort | uniq -c | tr -s ' ')
+    if [ "$before" != "$after" ]; then
+      bad "$name: the class counts moved, so this is not a COMPENSATED retype"; return
+    fi
+  fi
+  local out; out=$(check_membership "$M/man_r5.txt")
+  if [ $? -ne 0 ] && printf '%s' "$out" | grep -q "the set of refusal rows changed"; then
+    ok "$name"
+  else
+    bad "$name: the membership pin accepted it: ${out:-<nothing>}"
+  fi
+}
+r5_reject=$(awk -F'\t' 'NF==6 && $1 !~ /^#/ && $2=="reject"{print $1; exit}' "$MANIFEST")
+r5_xfail=$(awk -F'\t' 'NF==6 && $1 !~ /^#/ && $2=="xfail"{print $1; exit}' "$MANIFEST")
+r5_skip=$(awk -F'\t' 'NF==6 && $1 !~ /^#/ && $2=="skip"{print $1; exit}' "$MANIFEST")
+if [ -z "$r5_reject" ] || [ -z "$r5_xfail" ] || [ -z "$r5_skip" ]; then
+  bad "M23: the live manifest has no reject, xfail or skip row to retype; these mutants prove nothing"
+else
+  membership_case "M23a a single retype (reject -> xfail) changes the refusal set" \
+    "\$1==\"$r5_reject\"{\$2=\"xfail\"} {print}"
+  membership_case "M23b a COMPENSATED retype (reject A -> xfail, xfail B -> reject) keeps every count and is still refused" \
+    "\$1==\"$r5_reject\"{\$2=\"xfail\"} \$1==\"$r5_xfail\"{\$2=\"reject\"} {print}" same
+  membership_case "M23c a reject <-> skip swap keeps both counts and is still refused" \
+    "\$1==\"$r5_reject\"{\$2=\"skip\"} \$1==\"$r5_skip\"{\$2=\"reject\"} {print}" same
+  out=$(check_membership "$MANIFEST") \
+    && ok "M23d meta-control: the unmutated live manifest passes the same function" \
+    || bad "M23d meta-control: the unmutated manifest failed the membership pin — M23a-c are uninformative: $out"
+fi
+
+# M24 — THE COUNTS REQUIREMENT, over lines this run did not produce.
+counts_case() {              # name, line, want, expected rc
+  local out; out=$(check_code_counts "$2" "$3"); local rc=$?
+  if [ "$rc" = "$4" ]; then ok "$1"; else bad "$1: rc=$rc, expected $4: ${out:-<nothing>}"; fi
+}
+counts_case "M24a every refusal row coded, nothing else, is green" \
+  "diagnostic-codes: coded=124 uncoded=0 malformed=0 unreadable=0" 124 0
+counts_case "M24b one row short of the manifest is RED" \
+  "diagnostic-codes: coded=123 uncoded=0 malformed=0 unreadable=0" 124 1
+counts_case "M24c an uncoded refusal is RED even if the coded count is reached" \
+  "diagnostic-codes: coded=124 uncoded=1 malformed=0 unreadable=0" 124 1
+counts_case "M24d a malformed refusal is RED" \
+  "diagnostic-codes: coded=123 uncoded=0 malformed=1 unreadable=0" 124 1
+counts_case "M24e an unreadable capture is RED" \
+  "diagnostic-codes: coded=123 uncoded=0 malformed=0 unreadable=1" 124 1
+counts_case "M24f no counts line at all is RED, not skipped" "" 124 1
 
 # M15 — A WITNESS THAT DOES NOT REFUSE. The registry row is re-pointed at a
 # fixture pdc ACCEPTS (a `run`-class corpus row), which is the shape a witness
@@ -859,7 +1023,19 @@ conf_log="$TMPROOT/conformance.log"
 bash scripts/conformance.sh tests examples >"$conf_log" 2>&1
 conf_rc=$?
 summary=$(grep -m1 '^verified=' "$conf_log")
-apply_conformance_verdict "$(fold_conformance_verdict "$conf_rc" "$summary")" \
-  "$conf_rc" "$summary" "$conf_log"
+verdict=$(fold_conformance_verdict "$conf_rc" "$summary")
+apply_conformance_verdict "$verdict" "$conf_rc" "$summary" "$conf_log"
+
+# The counts line is held to the manifest, not read off. Skipped only when the
+# corpus produced no verdict at all — that is already an abstention above, and a
+# second complaint about the same missing run would be a double count.
+if [ "$verdict" != NO_VERDICT ]; then
+  out=$(check_code_counts "$(grep -m1 '^diagnostic-codes: ' "$conf_log")" "$pinned")
+  if [ $? -eq 0 ]; then
+    ok "requirement: conformance adjudicated all $pinned pinned refusal rows by code, and nothing uncoded, malformed or unreadable"
+  else
+    bad "requirement: $out"
+  fi
+fi
 
 finish

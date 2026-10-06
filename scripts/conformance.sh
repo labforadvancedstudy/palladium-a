@@ -50,15 +50,15 @@
 #            could hide behind an old excuse. A listed fixture that PASSES is
 #            XPASS and fails the gate, so an expectation cannot go stale.
 #            An xfail is a DEBT: it carries the milestone that owes it.
-#   reject   must fail, and that is CORRECT behaviour — a negative test. Same
-#            stage+fingerprint machinery as xfail, opposite meaning: it is real
-#            coverage, owed to nobody, and counted as such. This is how you test
-#            "the compiler refuses `.await` with a span-carrying diagnostic"
-#            instead of shipping a program that prints prose about it. If the
-#            compiler ACCEPTS it, that is REJECT_ACCEPTED and fails the gate.
+#   reject   must fail, and that is CORRECT behaviour — a negative test: real
+#            coverage, owed to nobody. ADJUDICATED BY CODE, NOT PHRASE (GI-12):
+#            the refusal's one coded primary header must carry the pinned code,
+#            and a pinned `;msg~` fragment must occur in THAT header's payload —
+#            never in the log, where the source echo lives. If the compiler
+#            ACCEPTS it, that is REJECT_ACCEPTED and fails the gate.
 #   skip     not a standalone program (no `fn main`): a library module or a
-#            package manifest. Declared, so it cannot be used to smuggle a
-#            program out of the gate.
+#            package manifest, proven so by a refusal adjudicated exactly like a
+#            reject row's, so it cannot be used to smuggle a program out.
 #
 # ONE OUTCOME IS NOT A CLASS AT ALL — the backend rejecting its own output.
 # There is no valid Palladium program for which `pdc` accepts the source and gcc
@@ -125,8 +125,9 @@
 #                  `link` is REFUSED — see the paragraph above.
 #   4 observable   what must be observed, per class:
 #                    run           `expected` (diff sibling <fixture>.expected)
-#                    xfail/reject  a substring of the diagnostic, or exit=<N>
-#                                  when stage=run
+#                    xfail         a substring of the log, or exit=<N> at stage=run
+#                    reject/skip   exactly code=PD####[;msg~<fragment>]; a reject
+#                                  row at stage=run keeps exit=<N>
 #                    others        `-`
 #   5 owner        M1..M9 | unscheduled
 #                                  (untranscribed/vacuous/xfail only, else `-`)
@@ -198,11 +199,14 @@ strip_ansi() { sed $'s/\033\\[[0-9;]*m//g'; }
 
 # The shared diagnostic-header parser (GI-12). SOURCED, never copied: this file
 # and scripts/check-diagnostic-codes.sh must not be able to disagree about what a
-# coded header is. Today it is OBSERVATIONAL here — the reject verdict below is
-# still the whole-log fixed-string match, and the code pins arrive at the
-# cutover — so what it buys now is that the plumbing is exercised on the live
-# corpus every run instead of only in the gate's own fixtures.
-. scripts/lib/diag-parse.sh
+# coded header is. It is THE AUTHORITY for every reject and skip row (see
+# `coded_pin_verdict`), so a run that cannot load it cannot adjudicate one and
+# must not start: before the cutover a missing parser only zeroed a count.
+if ! . scripts/lib/diag-parse.sh || ! declare -F pd_diag_parse >/dev/null; then
+  echo "error: scripts/lib/diag-parse.sh could not be loaded. It is the only" >&2
+  echo "       thing that adjudicates a reject or skip row; refusing to run." >&2
+  exit 2
+fi
 diag_coded=0; diag_uncoded=0; diag_malformed=0; diag_unreadable=0
 
 # grep answers three questions, not two: 0 matched, 1 did not match, 2 COULD NOT
@@ -217,6 +221,69 @@ grep_status() {
     F) grep -qF -- "$pat" "$file" 2>/dev/null ;;
   esac
   return $?
+}
+
+# THE TWO COMPARATORS, ONE PER KIND OF ROW, AND NEITHER IS REACHABLE FROM THE
+# OTHER'S ROWS. Named, so which rows reach which can be read off the call sites —
+# each is called from one arm of the class dispatch ahead of the verdict chain.
+#
+# declared_phrase_match <fingerprint> <log> -> 0 matched, 1 did not, 2 could not
+# read. The DECLARED FINGERPRINT as a fixed string over the WHOLE ANSI-stripped
+# log. xfail rows only: an xfail fingerprint is a debt record — "this is the
+# failure we already know about" — and a whole-log substring is what it has
+# always been. It is NOT attribution, which is why no reject or skip row may
+# reach it: measured before the cutover, a fixture that failed on a stray `@@@`
+# and carried a pinned phrase in a string literal was counted as that refusal,
+# because the compiler echoes the source line into the log.
+declared_phrase_match() {
+  local fp=$1 log=$2 fp_match=2
+  if strip_ansi <"$log" >"$TMPROOT/diag" 2>/dev/null; then
+    grep_status F "$fp" "$TMPROOT/diag"; fp_match=$?
+  fi
+  return "$fp_match"
+}
+
+# coded_pin_verdict <pin> <stderr-capture> — reject and skip rows only (GI-12).
+# The pin is `code=PD####` or `code=PD####;msg~<fragment>`, already grammar-
+# checked at manifest parse. Split at the FIRST `;msg~`: a fragment may itself
+# contain `;` (PD0042's is `[Int; N]`). Prints ONE line and returns 0, or
+# returns 2 having printed nothing when the capture could not be read:
+#   MATCH                    the one coded primary header carries the code, and
+#                            the fragment (if pinned) is in its PAYLOAD
+#   WRONG_CODE <got>         a coded header, with another code
+#   NO_CODE                  no coded header at all (a bare `error:` included)
+#   MALFORMED <n>            n >= 2 coded primary headers — nothing attributable
+#   MSG_MISMATCH <payload>   the right code, and the fragment is not in the
+#                            payload. The payload is the text after
+#                            `error[PD####]: ` on that ONE line: not the log, not
+#                            the diagnostic block, so a fragment that reaches the
+#                            capture only through the echoed source line or a
+#                            note cannot satisfy it (spec R4).
+# The capture is pdc's STDERR ALONE, never the merged log: a fixture's stdout
+# can carry a header-shaped line, and a merged stream cannot say who wrote it.
+coded_pin_verdict() {
+  local pin=$1 cap=$2 want frag="" state payload
+  want=${pin:5:6}
+  case "$pin" in *';msg~'*) frag=${pin#*";msg~"} ;; esac
+  state=$(pd_diag_parse "$cap") || return 2
+  case "$(pd_diag_state "$state")" in
+    CODED)     ;;
+    NO_CODE)   printf 'NO_CODE\n'; return 0 ;;
+    MALFORMED) printf 'MALFORMED\t%s\n' "$(pd_diag_code "$state")"; return 0 ;;
+    *)         return 2 ;;
+  esac
+  if [ "$(pd_diag_code "$state")" != "$want" ]; then
+    printf 'WRONG_CODE\t%s\n' "$(pd_diag_code "$state")"; return 0
+  fi
+  payload=$(pd_diag_payload "$state")
+  if [ -n "$frag" ]; then
+    # Quoted inside the pattern, so `[`, `*` and `?` in a fragment are literal.
+    case "$payload" in
+      *"$frag"*) ;;
+      *) printf 'MSG_MISMATCH\t%s\n' "$payload"; return 0 ;;
+    esac
+  fi
+  printf 'MATCH\n'
 }
 
 # Literal prefix test. `grep -q "^$d/"` interpreted the scope name as a regular
@@ -363,6 +430,20 @@ check_stage() {   # check_stage <lineno> <class> <stage>
   esac
 }
 
+# Column 4 of a reject or skip row: GRAMMAR ONLY, and exact. Whether the pinned
+# code is an ACTIVE row of docs/contributing/diagnostic-codes.tsv is not asked
+# here — this runner does not read the registry; scripts/check-diagnostic-codes.sh
+# owns registry/manifest coherence. What is refused here is every spelling that is
+# not the one grammar: a bare `PD0001`, `code= PD0001`, `code =PD0001`, a blank
+# after the code, an empty `;msg~`, and a PHRASE — the pre-GI-12 pin, which any
+# log line carrying the words could satisfy. Inside a fragment every character is
+# literal, blanks included: two PD0004 fragments end in one.
+PIN_RE='^code=PD[0-9]{4}(;msg~.+)?$'
+check_code_pin() {   # check_code_pin <lineno> <class> <observable>
+  [[ $3 =~ $PIN_RE ]] && return 0
+  merr "$1" "class=$2 observable must be exactly code=PD####[;msg~<fragment>] — the stable code its refusal must carry, and optionally a fragment of that header's payload — got '$3'"
+}
+
 lineno=0
 while IFS= read -r raw || [ -n "$raw" ]; do
   lineno=$((lineno+1))
@@ -438,9 +519,11 @@ while IFS= read -r raw || [ -n "$raw" ]; do
       ;;
     reject)
       check_stage "$lineno" reject "$ms"
-      [ "$mf" != "-" ] || merr "$lineno" "class=reject needs a diagnostic fingerprint"
+      # stage=run keeps its `exit=<N>` rule exactly as it was (no row uses it).
       if [ "$ms" = "run" ]; then
         case "$mf" in exit=[0-9]*) ;; *) merr "$lineno" "stage=run needs fingerprint 'exit=<N>', got '$mf'" ;; esac
+      else
+        check_code_pin "$lineno" reject "$mf"
       fi
       # A negative test is correct behaviour, so it is owed to no milestone.
       [ "$mo" = "-" ] || merr "$lineno" "class=reject must have owner '-' (it is coverage, not a debt), got '$mo'"
@@ -454,7 +537,7 @@ while IFS= read -r raw || [ -n "$raw" ]; do
       # main()` all compile and run, and all three would have passed as `skip`:
       # never compiled, never gated.
       check_stage "$lineno" skip "$ms"
-      [ "$mf" != "-" ] || merr "$lineno" "class=skip needs the diagnostic proving it is not a program (e.g. 'No main function found')"
+      check_code_pin "$lineno" skip "$mf"
       [ "$mo" = "-" ] || merr "$lineno" "class=skip must have owner '-', got '$mo'"
       [ "$mn" != "-" ] || merr "$lineno" "class=skip needs a note"
       ;;
@@ -696,23 +779,13 @@ while IFS= read -r f; do
   # 221 fixtures, stdout-then-stderr is line-identical to the interleaved capture
   # for 220, and reorders lines for exactly one (`tests/03_const_items.pd`, whose
   # gcc `note:` lines move relative to one stdout line). No consumer of "$log"
-  # here is order-sensitive — the fingerprint match and the gcc-contradiction
-  # check are both whole-log `grep -qF`.
+  # here is order-sensitive — the xfail phrase match and the gcc-contradiction
+  # check are both whole-log `grep -qF`, and the reject/skip comparator does not
+  # read "$log" at all.
   "$PDC" compile "$f" -o "$out" >"$TMPROOT/pdc_stdout" 2>"$TMPROOT/pdc_stderr"
   pdc_rc=$?
   cat "$TMPROOT/pdc_stdout" "$TMPROOT/pdc_stderr" >"$log"
 
-  if [ "$class" = "reject" ] || [ "$class" = "skip" ]; then
-    if diag_state=$(pd_diag_parse "$TMPROOT/pdc_stderr"); then
-      case "$(pd_diag_state "$diag_state")" in
-        CODED)     diag_coded=$((diag_coded+1)) ;;
-        MALFORMED) diag_malformed=$((diag_malformed+1)) ;;
-        *)         diag_uncoded=$((diag_uncoded+1)) ;;
-      esac
-    else
-      diag_unreadable=$((diag_unreadable+1))
-    fi
-  fi
   diag=$(strip_ansi <"$log" | grep -m1 -E 'error' | head -c 200)
 
   # TWO INDEPENDENT WITNESSES THAT THE FRONT END ACCEPTED, and either is enough.
@@ -896,15 +969,30 @@ while IFS= read -r f; do
     fi
   fi
 
-  # Fingerprint comparison, computed before the verdict chain so its THIRD
-  # outcome (could not read the log) is distinguishable from "did not match".
+  # The two comparisons, each computed before the verdict chain so its THIRD
+  # outcome (could not read) is distinguishable from "did not match" — and each
+  # ONLY for its own classes. The declared phrase is an xfail row's debt record;
+  # a reject or skip row is adjudicated by its code and never by a phrase, so the
+  # dispatch is on the class, not on what column 4 happens to look like.
   fp_match=1
+  pin_verdict=""
   if [ -n "$stage_act" ] && [ "$stage_act" != "run" ]; then
-    if strip_ansi <"$log" >"$TMPROOT/diag" 2>/dev/null; then
-      grep_status F "$fp" "$TMPROOT/diag"; fp_match=$?
-    else
-      fp_match=2
-    fi
+    case "$class" in
+      xfail)
+        declared_phrase_match "$fp" "$log"; fp_match=$? ;;
+      reject|skip)
+        # The counts line printed at the end is tallied HERE, from the verdict
+        # the comparator reached — one parse per row, the one that decides it.
+        if pin_verdict=$(coded_pin_verdict "$fp" "$TMPROOT/pdc_stderr"); then
+          case "$pin_verdict" in
+            MATCH|WRONG_CODE*|MSG_MISMATCH*) diag_coded=$((diag_coded+1)) ;;
+            MALFORMED*)                      diag_malformed=$((diag_malformed+1)) ;;
+            *)                               diag_uncoded=$((diag_uncoded+1)) ;;
+          esac
+        else
+          pin_verdict=UNREADABLE; diag_unreadable=$((diag_unreadable+1))
+        fi ;;
+    esac
   fi
 
   # ---- verdict -------------------------------------------------------------
@@ -951,23 +1039,47 @@ while IFS= read -r f; do
   elif [ "$stage_act" = "run" ] && [ "$detail" != "$fp" ]; then
     printf '%-52s %s\n' "$f" "${MM}_MISMATCH"
     fail "$f [${MM}_MISMATCH] declared '$fp' but got '$detail'"
-  elif [ "$stage_act" != "run" ] && [ "$fp_match" -gt 1 ]; then
+  elif [ "$class" = "xfail" ] && [ "$stage_act" != "run" ] && [ "$fp_match" -gt 1 ]; then
     printf '%-52s %s\n' "$f" "HARNESS_ERROR"
     fail "$f [HARNESS_ERROR] could not read the compiler log to check the declared fingerprint"
-  elif [ "$stage_act" != "run" ] && [ "$fp_match" -ne 0 ]; then
+  elif [ "$class" = "xfail" ] && [ "$stage_act" != "run" ] && [ "$fp_match" -ne 0 ]; then
     printf '%-52s %s\n' "$f" "${MM}_MISMATCH"
     fail "$f [${MM}_MISMATCH] failed at the declared stage but not with the declared diagnostic; expected fingerprint '$fp', actual: $detail"
+  elif [ "$class" = "xfail" ]; then
+    printf '%-52s %s\n' "$f" "XFAIL"
+    xfail=$((xfail+1))
+    XFAIL_NOTES+=("$f [$owner, fails at $stage_exp: $fp] $note")
+  elif [ "$pin_verdict" != "MATCH" ] && [ "$stage_act" != "run" ]; then
+    # A reject or skip row refused by the front end, and the refusal is not the
+    # one its pin names. Each verdict says WHICH way, because they send the
+    # reader to different places: the fixture, the compiler, or the harness.
+    case "$pin_verdict" in
+      WRONG_CODE*)
+        printf '%-52s %s\n' "$f" "WRONG_CODE"
+        fail "$f [WRONG_CODE] pinned ${fp:5:6} but the refusal's primary header carries ${pin_verdict#WRONG_CODE?}: a different rule refused this program, so the row is not witnessed. Diagnostic: $detail" ;;
+      NO_CODE)
+        printf '%-52s %s\n' "$f" "NO_CODE"
+        fail "$f [NO_CODE] pinned ${fp:5:6} but the refusal carries no coded primary header: the site that refused it is attributed to no rule, so there is nothing to compare. Diagnostic: $detail" ;;
+      MALFORMED*)
+        printf '%-52s %s\n' "$f" "MALFORMED"
+        fail "$f [MALFORMED] pinned ${fp:5:6} but the refusal printed ${pin_verdict#MALFORMED?} coded primary headers: exactly one is the contract, and two cannot be attributed to either" ;;
+      MSG_MISMATCH*)
+        printf '%-52s %s\n' "$f" "MSG_MISMATCH"
+        fail "$f [MSG_MISMATCH] the refusal carries ${fp:5:6} as pinned, but the fragment '${fp#*";msg~"}' is not in its primary header's payload: '${pin_verdict#MSG_MISMATCH?}'. The fragment is looked for in that one line only — the echoed source and the notes cannot satisfy it" ;;
+      UNREADABLE)
+        printf '%-52s %s\n' "$f" "HARNESS_ERROR"
+        fail "$f [HARNESS_ERROR] could not read pdc's stderr capture to adjudicate the pinned code (the shared parser could not look)" ;;
+      *)
+        printf '%-52s %s\n' "$f" "HARNESS_ERROR"
+        fail "$f [HARNESS_ERROR] class=$class reached no comparator ('$pin_verdict'); refusing rather than counting it" ;;
+    esac
   elif [ "$class" = "reject" ]; then
     printf '%-52s %s\n' "$f" "REJECTED"
     reject=$((reject+1))
     REJECT_NOTES+=("$f [refused at $stage_exp: $fp] $note")
-  elif [ "$class" = "skip" ]; then
+  else
     printf '%-52s %s\n' "$f" "SKIP"
     skip=$((skip+1))
-  else
-    printf '%-52s %s\n' "$f" "XFAIL"
-    xfail=$((xfail+1))
-    XFAIL_NOTES+=("$f [$owner, fails at $stage_exp: $fp] $note")
   fi
 done < "$FIND_OUT"
 
@@ -1004,12 +1116,12 @@ echo
 echo "=============================================="
 echo "fixtures=$n declared_in_scope=$declared_in_scope evaluated=$evaluated"
 echo "verified=$verified untranscribed=$untranscribed vacuous=$vacuous xfail=$xfail reject=$reject skip=$skip failures=$hard_fail"
-# OBSERVATIONAL, NOT A VERDICT (GI-12 su1). Counted from the shared parser over
-# the SEPARATE stderr capture, for every refusal-witness row. It says how far the
-# code rollout has got, and it is the live-corpus exercise of the parser the
-# cutover will make authoritative. `make check-diagnostic-codes` owns the
-# judgements; nothing here fails on these numbers.
-echo "diagnostic-codes(observational): coded=$diag_coded uncoded=$diag_uncoded malformed=$diag_malformed unreadable=$diag_unreadable"
+# What the coded comparator saw, over every reject/skip row that reached it.
+# Each row's own verdict above is the judgement; these totals are what
+# `make check-diagnostic-codes` holds to a REQUIREMENT — coded equal to the number
+# of refusal rows, everything else zero — so a sweep that adjudicated fewer rows
+# than the manifest declares cannot fold into that gate as green.
+echo "diagnostic-codes: coded=$diag_coded uncoded=$diag_uncoded malformed=$diag_malformed unreadable=$diag_unreadable"
 echo "  verified   = ran AND its stdout matched the recorded transcript byte for"
 echo "               byte. Only this column can see a wrong answer."
 echo "  untranscribed = ran and exited 0, but has NO transcript, so a wrong answer"
@@ -1020,10 +1132,11 @@ echo "  vacuous    = declared placeholder: runs, but only prints that its featur
 echo "               is unimplemented. NOT evidence the feature works."
 echo "  xfail      = declared failing at a specific stage with a specific"
 echo "               diagnostic, and still failing in exactly that way"
-echo "  reject     = negative test: the compiler correctly refused it with the"
-echo "               declared diagnostic. This IS coverage."
-echo "  skip       = declared non-program, PROVEN so by the compiler refusing it"
-echo "               with the declared diagnostic — not by pattern-matching the text"
+echo "  reject     = negative test: the compiler correctly refused it, and the"
+echo "               refusal's one coded header carries the pinned code (and the"
+echo "               pinned fragment, in that header). This IS coverage."
+echo "  skip       = declared non-program, PROVEN so by a refusal carrying the"
+echo "               pinned code — not by pattern-matching the text"
 if [ "$out_of_scope" -gt 0 ]; then
   echo "  note: $out_of_scope declared fixture(s) lie outside ${SCOPES[*]} and were not checked"
 fi

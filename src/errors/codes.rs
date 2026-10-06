@@ -136,8 +136,10 @@ pub enum DiagnosticCode {
     /// PD0012 — a `&mut` borrow requires the binding underneath to have been
     /// declared mutable. One `Err` in `check_mutable_borrow_allowed`
     /// (`src/ownership/borrow_checker.rs`), reached from THREE positions — an
-    /// explicit `&mut place`, a write through a place, and a `&mut` argument at
-    /// a call — which are one rule about one binding. The name in the payload
+    /// explicit `&mut place` (in a call's argument list or anywhere else), a
+    /// place passed to a `mut` parameter, and an element the pass cannot model
+    /// passed to one — which are one rule about one binding. A WRITE through a
+    /// place is not one of them (issue #47). The name in the payload
     /// is fixture data, and the two witnesses print a character-identical
     /// sentence: one borrows in a called function and one in a function nothing
     /// calls, which is a claim about WHEN the pass runs, not about the rule.
@@ -267,8 +269,9 @@ pub enum DiagnosticCode {
     /// loop variable ALIAS the grid, so a write through it reaches the original.
     ForMayNotBindAWholeRow,
 
-    /// PD0027 — an argument for a reference parameter is a PLACE, because the
-    /// call site takes its address. One `Err` in the call emitter
+    /// PD0027 — an argument for a reference parameter is a PLACE. The reason,
+    /// which is evidence and not the rule: the call site takes the argument's
+    /// address, and an rvalue has none. One `Err` in the call emitter
     /// (`src/codegen/mod.rs`), and not repairable by the hoist beside it: the
     /// hoist emits `T* t = &(expr);`, which takes the address of the same rvalue
     /// one line earlier. `expr_kind_name` names nineteen expression kinds for

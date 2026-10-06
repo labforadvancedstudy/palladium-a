@@ -8,9 +8,10 @@
 # exactly one thing, and asserts the runner goes RED (and green again when the
 # break is removed).
 #
-# Each temp repo gets: scripts/conformance.sh (the real one), symlinks to the
-# real target/release/pdc and runtime/ (pdc links the runtime by relative path),
-# a build_output/, and whatever fixtures the case needs.
+# Each temp repo gets: scripts/conformance.sh and scripts/lib/diag-parse.sh (the
+# real ones — the second is the only thing that adjudicates a reject or skip row),
+# symlinks to the real target/release/pdc and runtime/ (pdc links the runtime by
+# relative path), a build_output/, and whatever fixtures the case needs.
 #
 # Usage: bash scripts/test-conformance-runner.sh
 
@@ -48,8 +49,9 @@ CASE=""
 # new_repo <name> -> echoes the path of a fresh throwaway repo
 new_repo() {
   local d=$TMPROOT/$1
-  mkdir -p "$d/scripts" "$d/target/release" "$d/build_output" "$d/tests"
+  mkdir -p "$d/scripts/lib" "$d/target/release" "$d/build_output" "$d/tests"
   cp "$REPO/scripts/conformance.sh" "$d/scripts/conformance.sh"
+  cp "$REPO/scripts/lib/diag-parse.sh" "$d/scripts/lib/diag-parse.sh"
   ln -sf "$REPO/target/release/pdc" "$d/target/release/pdc"
   ln -sf "$REPO/runtime" "$d/runtime"
   printf '%s' "$d"
@@ -175,7 +177,7 @@ case "$f" in
     echo "build_output/$stem.c:1:25: error: use of undeclared identifier" >&2
     exit 3 ;;
   *)
-    echo "error: refused by the front end" >&2
+    echo "error[PD0013]: refused by the front end" >&2
     exit 1 ;;
 esac'
 
@@ -228,12 +230,18 @@ backend_reject_program='fn main() {
     print_int(g[1][0]);
 }'
 # A pure FRONT-END refusal whose diagnostic contains the literal `Linking`:
-#   error: Undefined variable or function: 'Linking'
+#   error[PD0005]: `Linking` is declared twice at the top level (the first is at line 1)
 # The stage classifier used to decide "did the backend run?" by grepping the
 # compiler log for `Linking`, so a fixture's own identifier could answer that
 # question on the backend's behalf. Harmless while the answer only chose a label;
 # not harmless once one branch accuses the compiler of a defect.
-frontend_reject_linking_program='fn main() {
+# It was `print_int(Linking)` — "Undefined variable or function" — until the
+# GI-12 cutover: that refusal carries no code, and a reject row now has to pin
+# one, so the program moved to a CODED refusal that still names `Linking`.
+frontend_reject_linking_program='const Linking: i64 = 1;
+const Linking: i64 = 2;
+
+fn main() {
     print_int(Linking);
 }'
 
@@ -504,7 +512,7 @@ D=$(new_repo clsstatus)
 fixture "$D" tests/a.pd "$good_program"
 fixture "$D" tests/locked.pd "$good_program"
 chmod 000 "$D/tests/locked.pd"
-manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/locked.pd|skip|compile|No main function found|-|claims to be a non-program'
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/locked.pd|skip|compile|code=PD0044|-|claims to be a non-program'
 run_case "$D" tests
 chmod 644 "$D/tests/locked.pd"
 expect_rc 1 && expect_out "UNREADABLE" && ok
@@ -513,7 +521,7 @@ start "class/status: a declared dangling symlink is a harness failure, not a 'sk
 D=$(new_repo clsdangle2)
 fixture "$D" tests/a.pd "$good_program"
 ln -sfn nowhere.pd "$D/tests/dangle.pd"
-manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/dangle.pd|skip|compile|No main function found|-|declared non-program'
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/dangle.pd|skip|compile|code=PD0044|-|declared non-program'
 run_case "$D" tests
 expect_rc 1 && expect_out "UNREADABLE" && ok
 
@@ -591,7 +599,7 @@ fixture "$D" tests/a.pd "$good_program"
 fixture "$D" tests/evade.pd 'fn /* c */ main() {
     print("evaded");
 }'
-manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/evade.pd|skip|compile|No main function found|-|claims not to be a program'
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/evade.pd|skip|compile|code=PD0044|-|claims not to be a program'
 run_case "$D" tests
 expect_rc 1 && expect_out "SKIP_IS_A_PROGRAM" && ok
 
@@ -615,19 +623,25 @@ start "skip: a genuine library module is proven skip by the compiler"
 D=$(new_repo skiplib)
 fixture "$D" tests/a.pd "$good_program"
 fixture "$D" tests/lib.pd "$library_module"
-manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/lib.pd|skip|compile|No main function found|-|library module'
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/lib.pd|skip|compile|code=PD0044|-|library module'
 run_case "$D" tests
 expect_rc 0 && expect_out "skip=1" && ok
 
-start "skip: a wrong diagnostic on a skip row fails the gate"
-manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/lib.pd|skip|compile|Unsupported type in reference parameter|-|wrong reason'
+start "skip: a wrong CODE on a skip row fails the gate (WRONG_CODE)"
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/lib.pd|skip|compile|code=PD0030|-|wrong reason'
 run_case "$D" tests
-expect_rc 1 && expect_out "SKIP_MISMATCH" && ok
+expect_rc 1 && expect_out "WRONG_CODE" && expect_out "pinned PD0030" \
+  && expect_out "carries PD0044" && expect_not_out "skip=1" && ok
 
-start "skip: a row with no fingerprint is a manifest error"
+start "skip: a row with no pin is a manifest error"
 manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/lib.pd|skip|-|-|-|no proof offered'
 run_case "$D" tests
-expect_rc 2 && expect_out "needs the diagnostic" && ok
+expect_rc 2 && expect_out "observable must be exactly code=PD####" && ok
+
+start "skip: a PHRASE pin (the pre-GI-12 spelling) is a manifest error"
+manifest "$D" 'tests/a.pd|run|-|expected|-|-' 'tests/lib.pd|skip|compile|No main function found|-|library module'
+run_case "$D" tests
+expect_rc 2 && expect_out "observable must be exactly code=PD####" && ok
 
 # --- COMBINED scope cases (each component was tested; the combinations were not)
 start "combined: a scope plus a symlink pointing at it is an overlap"
@@ -878,36 +892,260 @@ start "handoff bootstrap: and the transcript holds the program's real output"
 if [ "$(cat "$D/tests/wasbroken.expected")" = "ok" ]; then ok; else bad "transcript content wrong"; fi
 
 # ---------------------------------------------------------------------------
-# class=reject — same fingerprint machinery as xfail, opposite meaning. This is
-# how "the compiler must refuse `.await` with a span-carrying diagnostic" gets
-# tested, instead of a program that prints prose about async being unimplemented.
+# class=reject — a negative test, adjudicated by CODE since GI-12: the refusal's
+# one coded primary header must carry the pinned code. xfail rows keep their
+# phrase; a reject row does not get one. The code-specific cases are the section
+# after this one.
 # ---------------------------------------------------------------------------
 start "reject: a program the compiler correctly refuses counts as coverage"
 D=$(new_repo reject)
 fixture "$D" tests/refused.pd "$bad_program"
-manifest "$D" 'tests/refused.pd|reject|compile|Expected function, struct, enum|-|the compiler must refuse this construct'
+manifest "$D" 'tests/refused.pd|reject|compile|code=PD0013|-|the compiler must refuse this construct'
 run_case "$D"
 expect_rc 0 && expect_out "reject=1" && ok
 
 start "reject: it is counted as coverage, NOT as a debt (xfail=0)"
 expect_out "xfail=0" && ok
 
-start "reject: a wrong diagnostic fails the gate (REJECT_MISMATCH)"
-manifest "$D" 'tests/refused.pd|reject|compile|Unsupported type in reference parameter|-|wrong diagnostic'
+start "reject: a wrong code fails the gate (WRONG_CODE, naming both codes)"
+manifest "$D" 'tests/refused.pd|reject|compile|code=PD0030|-|wrong code'
 run_case "$D"
-expect_rc 1 && expect_out "REJECT_MISMATCH" && ok
+expect_rc 1 && expect_out "WRONG_CODE" && expect_out "pinned PD0030" \
+  && expect_out "carries PD0013" && expect_not_out "reject=1" && ok
 
 start "reject: if the compiler ACCEPTS it, that fails the gate"
 D=$(new_repo rejectaccept)
 fixture "$D" tests/accepted.pd "$good_program"
-manifest "$D" 'tests/accepted.pd|reject|compile|should have been refused|-|regression guard'
+manifest "$D" 'tests/accepted.pd|reject|compile|code=PD0013|-|regression guard'
 run_case "$D"
 expect_rc 1 && expect_out "REJECT_ACCEPTED" && ok
 
 start "reject: an owner is rejected — a negative test is owed to nobody"
-manifest "$D" 'tests/accepted.pd|reject|compile|x|M1|has an owner'
+manifest "$D" 'tests/accepted.pd|reject|compile|code=PD0013|M1|has an owner'
 run_case "$D"
 expect_rc 2 && expect_out "must have owner" && ok
+
+# ===========================================================================
+# GI-12 — A REJECT OR SKIP ROW IS ADJUDICATED BY ITS CODE, AND BY NOTHING ELSE.
+#
+# The refusal's ONE coded primary header (column 0 of pdc's STDERR) must carry
+# the pinned code; a pinned `;msg~` fragment must occur in that header's PAYLOAD.
+# Each case below plants one way a refusal can look right to a whole-log grep
+# and still not be the refusal the row names, and requires the NAMED verdict —
+# a case that only asserted "red" would pass on a runner that reds everything.
+#
+# Where the case depends on planted text actually reaching the capture (the
+# source echo, a note, the fixture's stdout), that premise is asserted first,
+# against the real compiler: a control that plants nothing proves nothing.
+# ===========================================================================
+
+# premise_in_stderr <fixture-path> <text> -> 0 iff pdc's ANSI-stripped STDERR for
+# the fixture contains <text> on some line that is NOT the coded primary header.
+premise_in_stderr() {
+  local d err
+  d=$(mktemp -d "$TMPROOT/premise.XXXXXX") || return 1
+  ( cd "$d" && "$REPO/target/release/pdc" compile "$1" -o premise >/dev/null 2>"$d/err" )
+  err=$(sed $'s/\033\\[[0-9;]*m//g' "$d/err")
+  # Literal containment by `case`, not `grep -q` at the end of a pipe: under
+  # pipefail an early-exiting reader can turn a match into a status the caller
+  # reads as "absent".
+  local hdr body
+  hdr=$(printf '%s\n' "$err" | grep '^error\[PD[0-9][0-9][0-9][0-9]\]: ')
+  body=$(printf '%s\n' "$err" | grep -v '^error\[PD[0-9][0-9][0-9][0-9]\]: ')
+  case "$body" in *"$2"*) ;; *) return 1 ;; esac
+  case "$hdr" in *"$2"*) return 1 ;; esac
+  return 0
+}
+
+start "code: the pinned code alone is enough when it matches (REJECTED)"
+D=$(new_repo codepins)
+fixture "$D" tests/refused.pd "$bad_program"
+manifest "$D" 'tests/refused.pd|reject|compile|code=PD0013|-|parse refusal'
+run_case "$D"
+expect_rc 0 && expect_out "reject=1" && expect_out "coded=1 uncoded=0 malformed=0 unreadable=0" && ok
+
+start "code: an UNCODED refusal is NO_CODE, not a pass"
+fixture "$D" tests/refused.pd 'fn main() {
+    print_int(Undeclared);
+}'
+run_case "$D"
+expect_rc 1 && expect_out "NO_CODE" && expect_out "pinned PD0013" && expect_not_out "reject=1" \
+  && expect_out "coded=0 uncoded=1" && ok
+
+start "code: two coded primary headers are MALFORMED, not the first one"
+D=$(new_repo codemalformed)
+stub_pdc "$D" '#!/bin/sh
+echo "error[PD0013]: the first refusal" >&2
+echo "error[PD0013]: and a second one" >&2
+exit 1'
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|reject|compile|code=PD0013|-|two headers'
+run_case "$D"
+expect_rc 1 && expect_out "MALFORMED" && expect_out "printed 2 coded primary headers" \
+  && expect_not_out "reject=1" && ok
+
+start "code: msg~ present only in the SOURCE ECHO does not satisfy (MSG_MISMATCH)"
+D=$(new_repo codeecho)
+fixture "$D" tests/refused.pd "$bad_program"
+manifest "$D" 'tests/refused.pd|reject|compile|code=PD0013;msg~EOF < /dev/null|-|fragment from the echo'
+if ! premise_in_stderr "$D/tests/refused.pd" 'EOF < /dev/null'; then
+  bad "premise: the fragment did not reach the stderr capture outside the header, so this plants nothing"
+else
+  run_case "$D"
+  expect_rc 1 && expect_out "MSG_MISMATCH" && expect_not_out "reject=1" && ok
+fi
+
+start "code: msg~ present only in a NOTE does not satisfy (MSG_MISMATCH)"
+manifest "$D" 'tests/refused.pd|reject|compile|code=PD0013;msg~Check the language syntax rules|-|fragment from a note'
+if ! premise_in_stderr "$D/tests/refused.pd" 'Check the language syntax rules'; then
+  bad "premise: the note text did not reach the stderr capture, so this plants nothing"
+else
+  run_case "$D"
+  expect_rc 1 && expect_out "MSG_MISMATCH" && expect_not_out "reject=1" && ok
+fi
+
+start "code: ...and on a skip row, a fragment from the help text after the header"
+D=$(new_repo codeskipnote)
+fixture "$D" tests/lib.pd "$library_module"
+manifest "$D" 'tests/lib.pd|skip|compile|code=PD0044;msg~Your code here|-|fragment from the help text'
+if ! premise_in_stderr "$D/tests/lib.pd" 'Your code here'; then
+  bad "premise: the help text did not reach the stderr capture, so this plants nothing"
+else
+  run_case "$D"
+  expect_rc 1 && expect_out "MSG_MISMATCH" && expect_not_out "skip=1" && ok
+fi
+
+start "code: a fragment that IS in the payload satisfies (control for the two above)"
+manifest "$D" 'tests/lib.pd|skip|compile|code=PD0044;msg~No main function found|-|fragment from the payload'
+run_case "$D"
+expect_rc 0 && expect_out "skip=1" && ok
+
+start "code: a fragment containing ';' is split at the FIRST ';msg~' and still matches"
+# The live case: tests/reject/const_generic_param.pd pins `[Int; N]`.
+D=$(new_repo codesemicolon)
+fixture "$D" tests/cg.pd 'fn sum<const N: i64>(a: [i64; N]) -> i64 {
+    return a[0];
+}
+
+fn main() {
+    let v: [i64; 3] = [1, 2, 3];
+    print_int(sum(v));
+}'
+manifest "$D" 'tests/cg.pd|reject|compile|code=PD0042;msg~[Int; N]|-|semicolon in the fragment'
+run_case "$D"
+expect_rc 0 && expect_out "reject=1" && ok
+
+start "code: ...and the part after ';' is compared, not ignored"
+manifest "$D" 'tests/cg.pd|reject|compile|code=PD0042;msg~[Int; M]|-|wrong length name'
+run_case "$D"
+expect_rc 1 && expect_out "MSG_MISMATCH" && ok
+
+start "code: an error[PD####] line on the fixture's STDOUT does not satisfy (R6)"
+# A stub, because no real pdc stdout line begins `error[`: the hazard can only be
+# planted by hand. The stderr carries a bare refusal and nothing coded.
+D=$(new_repo codestdout)
+stub_pdc "$D" '#!/bin/sh
+echo "error[PD0013]: forged on stdout"
+echo "error: a refusal with no code" >&2
+exit 1'
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|reject|compile|code=PD0013|-|stdout-borne header'
+run_case "$D"
+expect_rc 1 && expect_out "NO_CODE" && expect_not_out "reject=1" && ok
+
+start "code: ...paired control: the SAME line on stderr would have satisfied it"
+stub_pdc "$D" '#!/bin/sh
+echo "error[PD0013]: forged on stdout" >&2
+exit 1'
+run_case "$D"
+expect_rc 0 && expect_out "reject=1" && ok
+
+start "code: a TOMBSTONED code pinned is WRONG_CODE here (the registry refuses it too)"
+# PD0025 was retired into PD0024, so no refusal can carry it. This runner does not
+# read the registry — `make check-diagnostic-codes` refuses the pin by name — but
+# it must not count the row either.
+D=$(new_repo codetombstone)
+fixture "$D" tests/inner.pd 'struct Board {
+    cells: [[i64; N]; 2],
+}
+
+fn main() {
+    print_int(1);
+}'
+manifest "$D" 'tests/inner.pd|reject|compile|code=PD0025|-|retired number'
+run_case "$D"
+expect_rc 1 && expect_out "WRONG_CODE" && expect_out "pinned PD0025" \
+  && expect_out "carries PD0024" && ok
+
+start "code: F12 — a phrase the old grep matched, on a refusal with the WRONG code"
+# The measured hole that GI-12 exists to close: a stray `@@@` is a parse refusal
+# (PD0039), and the fixture's string literal carries a rule's phrase, which the
+# compiler echoes into the log. The whole-log `grep -qF` counted that as the
+# rule's refusal. The premise is asserted in exactly that matcher's terms first.
+D=$(new_repo codef12)
+fixture "$D" tests/incidental.pd 'fn main() {
+    let msg = "there is no async keyword";
+    @@@
+}'
+manifest "$D" 'tests/incidental.pd|reject|compile|code=PD0054;msg~there is no async keyword|-|the F12 shape'
+f12_log=$( cd "$D" && ./target/release/pdc compile tests/incidental.pd -o f12 2>&1 | sed $'s/\033\\[[0-9;]*m//g' )
+if case "$f12_log" in *'there is no async keyword'*) false ;; *) true ;; esac; then
+  bad "premise: the phrase did not reach the log, so the old matcher would not have been fooled either"
+else
+  run_case "$D"
+  expect_rc 1 && expect_out "WRONG_CODE" && expect_out "carries PD0039" && expect_not_out "reject=1" && ok
+fi
+
+start "code: F12 one layer in — the RIGHT code still needs the fragment in the PAYLOAD"
+manifest "$D" 'tests/incidental.pd|reject|compile|code=PD0039;msg~there is no async keyword|-|R4 shape'
+run_case "$D"
+expect_rc 1 && expect_out "MSG_MISMATCH" && expect_not_out "reject=1" && ok
+
+start "code: an unreadable stderr capture is HARNESS_ERROR, never a verdict"
+# The stub replaces the file its own stderr was redirected to with a DIRECTORY,
+# so the shared parser is handed something it cannot read. It finds that path
+# from its own fd 2 (Linux /proc, else lsof); if neither is available it says so.
+D=$(new_repo codeunreadable)
+stub_pdc "$D" '#!/bin/sh
+p=$(readlink /proc/$$/fd/2 2>/dev/null) || p=""
+[ -n "$p" ] || p=$(lsof -a -p $$ -d 2 -Fn 2>/dev/null | sed -n "s/^n//p")
+[ -n "$p" ] || { echo "stub: cannot locate my own stderr" >&2; exit 99; }
+rm -f "$p" && mkdir "$p"
+exit 1'
+fixture "$D" tests/any.pd "$good_program"
+manifest "$D" 'tests/any.pd|reject|compile|code=PD0013|-|unreadable capture'
+run_case "$D"
+expect_rc 1 && expect_out "HARNESS_ERROR" && expect_out "could not read pdc's stderr capture" \
+  && expect_out "unreadable=1" && expect_not_out "reject=1" && ok
+
+start "code: a missing shared parser stops the run before any row is judged"
+D=$(new_repo codenoparser)
+rm -f "$D/scripts/lib/diag-parse.sh"
+fixture "$D" tests/refused.pd "$bad_program"
+manifest "$D" 'tests/refused.pd|reject|compile|code=PD0013|-|parse refusal'
+run_case "$D"
+expect_rc 2 && expect_out "diag-parse.sh could not be loaded" && ok
+
+start "code: stage=run on a reject row keeps its exit=<N> rule, untouched"
+D=$(new_repo coderunstage)
+fixture "$D" tests/rt.pd "$runtime_fail_program"
+manifest "$D" 'tests/rt.pd|reject|run|exit=3|-|exits 3 by design'
+run_case "$D"
+expect_rc 0 && expect_out "reject=1" && ok
+
+# Every malformed spelling of column 4 is refused at PARSE, exit 2, by the one
+# grammar — before any compile, so no spelling can be "close enough".
+D=$(new_repo codegrammar)
+fixture "$D" tests/refused.pd "$bad_program"
+for spelling in 'PD0013' 'code= PD0013' 'code =PD0013' ' code=PD0013' 'code=PD0013 ' \
+                'code=PD013' 'code=PD00131' 'code=pd0013' 'CODE=PD0013' 'code:PD0013' \
+                'code=PD0013;msg~' 'code=PD0013;msg ~parse' 'code=PD0013,msg~parse' \
+                'Expected function, struct, enum'; do
+  start "code: malformed column 4 '$spelling' is a manifest error"
+  manifest "$D" "tests/refused.pd|reject|compile|$spelling|-|malformed pin"
+  run_case "$D"
+  expect_rc 2 && expect_out "observable must be exactly code=PD####" && ok
+done
 
 # ===========================================================================
 # BACKEND_REJECT — the one outcome that is not a class.
@@ -969,7 +1207,7 @@ start "backend/injected: declaring it a NEGATIVE TEST does not launder it into c
 # The worst spelling of the escape hatch: class=reject counts as coverage and is
 # owed to no milestone, so a backend defect declared this way would have made the
 # corpus look BETTER for containing it.
-manifest "$D" 'tests/any.pd|reject|compile|undeclared identifier|-|claims the compiler refuses this'
+manifest "$D" 'tests/any.pd|reject|compile|code=PD0013|-|claims the compiler refuses this'
 run_case "$D"
 expect_rc 1 && expect_out "BACKEND_REJECT" && expect_not_out "reject=1" && ok
 
@@ -992,7 +1230,7 @@ start "backend/ambiguous: ...and the message says WHY it will not name a defect"
 expect_out "does not say what happened" && ok
 
 start "backend/ambiguous: ...and no manifest column excuses it either"
-manifest "$D" 'tests/any.pd|reject|compile|undeclared identifier|-|claims coverage'
+manifest "$D" 'tests/any.pd|reject|compile|code=PD0013|-|claims coverage'
 run_case "$D"
 expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "reject=1" && ok
 
@@ -1007,7 +1245,7 @@ run_case "$D"
 expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "BACKEND_REJECT" && ok
 
 start "backend/unexplained: ...and no manifest column excuses it"
-manifest "$D" 'tests/any.pd|reject|compile|undeclared identifier|-|claims coverage'
+manifest "$D" 'tests/any.pd|reject|compile|code=PD0013|-|claims coverage'
 run_case "$D"
 expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "reject=1" && ok
 
@@ -1022,7 +1260,7 @@ stub_pdc "$D" '#!/bin/sh
 echo "Linking with gcc (-O2)..."
 echo "error: gcc exited 1 without diagnosing anything." >&2
 exit 6'
-manifest "$D" 'tests/any.pd|reject|compile|undeclared identifier|-|claims coverage'
+manifest "$D" 'tests/any.pd|reject|compile|code=PD0013|-|claims coverage'
 run_case "$D"
 expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "reject=1" && ok
 
@@ -1099,7 +1337,7 @@ expect_out "no translation unit at" && expect_out "sufficient on its own" && ok
 start "backend/no-tu: ...and a reject|compile row still cannot bless it"
 # The regression this whole item is about: under the old AND-guard this landed
 # in the front-end arm and this row made the gate GREEN.
-manifest "$D" 'tests/any.pd|reject|compile|not_a_declared_identifier|-|claims coverage'
+manifest "$D" 'tests/any.pd|reject|compile|code=PD0013|-|claims coverage'
 run_case "$D"
 expect_rc 1 && expect_out "BACKEND_REJECT" && expect_not_out "reject=1" && ok
 
@@ -1112,7 +1350,7 @@ start "backend/no-tu: exit 4 alone is conclusive too"
 D=$(new_repo backendnotu4)
 stub_pdc "$D" "$stub_no_tu_4"
 fixture "$D" tests/any.pd "$good_program"
-manifest "$D" 'tests/any.pd|reject|compile|ill-typed|-|claims coverage'
+manifest "$D" 'tests/any.pd|reject|compile|code=PD0013|-|claims coverage'
 run_case "$D"
 expect_rc 1 && expect_out "BACKEND_REJECT" && expect_not_out "reject=1" && ok
 
@@ -1120,7 +1358,7 @@ start "backend/no-tu: exit 5 alone is conclusive, and still claims nothing"
 D=$(new_repo backendnotu5)
 stub_pdc "$D" "$stub_no_tu_5"
 fixture "$D" tests/any.pd "$good_program"
-manifest "$D" 'tests/any.pd|reject|compile|could not be started|-|claims coverage'
+manifest "$D" 'tests/any.pd|reject|compile|code=PD0013|-|claims coverage'
 run_case "$D"
 expect_rc 1 && expect_out "HARNESS_ERROR" && expect_not_out "BACKEND_REJECT" \
   && expect_not_out "reject=1" && ok
@@ -1131,10 +1369,10 @@ start "backend/no-tu: an UNSTRUCTURED code with no .c is still a front-end refus
 # that answered "backend" here would break every negative test in the corpus.
 D=$(new_repo backendnotu1)
 stub_pdc "$D" '#!/bin/sh
-echo "error: Expected function, struct, enum" >&2
+echo "error[PD0013]: Expected function, struct, enum" >&2
 exit 1'
 fixture "$D" tests/any.pd "$good_program"
-manifest "$D" 'tests/any.pd|reject|compile|Expected function, struct, enum|-|a real negative test'
+manifest "$D" 'tests/any.pd|reject|compile|code=PD0013|-|a real negative test'
 run_case "$D"
 expect_rc 0 && expect_out "reject=1" && expect_not_out "BACKEND_REJECT" && ok
 
@@ -1173,12 +1411,12 @@ run_case "$D"
 expect_rc 2 && expect_out "declares stage 'link'" && ok
 
 start "backend/manifest: ...on class=reject too"
-manifest "$D" 'tests/any.pd|reject|link|gcc compilation failed|-|declares the defect expected'
+manifest "$D" 'tests/any.pd|reject|link|code=PD0013|-|declares the defect expected'
 run_case "$D"
 expect_rc 2 && expect_out "declares stage 'link'" && ok
 
 start "backend/manifest: ...and on class=skip"
-manifest "$D" 'tests/any.pd|skip|link|gcc compilation failed|-|declares the defect expected'
+manifest "$D" 'tests/any.pd|skip|link|code=PD0013|-|declares the defect expected'
 run_case "$D"
 expect_rc 2 && expect_out "declares stage 'link'" && ok
 
@@ -1218,7 +1456,7 @@ run_case "$D"
 expect_rc 0 && expect_out "xfail=1" && ok
 
 start "backend/discrimination: ...and reject stays real coverage (green)"
-manifest "$D" 'tests/refused.pd|reject|compile|Expected function, struct, enum|-|the compiler must refuse this'
+manifest "$D" 'tests/refused.pd|reject|compile|code=PD0013|-|the compiler must refuse this'
 run_case "$D"
 expect_rc 0 && expect_out "reject=1" && ok
 
@@ -1230,7 +1468,7 @@ start "backend/discrimination: a fixture cannot put 'Linking' in the log to fake
 # fixture text can reach.
 D=$(new_repo backendforge)
 fixture "$D" tests/forge.pd "$frontend_reject_linking_program"
-manifest "$D" 'tests/forge.pd|reject|compile|Undefined variable or function|-|the compiler must refuse an undefined name'
+manifest "$D" 'tests/forge.pd|reject|compile|code=PD0005|-|the compiler must refuse a name declared twice'
 run_case "$D"
 expect_rc 0 && expect_out "reject=1" && expect_not_out "BACKEND_REJECT" && ok
 
@@ -1250,7 +1488,7 @@ stub_pdc "$D" "$stub_selective_reject"
 fixture "$D" tests/one/dup.pd "$good_program"
 fixture "$D" tests/two/dup.pd "$good_program"
 manifest "$D" 'tests/one/dup.pd|run|-|expected|-|-' \
-              'tests/two/dup.pd|reject|compile|refused by the front end|-|front-end refusal'
+              'tests/two/dup.pd|reject|compile|code=PD0013|-|front-end refusal'
 run_case "$D"
 expect_rc 1 && expect_out "BACKEND_REJECT" && expect_out "reject=1" && ok
 
@@ -1265,7 +1503,7 @@ start "backend/live: the nested-array defect still fails the gate today"
 # neither coverage nor debt.
 D=$(new_repo backendlive)
 fixture "$D" tests/nested.pd "$backend_reject_program"
-manifest "$D" 'tests/nested.pd|reject|compile|brackets are not allowed here|-|claims the compiler refuses this'
+manifest "$D" 'tests/nested.pd|reject|compile|code=PD0013|-|claims the compiler refuses this'
 run_case "$D"
 expect_rc 1 && expect_not_out "reject=1" && expect_not_out "xfail=1" && ok
 
@@ -1335,7 +1573,7 @@ run_case "$D"
 expect_rc 2 && expect_out "unknown class" && ok
 
 start "manifest: class=skip on a file that has fn main is rejected"
-manifest "$D" 'tests/a.pd|skip|compile|No main function found|-|claims not to be a program'
+manifest "$D" 'tests/a.pd|skip|compile|code=PD0044|-|claims not to be a program'
 run_case "$D"
 expect_rc 1 && expect_out "SKIP_IS_A_PROGRAM" && ok
 
@@ -1348,7 +1586,7 @@ run_case "$D"
 expect_rc 1 && expect_out "COMPILE_FAIL" && ok
 
 start "manifest: declaring it skip is the correct, explicit resolution"
-manifest "$D" 'tests/lib.pd|skip|compile|No main function found|-|library module, no fn main by design'
+manifest "$D" 'tests/lib.pd|skip|compile|code=PD0044|-|library module, no fn main by design'
 run_case "$D"
 expect_rc 0 && expect_out "skip=1" && ok
 

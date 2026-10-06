@@ -2272,6 +2272,18 @@ VARIANT_OF_BASE = {
     "inside-else": "mm-inside-else-renamed",
 }
 
+# RE-PINNED AT THE GI-12 CUTOVER (suF-a), forced and not chosen. The CROSS-LAYER
+# incidental-diagnostic probe drives the REAL scripts/conformance.sh, and after the
+# cutover its phrase-pinned reject row is a manifest error, so it measured nothing.
+# The row now pins the incidental refusal's own code with the phrase as `msg~`, and
+# the case asserts MSG_MISMATCH instead of REJECTED — the same measurement of the same
+# fixture, now reporting that the hole it demonstrated is shut. ONE LABEL changed:
+#   was: `an INCIDENTAL diagnostic satisfies a pinned fingerprint — measured, not argued`
+#   now: `an INCIDENTAL diagnostic no longer satisfies a pinned phrase: the right code
+#         with the phrase only in the echoed source is MSG_MISMATCH — measured, not argued`
+# Verified by diffing the CASE-NAME SET: 292 labels on both sides, exactly that one
+# differing. No control added, removed or weakened. Previous value: 60351814...
+#
 # RE-PINNED AGAIN on the review rework, for a reason worth naming: A CASE LABEL
 # CARRIES A CITATION, so this digest is coupled to line numbers in grammar.ebnf.
 # The label `\`fn q< 'a>\` SPACED goes RED — grammar.ebnf:151` became `:157` when
@@ -2299,8 +2311,9 @@ VARIANT_OF_BASE = {
 #
 # Both are true of the merged tree and neither branch's digest is, which is the whole
 # reason this pin exists. Recomputed here via `--print-case-digest`.
-# Superseded: 1dd2b683... (base), 2bc2aabd... (lexical), bc01d66e... (builtins-exit).
-EXPECTED_CASE_SHA = "60351814c29ebdb9a29d2ba34b3f00f6edc7cef61535adde4115f84a7c0f4897"
+# Superseded: 1dd2b683... (base), 2bc2aabd... (lexical), bc01d66e... (builtins-exit),
+# 60351814... (pre-GI-12-cutover).
+EXPECTED_CASE_SHA = "8cfb27f5e5c070e3bf390d5f40879e362b32f1187186c7b5e7ba7c99733fae33"
 
 EXPECTED_UNCOVERED = frozenset({
     "the real `make` subprocess: a control would need a deliberately broken build. Its "
@@ -4619,11 +4632,20 @@ def self_test() -> int:
 
     print("\n  CROSS-LAYER: what `REJECTED` does and does not prove (GI-12)")
     # Not an argument — a measurement, driven through the REAL scripts/conformance.sh.
-    # A fixture that fails for an entirely incidental reason, whose log happens to carry
-    # the pinned phrase because the compiler echoes the source line, is reported REJECTED
-    # and counted as coverage. The equality tightening proves the row and the corpus
-    # AGREE; it cannot prove the matching text came from the intended diagnostic, because
-    # `grep -qF` searches the whole ANSI-stripped log.
+    # A fixture that fails for an entirely incidental reason (a stray `@@@`), whose log
+    # carries the pinned phrase because the compiler echoes the source line. Until the
+    # GI-12 cutover this was reported REJECTED and counted as coverage, because the reject
+    # arm matched the phrase with `grep -qF` over the whole ANSI-stripped log.
+    #
+    # REWRITTEN AT THE CUTOVER, because the old row no longer parses: a reject row's column
+    # 4 is now `code=PD####[;msg~<fragment>]`, so a phrase there is a manifest error (exit
+    # 2) and this probe would have measured the grammar, not the comparator. The row now
+    # pins the code the incidental refusal REALLY carries — PD0039, the parser's
+    # expected-expression rule, hard-coded here and so coupled to that one allocation —
+    # with the phrase as its fragment. Right code, phrase only in the echoed source: that
+    # is the hole one layer in (spec R4), and the comparator must say MSG_MISMATCH.
+    # What this probe does NOT do is retire GI-12's precondition; that is the structural
+    # wiring check, which is a separate unit.
     incidental_verdict = "skipped (pdc not built)"
     if (ROOT / "target/release/pdc").is_file():
         with tempfile.TemporaryDirectory(dir=ROOT / "build_output") as d:
@@ -4633,16 +4655,20 @@ def self_test() -> int:
                 'fn main() {\n    let msg = "' + phrase + '";\n    @@@\n}\n')
             man = probe / "manifest.txt"
             rel = probe.relative_to(ROOT)
-            man.write_text(f"{rel}/incidental.pd\treject\tcompile\t{phrase}\t-\tprobe\n")
+            man.write_text(f"{rel}/incidental.pd\treject\tcompile\t"
+                           f"code=PD0039;msg~{phrase}\t-\tprobe\n")
             env_probe = dict(os.environ, CONFORMANCE_MANIFEST=str(man.relative_to(ROOT)))
             GPmod = GP
             res = GPmod.classify(GPmod.run(
                 ["bash", str(ROOT / "scripts/conformance.sh"), str(rel)],
                 cwd=str(ROOT), env={"CONFORMANCE_MANIFEST": str(man.relative_to(ROOT))}))
             text = getattr(res, "text", "")
-            incidental_verdict = "REJECTED" if "REJECTED" in text else "not REJECTED"
-    case("an INCIDENTAL diagnostic satisfies a pinned fingerprint — measured, not argued",
-         incidental_verdict, "REJECTED", drives_main=False)
+            incidental_verdict = ("REJECTED" if "REJECTED" in text else
+                                  "MSG_MISMATCH" if "MSG_MISMATCH" in text else
+                                  "neither REJECTED nor MSG_MISMATCH")
+    case("an INCIDENTAL diagnostic no longer satisfies a pinned phrase: the right code with "
+         "the phrase only in the echoed source is MSG_MISMATCH — measured, not argued",
+         incidental_verdict, "MSG_MISMATCH", drives_main=False)
 
     print("\n  the PIN itself is checked, not only the manifest against it")
 

@@ -1,0 +1,18 @@
+// A refusal from a rule the diagnostic-code registry allocates NO number to.
+//
+// The assignment arm of the type checker's `type_mismatch` helper: its
+// annotated-`let` sibling is PD0022, and this arm is judged as nothing at all.
+// It is the subject of every NO_CODE control, read by BOTH of them —
+// `tests/gi12_diagnostic_codes.rs` (`include_str!`) and the M3 mutant in
+// `scripts/check-diagnostic-codes.sh` — so the two cannot drift into testing
+// different programs. If a later unit codes this arm, both go red together.
+//
+// WHY IT LIVES HERE AND NOT UNDER tests/. `tests/` and `examples/` are the
+// conformance roots, and every `.pd` under them must be a declared manifest
+// row. This program is a control's SUBJECT, not a corpus fixture: declaring it
+// would make it a reject row owed a code, which is the opposite of its job.
+fn main() {
+    let mut n: i64 = 1;
+    n = 'a';
+    print_int(n);
+}

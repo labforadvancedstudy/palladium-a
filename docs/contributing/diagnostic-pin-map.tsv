@@ -1,0 +1,149 @@
+# GI-12 CODE-PIN MAP — the INPUT of scripts/gen-code-pins.py. NOT AN AUTHORITY.
+#
+# WHAT THIS IS. The su0 semantic map, as both review engines approved it: one row
+# per refusal-witness manifest row (122 `reject` + 2 `skip`), saying which stable
+# code that row's refusal carries and, where the code has several witnesses,
+# which fragment of the PRIMARY header's payload tells this row apart. The
+# generator reads it once and writes column 4 of every reject/skip row of
+# tests/conformance-manifest.txt as `code=PD####` or `code=PD####;msg~<fragment>`.
+#
+# WHAT IT IS NOT. After the cutover the MANIFEST is the authority, and nothing
+# compares the manifest against this file: a gate that did would make two files
+# answer one question. Edit a pin in the manifest and this file goes stale
+# without anything going red — that is by design, and it is why the generator
+# re-measures every payload from the compiler instead of trusting what is
+# written here. Re-run the generator only to re-derive pins wholesale, and read
+# its diff.
+#
+# COLUMNS (TAB-separated, 11, the locked map's own):
+#   code  condition  witnesses  row  class  param_dep  witness_tag
+#   discrimination_required  msg_tilde  candidate_fragment  single_witness_shape
+# `msg_tilde=yes` -> the pin carries `;msg~<candidate_fragment>`; `no` -> bare
+# `code=PD####` (a single-witness code, or a row tagged IDENTICAL because its
+# payload is character-identical to a sibling's). The generator refuses to emit
+# unless every one of those statements is true of the CURRENT compiler.
+code	condition	witnesses	row	class	param_dep	witness_tag	discrimination_required	msg_tilde	candidate_fragment	single_witness_shape
+PD0001	Non-exhaustive match expression	10	tests/reject/bool_match_true_guarded.pd	reject	no	REGRESSION	yes	yes	missing patterns true	-
+PD0001	Non-exhaustive match expression	10	tests/reject/bool_split_ignores_guarded.pd	reject	no	REGRESSION	yes	yes	missing patterns F::On	-
+PD0001	Non-exhaustive match expression	10	tests/reject/bool_split_is_not_nested.pd	reject	no	IDENTICAL	no	no	-	-
+PD0001	Non-exhaustive match expression	10	tests/reject/bool_split_needs_irrefutable_rest.pd	reject	no	REGRESSION	yes	yes	missing patterns E::Pair	-
+PD0001	Non-exhaustive match expression	10	tests/reject/bool_split_values_not_positions.pd	reject	no	REGRESSION	yes	yes	missing patterns E::P —	-
+PD0001	Non-exhaustive match expression	10	tests/reject/enum_payload_collective_coverage.pd	reject	no	IDENTICAL	no	no	-	-
+PD0001	Non-exhaustive match expression	10	tests/reject/enum_payload_not_exhaustive.pd	reject	no	REGRESSION	yes	yes	missing patterns P::Num	-
+PD0001	Non-exhaustive match expression	10	tests/reject/guarded_wildcard_only.pd	reject	yes	IDENTICAL	no	no	-	-
+PD0001	Non-exhaustive match expression	10	tests/reject/nonexhaustive_int_match.pd	reject	yes	IDENTICAL	no	no	-	-
+PD0001	Non-exhaustive match expression	10	tests/reject/bool_match_missing_false.pd	reject	no	REGRESSION	yes	yes	missing patterns false	-
+PD0002	the initialiser of a top-level const/static has no value in the target's arithmetic (typeck:2105-2111, one `refuse` closure; doc :2100-2104 'exactly these three')	6	tests/reject/const_divide_by_zero.pd	reject	yes	-	yes	yes	the initialiser of `X` has no value: division by zero	-
+PD0002	the initialiser of a top-level const/static has no value in the target's arithmetic (typeck:2105-2111, one `refuse` closure; doc :2100-2104 'exactly these three')	6	tests/reject/const_overflows_i64.pd	reject	yes	-	yes	yes	the initialiser of `X` has no value: 9223372036854775807 + 1 overflows i64	-
+PD0002	the initialiser of a top-level const/static has no value in the target's arithmetic (typeck:2105-2111, one `refuse` closure; doc :2100-2104 'exactly these three')	6	tests/reject/const_remainder_by_zero.pd	reject	no	-	yes	yes	the initialiser of `X` has no value: the remainder of a division by zero	-
+PD0002	the initialiser of a top-level const/static has no value in the target's arithmetic (typeck:2105-2111, one `refuse` closure; doc :2100-2104 'exactly these three')	6	tests/reject/const_shift_out_of_range.pd	reject	yes	-	yes	yes	the initialiser of `X` has no value: a shift by 64 — the amount has to be between 0 and 63	-
+PD0002	the initialiser of a top-level const/static has no value in the target's arithmetic (typeck:2105-2111, one `refuse` closure; doc :2100-2104 'exactly these three')	6	tests/reject/const_shl_negative_left.pd	reject	yes	-	yes	yes	the initialiser of `X` has no value: shifting the negative value -1 left, which C leaves u	-
+PD0002	the initialiser of a top-level const/static has no value in the target's arithmetic (typeck:2105-2111, one `refuse` closure; doc :2100-2104 'exactly these three')	6	tests/reject/const_shl_value_overflow.pd	reject	yes	-	yes	yes	the initialiser of `X` has no value: 1 << 63 overflows i64	-
+PD0003	a cast among the numeric primitives and `X`, or between `X` and `X` — `X` crosses only to its code point, because that is the only correspondence it is defined by	4	tests/reject/bool_does_not_cast_to_char.pd	reject	no	-	yes	yes	a cast from Bool to Char	-
+PD0003	a cast among the numeric primitives and `X`, or between `X` and `X` — `X` crosses only to its code point, because that is the only correspondence it is defined by	4	tests/reject/float_does_not_cast_to_char.pd	reject	no	-	yes	yes	a cast from Float to Char	-
+PD0003	a cast among the numeric primitives and `X`, or between `X` and `X` — `X` crosses only to its code point, because that is the only correspondence it is defined by	4	tests/reject/char_does_not_cast_to_bool.pd	reject	yes	-	yes	yes	a cast from Char to Bool	-
+PD0003	a cast among the numeric primitives and `X`, or between `X` and `X` — `X` crosses only to its code point, because that is the only correspondence it is defined by	4	tests/reject/char_does_not_cast_to_float.pd	reject	no	-	yes	yes	a cast from Char to Float	-
+PD0004	a local binding may not shadow a top-level item (typeck:2009-2018, one Err, `what` is the binder kind)	4	tests/reject/at_binding_shadows_item.pd	reject	yes	-	yes	yes	`@`	-
+PD0004	a local binding may not shadow a top-level item (typeck:2009-2018, one Err, `what` is the binder kind)	4	tests/reject/for_binder_shadows_item.pd	reject	yes	-	yes	yes	the loop variable `LIMIT` has the name of the top-level item declared at line 16: a local 	-
+PD0004	a local binding may not shadow a top-level item (typeck:2009-2018, one Err, `what` is the binder kind)	4	tests/reject/pattern_binder_shadows_item.pd	reject	yes	-	yes	yes	the pattern binding `LIMIT` has the name of the top-level item declared at line 14: a loca	-
+PD0004	a local binding may not shadow a top-level item (typeck:2009-2018, one Err, `what` is the binder kind)	4	tests/reject/const_local_shadows_item.pd	reject	yes	-	yes	yes	the local `LIMIT` has the name of the top-level item declared at line 11: a local binding 	-
+PD0005	a top-level name is declared twice and the program has one namespace (typeck:2294-2303, one Err, `what` is the kind)	4	tests/reject/const_collides_with_enum.pd	reject	yes	-	yes	yes	`Colour`	-
+PD0005	a top-level name is declared twice and the program has one namespace (typeck:2294-2303, one Err, `what` is the kind)	4	tests/reject/const_collides_with_function.pd	reject	yes	-	yes	yes	`f`	-
+PD0005	a top-level name is declared twice and the program has one namespace (typeck:2294-2303, one Err, `what` is the kind)	4	tests/reject/const_collides_with_type_alias.pd	reject	yes	-	yes	yes	`Meters`	-
+PD0005	a top-level name is declared twice and the program has one namespace (typeck:2294-2303, one Err, `what` is the kind)	4	tests/reject/function_collides_with_const.pd	reject	yes	-	yes	yes	`const`	-
+PD0006	unknown attribute `X`	4	tests/reject/attribute_inner.pd	reject	yes	IDENTICAL	no	no	-	-
+PD0006	unknown attribute `X`	4	tests/reject/attribute_with_args.pd	reject	yes	IDENTICAL	no	no	-	-
+PD0006	unknown attribute `X`	4	tests/reject/total_attribute.pd	reject	yes	-	yes	yes	`total`	-
+PD0006	unknown attribute `X`	4	tests/reject/unknown_attribute.pd	reject	yes	IDENTICAL	no	no	-	-
+PD0007	`X` on a top-level `X` is not implemented: nothing exports `X` and nothing emits a definition for an imported one, so the keyword would promise a visibility that does not	3	tests/reject/pub_const_item.pd	reject	yes	-	yes	yes	`const`	-
+PD0007	`X` on a top-level `X` is not implemented: nothing exports `X` and nothing emits a definition for an imported one, so the keyword would promise a visibility that does not	3	tests/reject/pub_static_item.pd	reject	yes	-	yes	yes	`LIMIT`	-
+PD0007	`X` on a top-level `X` is not implemented: nothing exports `X` and nothing emits a definition for an imported one, so the keyword would promise a visibility that does not	3	tests/reject/pub_static_mut_item.pd	reject	yes	-	yes	yes	`COUNTER`	-
+PD0008	a non-integer literal is not representable in the macro token stream (parser:2170-2212, one `refuse` closure, `what`/`why` per kind)	3	tests/reject/macro_body_bool_literal.pd	reject	no	-	yes	yes	`true`	-
+PD0008	a non-integer literal is not representable in the macro token stream (parser:2170-2212, one `refuse` closure, `what`/`why` per kind)	3	tests/reject/macro_body_float_literal.pd	reject	no	-	yes	yes	`3.5`	-
+PD0008	a non-integer literal is not representable in the macro token stream (parser:2170-2212, one `refuse` closure, `what`/`why` per kind)	3	tests/reject/macro_body_string_literal.pd	reject	no	-	yes	yes	a string literal may not appear in a macro body or in a macro argument: the token stream s	-
+PD0009	a pattern of type Int, which is what this `X` is on	3	tests/reject/char_pattern_on_int_scrutinee.pd	reject	yes	-	yes	yes	`'a'`	-
+PD0009	a pattern of type Int, which is what this `X` is on	3	tests/reject/enum_payload_literal_type.pd	reject	no	-	yes	yes	`"a"`	-
+PD0009	a pattern of type Int, which is what this `X` is on	3	tests/reject/literal_pattern_type_mismatch.pd	reject	yes	-	yes	yes	`"two"`	-
+PD0010	a range pattern that can match something	3	tests/reject/char_range_pattern_empty.pd	reject	yes	-	yes	yes	`'z'..='a'`	-
+PD0010	a range pattern that can match something	3	tests/reject/range_pattern_empty.pd	reject	no	-	yes	yes	`5..=1`	-
+PD0010	a range pattern that can match something	3	tests/reject/range_pattern_empty_exclusive.pd	reject	no	-	yes	yes	`3..3`	-
+PD0011	an alternative of an `X` pattern to bind nothing	3	tests/reject/at_pattern_over_alternatives.pd	reject	yes	-	yes	yes	`n @ 1`	-
+PD0011	an alternative of an `X` pattern to bind nothing	3	tests/reject/enum_payload_or_binds.pd	reject	yes	-	yes	yes	the alternative `x`, which binds `x`	-
+PD0011	an alternative of an `X` pattern to bind nothing	3	tests/reject/or_pattern_binds.pd	reject	yes	-	yes	yes	`P::Num(x)`	-
+PD0012	Borrow checker error: cannot borrow `X` as mutable: it is not declared mutable. Declare it `X` (or take the parameter as `X`) if it is meant to be modified.	2	tests/reject/mut_borrow_of_immutable.pd	reject	yes	IDENTICAL	no	no	-	-
+PD0012	Borrow checker error: cannot borrow `X` as mutable: it is not declared mutable. Declare it `X` (or take the parameter as `X`) if it is meant to be modified.	2	tests/reject/uncalled_body_is_checked.pd	reject	yes	IDENTICAL	no	no	-	-
+PD0013	Expected function, struct, enum, trait, type, impl, or macro declaration	2	tests/projects/hello_pdm/package.pd	skip	no	IDENTICAL	no	no	-	-
+PD0013	Expected function, struct, enum, trait, type, impl, or macro declaration	2	tests/reject/extern_block.pd	reject	no	IDENTICAL	no	no	-	-
+PD0014	Pattern structure doesn't match variant M::Pair	2	tests/reject/field_shorthand_needs_a_struct_variant.pd	reject	no	IDENTICAL	no	no	-	-
+PD0014	Pattern structure doesn't match variant M::Pair	2	tests/reject/tuple_variant_braces_explicit.pd	reject	no	IDENTICAL	no	no	-	-
+PD0015	Unknown field z in P::At	2	tests/reject/pattern_unknown_field.pd	reject	no	IDENTICAL	no	no	-	-
+PD0015	Unknown field z in P::At	2	tests/reject/pattern_unknown_field_explicit.pd	reject	no	IDENTICAL	no	no	-	-
+PD0016	Unreachable pattern detected	2	tests/reject/bool_split_after_completion.pd	reject	no	IDENTICAL	no	no	-	-
+PD0016	Unreachable pattern detected	2	tests/reject/enum_payload_dead_arm.pd	reject	no	IDENTICAL	no	no	-	-
+PD0017	`X` is a generic method, and generic methods are not implemented: code generation emits no symbol for one, so the call would fail at link time. Write a non-generic method	2	tests/reject/generic_method_call.pd	reject	yes	IDENTICAL	no	no	-	-
+PD0017	`X` is a generic method, and generic methods are not implemented: code generation emits no symbol for one, so the call would fail at link time. Write a non-generic method	2	tests/reject/generic_method_path_call.pd	reject	yes	IDENTICAL	no	no	-	-
+PD0018	`X` is not implemented	2	tests/misc/async_main_is_refused.pd	reject	yes	-	yes	yes	`async fn main`	-
+PD0018	`X` is not implemented	2	tests/reject/async_producer.pd	reject	yes	-	yes	yes	`async fn`	-
+PD0019	a program may not define or shadow a built-in name (typeck:2041-2058, one Err, `reason` varies by callability)	2	tests/reject/shadow_builtin.pd	reject	no	-	yes	yes	`print_int` is a built-in, and a program may not define or shadow one: a function is decla	-
+PD0019	a program may not define or shadow a built-in name (typeck:2041-2058, one Err, `reason` varies by callability)	2	tests/reject/shadow_builtin_type.pd	reject	no	-	yes	yes	`__pd_<name>`	-
+PD0020	a top-level initialiser must be a constant expression (parser:2005-2037, one `refuse` closure, `form` is the offending expression kind)	2	tests/reject/const_initializer_calls.pd	reject	yes	-	yes	yes	`main`	-
+PD0020	a top-level initialiser must be a constant expression (parser:2005-2037, one `refuse` closure, `form` is the offending expression kind)	2	tests/reject/const_reads_another_item.pd	reject	yes	-	yes	yes	`A`	-
+PD0021	a method taking `&mut self` may not be called through a receiver that is not `&mut self` (typeck:5538-5541, ONE Err under ONE predicate whose `detail` the CALLER's receiver form selects; merged from the two map rows PD0021+PD0064 at the su3 attachment, PD0064 tombstoned)	3	tests/reject/call_mut_method_through_chained_shared_receiver.pd	reject	yes	-	yes	yes	`D::bump`	-
+PD0021	a method taking `&mut self` may not be called through a receiver that is not `&mut self` (typeck:5538-5541, ONE Err under ONE predicate whose `detail` the CALLER's receiver form selects; merged from the two map rows PD0021+PD0064 at the su3 attachment, PD0064 tombstoned)	3	tests/reject/call_mut_method_through_shared_receiver.pd	reject	yes	-	yes	yes	`C::bump` through `self`: `&self` is a SHARED borrow	-
+PD0022	a `let` with a type annotation requires its initialiser to have exactly that type, with no implicit conversion (typeck:3319-3325, one predicate with no arms; the type pair is fixture data)	1	tests/reject/int_is_not_a_char.pd	reject	no	-	no	no	-	narrow-surface
+PD0023	an enum variant's payload may not be a tuple, because tuple structs are emitted after the enums that would use them (codegen:2612-2632; the same loop enforces it over `EnumVariantData::Struct` payloads at codegen:2615, which has no fixture)	1	tests/reject/tuple_in_enum_payload.pd	reject	no	-	no	no	-	corpus-gap
+PD0024	a nested array's INNER length must be a literal this compiler resolves (codegen:1009-1032, one `Err` in `inner_dims_for_declarator`; `what` is the declaring position, supplied by the caller at codegen:2944/3278/3787)	2	tests/reject/nested_array_field_inner_length.pd	reject	yes	-	yes	yes	the field `cells` of `Board`	-
+PD0024	a nested array's INNER length must be a literal this compiler resolves (codegen:1009-1032, one `Err` in `inner_dims_for_declarator`; `what` is the declaring position, supplied by the caller at codegen:2944/3278/3787)	2	tests/reject/nested_array_param_inner_length.pd	reject	yes	-	yes	yes	the parameter `g`	-
+PD0026	a `for` may not bind a whole row of a nested array, because C cannot copy an array into a loop variable (codegen:4251-4270, one predicate `dims.matches('[').count() > 1`)	1	tests/reject/for_over_nested_array.pd	reject	no	-	no	no	-	narrow-surface
+PD0027	an argument for a reference parameter must be a place, because the call site takes its address (codegen:6131-6142; `expr_kind_name` at codegen:1347-1367 names 19 expression kinds and only `function call` has a fixture)	1	tests/reject/reference_param_needs_a_place.pd	reject	yes	-	no	no	-	corpus-gap
+PD0028	an array parameter taken by value may not be written, because C decays it to a pointer and the write would reach the caller's array (codegen:1172-1183, one arm; the `Shared` arm above it at codegen:1163-1171 is a different rule)	1	tests/reject/array_param_write_byvalue.pd	reject	yes	-	no	no	-	narrow-surface
+PD0029	Expected '(' (Expected '(' after macro name!), but found '['	1	tests/reject/macro_invocation_bracket.pd	reject	no	-	no	no	-	closed-set-one-member
+PD0030	Expected ')' (Expected ')'), but found identifier 'String'	1	tests/reject/ref_parameter.pd	reject	no	-	no	no	-	closed-set-one-member
+PD0031	Expected '=' (Expected '=' after variable name), but found ';'	1	tests/reject/let_needs_an_initializer.pd	reject	no	-	no	no	-	closed-set-one-member
+PD0032	Expected '>' (Expected '>' after generic parameters), but found ':'	1	tests/reject/generic_bound.pd	reject	no	-	no	no	-	closed-set-one-member
+PD0033	Expected a field name or a tuple index; a CHAINED tuple index has to be parenthesised, as `X`, because `X` lexes as one float literal and the two indices cannot be recove	1	tests/reject/tuple_index_chained.pd	reject	no	-	no	no	-	closed-set-one-member
+PD0034	Expected a literal for the high end of this range pattern (open-ended range patterns are not in the language), but found '=>'	1	tests/reject/range_pattern_open_ended.pd	reject	no	-	no	no	-	closed-set-one-member
+PD0035	Expected a range pattern to have both endpoints, as `X` or `X` (open-ended range patterns are not in the language), but found '..'	1	tests/reject/range_pattern_open_low.pd	reject	no	-	no	no	-	closed-set-one-member
+PD0036	Expected a tuple index written without leading zeros, but found an index whose spelling is N characters wide for the value N — `X` is not a way to write `X`	1	tests/reject/tuple_index_leading_zero.pd	reject	no	-	no	no	-	closed-set-one-member
+PD0037	Expected a tuple pattern to have at least two elements; grouping is not a pattern form, so `X` is not a way to write `X`, but found a pattern with N element(s) in parenth	1	tests/reject/tuple_pattern_one_element.pd	reject	no	-	no	no	-	closed-set-one-member
+PD0038	Expected a tuple to have at least two elements; `X` is grouping and a one-element tuple `X` is not a form this language has, but found a one-element tuple	1	tests/reject/tuple_one_element.pd	reject	no	-	no	no	-	closed-set-one-member
+PD0039	Expected expression, but found '|'	1	tests/reject/closure_literal.pd	reject	no	-	no	no	-	closed-set-one-member
+PD0040	Expected pattern, but found '{'	1	tests/reject/brace_pattern_needs_a_variant_path.pd	reject	no	-	no	no	-	closed-set-one-member
+PD0041	Expected variable name, but found '('	1	tests/reject/let_does_not_destructure.pd	reject	no	-	no	no	-	closed-set-one-member
+PD0042	an argument must have the parameter's declared type (typeck:4079-4086, one `Err` in the `Expr::Call` argument loop; the expected type is the particular, and an arity probe shows both witnesses take this path rather than `check_call_with_type` at typeck:6398)	2	tests/reject/char_is_not_an_int.pd	reject	no	-	yes	yes	found Char	-
+PD0042	an argument must have the parameter's declared type (typeck:4079-4086, one `Err` in the `Expr::Call` argument loop; the expected type is the particular, and an arity probe shows both witnesses take this path rather than `check_call_with_type` at typeck:6398)	2	tests/reject/const_generic_param.pd	reject	yes	-	yes	yes	[Int; N]	-
+PD0043	the left operand of `+` must be `Int`, `Float` or `String` (typeck:4134-4138, one arm; the found type is fixture data)	1	tests/reject/char_arithmetic_is_not_an_int.pd	reject	no	-	no	no	-	narrow-surface
+PD0044	a program must contain a `main` function (typeck:2760-2762, one predicate over `self.functions`)	1	tests/projects/hello_pdm/src/math.pd	skip	no	-	no	no	-	narrow-surface
+PD0045	a name used in a match arm's body must be bound by that arm's pattern - an omitted field is not bound (typeck:3961-3968; the no-suggestion spelling of the same rule at typeck:3984-3986 has no fixture)	1	tests/reject/pattern_omitted_field_is_unbound.pd	reject	no	-	no	no	-	corpus-gap
+PD0046	a struct literal must name a declared struct - `try { }` is one, because `try` is not a keyword (typeck:4487-4491; the identical refusal at typeck:3475-3479 (assignment base) and typeck:4539-4543 (field read) has no fixture)	1	tests/reject/try_block.pd	reject	no	-	no	no	-	corpus-gap
+PD0048	`X` constructs a variant of a GENERIC enum, and generic enums are not implemented: code generation emits no type, no tag and no constructor for one, so this would fail in	1	tests/reject/generic_enum_constructor.pd	reject	no	-	no	no	-	not-implemented
+PD0049	`macro_rules!` is not this language's macro system - there is ONE and no procedural/declarative split (N3-14; parser:1026-1035 item position, macros:724-731 invocation position, one sentence stated in two positions)	2	tests/reject/macro_rules.pd	reject	yes	-	yes	yes	is not a declaration in this language	-
+PD0049	`macro_rules!` is not this language's macro system - there is ONE and no procedural/declarative split (N3-14; parser:1026-1035 item position, macros:724-731 invocation position, one sentence stated in two positions)	2	tests/reject/macro_rules_invocation.pd	reject	yes	-	yes	yes	is not this language's macro syntax	-
+PD0050	`*self` is not a place: a reference receiver is already dereferenced by field access (typeck:4937-4948, one predicate over the literal `*self`)	1	tests/reject/deref_self_is_not_a_place.pd	reject	yes	-	no	no	-	narrow-surface
+PD0052	`X` takes `X`, and `X` parameters on methods are not implemented: the definition would take a pointer while every call site passes a value. Take the value and return the 	1	tests/reject/method_mut_parameter.pd	reject	yes	-	no	no	-	not-implemented
+PD0053	an integer literal cast to `char` must denote a Unicode scalar (typeck:5100-5113; the predicate is two disjuncts and only the surrogate one has a fixture - the `!(0..=0x10FFFF)` disjunct at typeck:5104 has none)	1	tests/reject/char_from_non_scalar.pd	reject	no	-	no	no	-	corpus-gap
+PD0054	a `X` with a value inside an `X` is not implemented	1	tests/reject/async_fn.pd	reject	yes	-	no	no	-	not-implemented
+PD0055	a loop and its `break`s must agree about whether there is a value (typeck:5382-5388 valued `break` out of a statement loop, typeck:3703-3709 bare `break` out of a value `loop`; typeck:3698-3701 names them “both directions of the same rule”)	2	tests/reject/valued_break_in_nested_while.pd	reject	yes	-	yes	yes	a `break` without a value	-
+PD0055	a loop and its `break`s must agree about whether there is a value (typeck:5382-5388 valued `break` out of a statement loop, typeck:3703-3709 bare `break` out of a value `loop`; typeck:3698-3701 names them “both directions of the same rule”)	2	tests/reject/value_loop_bare_break.pd	reject	yes	-	yes	yes	every `break` out of a `loop`	-
+PD0056	a top-level `const`/`static` may only have a numeric or `bool` type, because every other type is built by code that runs (typeck:1922-1937; `noun` is `const` or `static` and only `const` has a fixture)	1	tests/reject/const_string_type.pd	reject	yes	-	no	no	-	corpus-gap
+PD0057	an `if` used as a value must have an `else`, so every path produces one (typeck:5005-5013, the `else_branch.is_none()` predicate - separate from the branch-agreement rule below it)	1	tests/reject/value_if_without_else.pd	reject	yes	-	no	no	-	narrow-surface
+PD0058	the two branches of a value `if` must have one type, because the value lands in one hoisted C temporary (typeck:5026-5034, a second predicate reachable only after the `else` requirement is satisfied)	1	tests/reject/value_if_branch_types.pd	reject	yes	-	no	no	-	narrow-surface
+PD0059	the two endpoints of a range pattern must be the same literal kind (typeck:5698-5712, a separate predicate from the endpoint-kind check at typeck:5683-5695)	1	tests/reject/range_pattern_mixed_endpoints.pd	reject	no	-	no	no	-	narrow-surface
+PD0060	a receiver that is not `&mut self` may not be written through (typeck:3362-3379, one `Err`; `detail` varies by `SelfReceiver`)	2	tests/reject/self_write_through_shared_receiver.pd	reject	yes	-	yes	yes	is a SHARED borrow of the receiver	-
+PD0060	a receiver that is not `&mut self` may not be written through (typeck:3362-3379, one `Err`; `detail` varies by `SelfReceiver`)	2	tests/reject/self_write_through_by_value_receiver.pd	reject	yes	-	yes	yes	receiver is a COPY, and not a `mut` binding	-
+PD0062	a top-level item is read-only unless it is declared `static mut` (typeck:3403-3410, one arm, guarded by `self.global_items`)	1	tests/reject/static_assign_without_mut.pd	reject	yes	-	no	no	-	narrow-surface
+PD0063	the `self` binding is not reassignable, whatever form the receiver took (typeck:3350-3359; it fires before the receiver-form test at typeck:3362, so it is not the write-through rule)	1	tests/reject/self_is_not_reassignable.pd	reject	yes	-	no	no	-	narrow-surface
+PD0021	a method taking `&mut self` may not be called through a receiver that is not `&mut self` (typeck:5538-5541, ONE Err under ONE predicate whose `detail` the CALLER's receiver form selects; merged from the two map rows PD0021+PD0064 at the su3 attachment, PD0064 tombstoned)	3	tests/reject/call_mut_method_through_by_value_receiver.pd	reject	yes	-	yes	yes	a by-value `self` receiver is a COPY	-
+PD0066	a function that declares a return type must produce a value on every path (parser:1247-1279; the same `returns_on_every_path` predicate raises the written-tail refusal at parser:1240-1246, which has no fixture)	1	tests/reject/missing_return.pd	reject	yes	-	no	no	-	corpus-gap
+PD0067	macro expansion is a single pass, so an invocation produced by an expansion is never expanded - in a body or in an argument (macros:317-322 body, macros:748-757 argument; macros:733-735 calls them the same one-pass fact seen from the other side, with one shared repair at macros:745-747)	2	tests/reject/macro_invokes_macro.pd	reject	yes	-	yes	yes	in its body, and expansion is a single pass	-
+PD0067	macro expansion is a single pass, so an invocation produced by an expansion is never expanded - in a body or in an argument (macros:317-322 body, macros:748-757 argument; macros:733-735 calls them the same one-pass fact seen from the other side, with one shared repair at macros:745-747)	2	tests/reject/macro_argument_invokes_macro.pd	reject	yes	-	yes	yes	as an argument, and expansion is a single pass	-
+PD0068	a macro body may substitute only its own parameters (macros:266-277; the `params.is_empty()` tail at macros:271-273 has no fixture)	1	tests/reject/macro_unknown_substitution.pd	reject	yes	-	no	no	-	corpus-gap
+PD0069	a parameter named in a macro body must be written `$name`, because a bare name resolves at the CALL site (macros:311-317; macros:297-308 refuses the same defect away from position 0 and has no fixture)	1	tests/reject/macro_bare_parameter.pd	reject	yes	-	no	no	-	corpus-gap
+PD0070	a type that stores itself by value has no layout (typeck:2449-2481; the message has two branches and only the zero-length-array one at typeck:2459-2471 has a fixture)	1	tests/reject/zero_length_array_self_reference.pd	reject	yes	-	no	no	-	corpus-gap
+PD0071	the `X` operator is not implemented	1	tests/reject/question_mark_operator.pd	reject	yes	-	no	no	-	not-implemented
+PD0072	a range pattern's endpoints must be integer or `char` literals, the two kinds this language orders (typeck:5683-5695; the loop runs over low and high and `ordered` rejects `Str` and `Bool`, and only `Str` in low position has a fixture)	1	tests/reject/range_pattern_endpoint_type.pd	reject	yes	-	no	no	-	corpus-gap
+PD0074	a multi-character operator may not appear in a macro body or argument, because `AstToken::Punct` holds one `char` (parser:2251-2265, one arm over ten operator tokens; kept apart from the literal-kind refusal sharing the `refuse` closure)	1	tests/reject/macro_body_two_char_operator.pd	reject	no	-	no	no	-	narrow-surface
+PD0075	a local binder may not have a built-in's name (typeck:2069-2081, `refuse_builtin_shadow`; `what` names five binder kinds, all five covered by unit tests at typeck:6647-6669 and only the parameter has a .pd fixture)	1	tests/reject/shadow_builtin_parameter.pd	reject	yes	-	no	no	-	corpus-gap
+PD0076	a block used as a value must end in an expression (typeck:5571-5578, one predicate in `check_value_block`)	1	tests/reject/value_block_without_tail.pd	reject	no	-	no	no	-	narrow-surface
+PD0077	a `\` in a literal must be followed by a spelling the escape table names (token.rs:117 string position, raised through scanner.rs:67-69; the identical refusal for the CHAR position at token.rs:210 has no fixture)	1	tests/reject/unknown_escape.pd	reject	yes	-	no	no	-	corpus-gap
+PD0078	a `/*` must be closed (token.rs:166, raised through scanner.rs:64-66; one site, nesting-aware)	1	tests/reject/unterminated_block_comment.pd	reject	yes	-	no	no	-	narrow-surface

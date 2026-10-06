@@ -150,8 +150,10 @@
 //! The test asserts the identity rather than inventing a discriminator, for the
 //! reason PD0013's two-witness test does.
 //!
-//! WHAT IS NOT CLAIMED. Nothing here says the manifest pins codes: it does not,
-//! and will not until the cutover. These are the vertical proof that it CAN.
+//! WHAT IS NOT CLAIMED. Nothing here reads the manifest. Since the cutover every
+//! reject and skip row pins a code, and `scripts/conformance.sh` adjudicates those
+//! pins; these tests are the vertical proof that a pin CAN be honoured — the code
+//! reaches the wire, at the site the registry names, and nowhere else.
 
 use std::collections::HashSet;
 use std::fs;
@@ -760,13 +762,15 @@ fn main() {
 
 /// A refusal from a rule the locked map allocates NO number to.
 ///
-/// The subject of every uncoded control in this file, written here once because
-/// three of them need the same program and because
-/// `scripts/check-diagnostic-codes.sh`'s M3 needs it too: this is the assignment
-/// arm of `TypeErrorHelper::type_mismatch`, whose annotated-`let` sibling is
-/// PD0022 and which the map judges as nothing at all.
-const UNJUDGED_REFUSAL: &str =
-    "fn main() {\n    let mut n: i64 = 1;\n    n = 'a';\n    print_int(n);\n}\n";
+/// The subject of every uncoded control in this file: the assignment arm of
+/// `TypeErrorHelper::type_mismatch`, whose annotated-`let` sibling is PD0022 and
+/// which the map judges as nothing at all.
+///
+/// ONE COPY, IN A FILE BOTH CONSUMERS READ. `scripts/check-diagnostic-codes.sh`'s
+/// M3 needs the same program, and it used to carry its own heredoc of it — two
+/// literals that agree today are two literals that can disagree tomorrow. The
+/// file sits outside the conformance roots on purpose; its header says why.
+const UNJUDGED_REFUSAL: &str = include_str!("../scripts/lib/unjudged-refusal.pd");
 
 /// D1's honest NO_CODE state: a site that has not been wired says so.
 ///
@@ -2019,4 +2023,81 @@ fn the_legal_neighbours_of_the_codegen_family_still_compile_link_and_run() {
         out, "4\n14\n11\n",
         "the legal neighbours of the code-generation family did not produce their values"
     );
+}
+
+/// THE POSITIONS THE su4 ROWS CLAIM AND THE CORPUS DOES NOT WITNESS — each one
+/// reached by a program written here, and each one carrying its code.
+///
+/// The su3 twin of this test proved six such positions for the type checker.
+/// su4's registry rows make the same kind of claim and, until this test, only
+/// prose backed it: PD0012 says one `Err` serves every caller of
+/// `check_mutable_borrow_allowed`, PD0024 says a third caller declares a LOCAL,
+/// and PD0023 says the struct-payload arm runs the same predicate as the tuple
+/// one. A refactor that moved a code one caller over would leave every corpus
+/// witness green and each of these red.
+///
+/// MEASURED, AND ONE CLAIM DID NOT SURVIVE IT. PD0012's justification named its
+/// three positions as "an explicit `&mut place`, a write through a place, and a
+/// `&mut` argument at a call". The function's callers are an explicit `&mut`
+/// (the `Expr::Reference` arm, which also serves the `&mut` written as a call
+/// argument), a place handed to a `mut` parameter (`ParamOwnership::BorrowMut`),
+/// and an element the pass cannot model handed to one
+/// (`check_unmodellable_mutable_argument`). A WRITE through a place is not among
+/// them — an immutable binding written through a field or an element is accepted
+/// today, which is issue #47. The claim was corrected to the callers; the
+/// positions below are those.
+#[test]
+fn the_su4_positions_the_corpus_does_not_witness_carry_the_code_too() {
+    let cases: &[(&str, &str, &str, &str)] = &[
+        (
+            "PD0012, an explicit `&mut` OUTSIDE a call (the corpus borrows inside one)",
+            "struct S {\n    x: i64,\n}\n\nfn main() {\n    let v: S = S { x: 1 };\n    let r: &mut S = &mut v;\n    print_int(r.x);\n}\n",
+            "PD0012",
+            "cannot borrow `v` as mutable: it is not declared mutable",
+        ),
+        (
+            "PD0012, a place handed to a `mut` parameter",
+            "struct S {\n    x: i64,\n}\n\nfn bump(mut s: S) {\n    s.x = 2;\n}\n\nfn main() {\n    let v: S = S { x: 1 };\n    bump(v);\n    print_int(v.x);\n}\n",
+            "PD0012",
+            "cannot borrow `v` as mutable: it is not declared mutable",
+        ),
+        (
+            "PD0012, an element the pass cannot model handed to a `mut` parameter",
+            "fn bump(mut x: i64) {\n    x = 9;\n}\n\nfn main() {\n    let xs: [i64; 3] = [1, 2, 3];\n    let i: i64 = 1;\n    bump(xs[i]);\n    print_int(xs[1]);\n}\n",
+            "PD0012",
+            "cannot borrow `xs` as mutable: it is not declared mutable",
+        ),
+        (
+            "PD0024, the LOCAL caller of `inner_dims_for_declarator`",
+            "fn f<const N: i64>(a: [i64; N]) -> i64 {\n    let g: [[i64; N]; 1] = [a];\n    return 0;\n}\n\nfn main() {\n    print_int(0);\n}\n",
+            "PD0024",
+            "cannot declare the local `g`",
+        ),
+        (
+            "PD0023, a STRUCT variant whose field is a tuple",
+            "enum E {\n    P { t: (i64, i64) },\n    Empty,\n}\n\nfn main() {\n    print_int(1);\n}\n",
+            "PD0023",
+            "`E::P` carries a TUPLE in its payload",
+        ),
+    ];
+
+    for (what, source, want_code, fragment) in cases {
+        let (r, _dir) = compile_source(source);
+        assert_eq!(
+            r.code,
+            Some(1),
+            "{}: the program compiled\n{}",
+            what,
+            r.stdout
+        );
+        let (code, payload) = r.sole_coded_header(what);
+        assert_eq!(code, *want_code, "{}: carries {}", what, code);
+        assert!(
+            payload.contains(fragment),
+            "{}: reached a different refusal.\n  want fragment: {}\n  got payload:   {}",
+            what,
+            fragment,
+            payload
+        );
+    }
 }
