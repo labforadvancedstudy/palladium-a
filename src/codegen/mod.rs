@@ -359,7 +359,7 @@ impl CodeGenerator {
         self.imported_modules = modules
             .into_iter()
             .map(|(name, mut info)| {
-                info.ast = c_ident::escape_reserved_names(&info.ast);
+                info.ast = Self::own_aliases_expanded(&c_ident::escape_reserved_names(&info.ast));
                 (name, info)
             })
             .collect();
@@ -1395,7 +1395,7 @@ impl CodeGenerator {
     /// `fn double(x: i64)` is `long long double(long long x)`. See
     /// `c_ident::escape_reserved_names` for what it renames and what it leaves.
     pub fn compile(&mut self, program: &Program) -> Result<()> {
-        let program = c_ident::escape_reserved_names(program);
+        let program = self.with_aliases_expanded(&c_ident::escape_reserved_names(program));
         self.compile_escaped(&program)
     }
 
@@ -2624,7 +2624,7 @@ impl CodeGenerator {
                 EnumVariantData::Tuple(types) => types.iter().collect(),
                 EnumVariantData::Struct(fields) => fields.iter().map(|(_, ty)| ty).collect(),
             };
-            for ty in payload_types {
+            for ty in Self::payloads_without_arrays(enum_def, variant, payload_types)? {
                 if matches!(ty, Type::Tuple(_)) {
                     // PD0023. The loop above collected the payload types of a
                     // TUPLE variant and of a STRUCT variant alike, so both
@@ -6863,7 +6863,7 @@ impl CodeGenerator {
                     ty.clone()
                 }
             }
-            _ => ty.clone(),
+            _ => self.substitute_type_below(ty, type_map),
         }
     }
 
@@ -6909,6 +6909,118 @@ impl CodeGenerator {
         println!("   Generated C code: {}", output_path.display());
 
         Ok(output_path)
+    }
+
+    /// `substitute_type` for the shapes its own arms do not walk: a tuple, a
+    /// reference and a future. It recursed into arrays and generic arguments
+    /// only, so a monomorphised `fn f<T>(x: T, p: (T, i64))` kept `T` inside
+    /// the tuple and declared `p` as `__pd_tuple2_voidp_long_long` while every
+    /// caller passed `__pd_tuple2_long_long_long_long`. The type checker
+    /// substitutes at the same depths (`TypeChecker::substitute_type_below`),
+    /// and the two have to agree or an accepted call is C that gcc refuses.
+    fn substitute_type_below(
+        &self,
+        ty: &Type,
+        type_map: &std::collections::HashMap<String, String>,
+    ) -> Type {
+        match ty {
+            Type::Tuple(types) => Type::Tuple(
+                types
+                    .iter()
+                    .map(|t| self.substitute_type(t, type_map))
+                    .collect(),
+            ),
+            Type::Reference {
+                lifetime,
+                mutable,
+                inner,
+            } => Type::Reference {
+                lifetime: lifetime.clone(),
+                mutable: *mutable,
+                inner: Box::new(self.substitute_type(inner, type_map)),
+            },
+            Type::Future { output } => Type::Future {
+                output: Box::new(self.substitute_type(output, type_map)),
+            },
+            _ => ty.clone(),
+        }
+    }
+
+    /// An enum payload may not be an ARRAY: the payload is a union member and a
+    /// constructor parameter, and neither is emitted with its brackets after
+    /// the name — `enum E { Many([i64; 2]) }` printed `long long[2] field0`
+    /// and gcc refused it ("brackets are not allowed here") on 2563001, for
+    /// every element type. An array cannot be assigned in C either, so the
+    /// constructor's `result.data.Many.field0 = arg0` would need a copy loop
+    /// the emitter does not have. Refused here, by name, before any C exists;
+    /// the struct-wrapped spelling the message gives does compile and run.
+    fn payloads_without_arrays<'t>(
+        enum_def: &EnumDef,
+        variant: &EnumVariant,
+        payload_types: Vec<&'t Type>,
+    ) -> Result<Vec<&'t Type>> {
+        if payload_types
+            .iter()
+            .any(|ty| matches!(ty, Type::Array(_, _)))
+        {
+            return Err(CompileError::CodegenError {
+                message: format!(
+                    "`{}::{}` carries an ARRAY in its payload, and an enum payload is \
+                     emitted as a union member that C cannot declare or assign as an array. \
+                     Wrap the array in a struct (`struct Ks {{ ks: [i64; 2] }}`) and carry \
+                     that",
+                    enum_def.name, variant.name
+                ),
+            });
+        }
+        Ok(payload_types)
+    }
+
+    /// A module's own non-generic aliases, expanded everywhere in it. See
+    /// `crate::ast::expand_type_aliases` for why code generation never sees an
+    /// alias: an alias emits no C, so every declarator has to be chosen from
+    /// the aliased type, and `type IA = [i64; 2]; let xs: IA` printed
+    /// `long long[2] xs`.
+    fn own_aliases_expanded(ast: &Program) -> Program {
+        crate::ast::expand_type_aliases(ast, &crate::ast::non_generic_aliases(ast))
+    }
+
+    /// The program, and the generic templates the type checker handed over,
+    /// with every alias in scope expanded: the program's own, and every
+    /// imported module's PUBLIC ones that no local declaration shadows — the
+    /// set `type_to_c` used to consult by name, read once here instead.
+    fn with_aliases_expanded(&mut self, program: &Program) -> Program {
+        let mut aliases: std::collections::HashMap<String, Type> = std::collections::HashMap::new();
+        let mut modules: Vec<_> = self.imported_modules.values().collect();
+        modules.sort_by(|a, b| a.path.cmp(&b.path));
+        for info in modules {
+            for item in &info.ast.items {
+                if let Item::TypeAlias(a) = item {
+                    if matches!(a.visibility, crate::ast::Visibility::Public)
+                        && a.type_params.is_empty()
+                        && !crate::ast::local_type_shadows_import(program, &a.name)
+                    {
+                        aliases.insert(a.name.clone(), a.ty.clone());
+                    }
+                }
+            }
+        }
+        aliases.extend(crate::ast::non_generic_aliases(program));
+        for (_, _, template) in &mut self.generic_instantiations {
+            for (_, ty) in &mut template.params {
+                crate::ast::expand_aliases_in_type(ty, &aliases);
+            }
+            if let Some(ty) = &mut template.return_type {
+                crate::ast::expand_aliases_in_type(ty, &aliases);
+            }
+            crate::ast::expand_aliases_in_block(&mut template.body, &aliases);
+        }
+        for (_, _, template) in &mut self.generic_struct_instantiations {
+            for (_, ty) in &mut template.fields {
+                crate::ast::expand_aliases_in_type(ty, &aliases);
+            }
+        }
+        crate::ast::expand_type_aliases(program, &aliases)
     }
 }
 

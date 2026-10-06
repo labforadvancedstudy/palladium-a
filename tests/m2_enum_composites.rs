@@ -20,9 +20,11 @@
 //! so a bare `K` in any of those signatures failed the same way. Each has a
 //! test here, because each was its own call site and could be reverted alone.
 //!
-//! Every program LINKS AND RUNS against a printed answer — a program that
-//! type-checks and computes the wrong variant is the defect, not the cure —
-//! except the last, whose receipt is the emitted C for the reason given there.
+//! Every accepted program LINKS AND RUNS against a printed answer — a program
+//! that type-checks and computes the wrong variant is the defect, not the cure
+//! — except `a_generic_struct_instantiated_at_an_enum_names_the_enum`, whose
+//! receipt is the emitted C for the reason given there. The refusals assert
+//! that THIS compiler refused, never gcc.
 
 mod common;
 
@@ -329,4 +331,166 @@ fn main() {
         "the instantiation at `Kk` was not emitted as `Box2_Kk` holding a `Kk`:\n{}",
         c
     );
+}
+
+// ---------------------------------------------------------------------------
+// Review round 1 (af5d6ac): type parameters before global names, and aliases
+// expanded before C is named.
+// ---------------------------------------------------------------------------
+
+/// Compile only, expecting a refusal from this compiler and NOT from gcc.
+fn refused(source: &str, prefix: &str) -> String {
+    let name = unique_module_name(prefix);
+    let dir = TempDir::new().unwrap();
+    let src = dir.path().join(format!("{}.pd", name));
+    fs::write(&src, source).unwrap();
+    match Driver::new().compile_file(&src) {
+        Ok(c) => panic!(
+            "the front end accepted a program it must refuse: {}",
+            c.display()
+        ),
+        Err(e) => {
+            let text = e.to_string();
+            assert!(
+                !text.contains("gcc"),
+                "the refusal came from the C compiler, not from this one: {}",
+                text
+            );
+            text
+        }
+    }
+}
+
+/// A generic struct's `[T; 2]` is `[i64; 2]` when `T` is `i64` — also when a
+/// global `enum T` exists. On af5d6ac the array of the ENUM type-checked here
+/// and gcc refused the C; on 2563001 both programs were refused, the first as
+/// `expected [T; 2], found [T; 2]`.
+#[test]
+fn a_generic_structs_parameter_is_substituted_inside_its_array_field() {
+    let out = run(
+        r#"
+enum T { A, B }
+struct G<T> { v: T, k: [T; 2] }
+fn main() {
+    let g = G { v: 3, k: [1, 2] };
+    print_int(g.v);
+    print_int(g.k[1]);
+}
+"#,
+        "tparam_array_field",
+    );
+    assert_eq!(out, "3\n2\n");
+    let text = refused(
+        r#"
+enum T { A, B }
+struct G<T> { v: T, k: [T; 2] }
+fn main() { let g = G { v: 3, k: [T::A, T::B] }; print_int(g.v); }
+"#,
+        "tparam_array_field_enum",
+    );
+    assert!(text.contains("expected [Int; 2], found [T; 2]"), "{}", text);
+}
+
+/// A generic function's `(T, i64)` is substituted too, in the type checker
+/// AND in the monomorphised C; before, the checker refused it and, once the
+/// checker substituted, the C declared the tuple with `void*` in it.
+#[test]
+fn a_generic_functions_parameter_is_substituted_inside_a_tuple() {
+    let out = run(
+        r#"
+enum T { A, B }
+fn f<T>(x: T, p: (T, i64)) -> i64 { return p.1; }
+fn main() {
+    let t: (i64, i64) = (4, 6);
+    print_int(f(5, t));
+}
+"#,
+        "tparam_tuple_param",
+    );
+    assert_eq!(out, "6\n");
+    let text = refused(
+        r#"
+enum T { A, B }
+fn f<T>(x: T, ys: [T; 2]) -> i64 { return 1; }
+fn main() { let ks: [T; 2] = [T::A, T::B]; print_int(f(5, ks)); }
+"#,
+        "tparam_conflict",
+    );
+    assert!(
+        text.contains("Type parameter 'T' has conflicting types: 'i64' and 'T'"),
+        "{}",
+        text
+    );
+}
+
+/// An alias of an array names the array in every declarator: a local, a
+/// parameter, a struct field, a loop, an alias of the alias. Each was
+/// `long long[2] xs` — brackets before the name — and gcc refused it on
+/// 2563001 for `[i64; 2]` and `[S; 2]`; for `[K; 2]` the type checker refused
+/// it first, as `expected [K; 2], found [K; 2]`. A tuple alias is the control
+/// that already ran.
+#[test]
+fn an_alias_of_an_array_is_declared_as_the_array_it_names() {
+    let out = run(
+        r#"
+enum K { A, B }
+struct S { n: i64 }
+type IA = [i64; 2];
+type SA = [S; 2];
+type KA = [K; 2];
+type KB = KA;
+type KT = (K, i64);
+struct H { xs: IA, n: i64 }
+fn kc(k: K) -> i64 { match k { K::A => { return 0; } K::B => { return 1; } } }
+fn second(xs: IA) -> i64 { return xs[1]; }
+fn main() {
+    let a: IA = [1, 2];
+    let s: SA = [S { n: 3 }, S { n: 4 }];
+    let k: KA = [K::A, K::B];
+    let kb: KB = [K::B, K::A];
+    let t: KT = (K::B, 5);
+    let h: H = H { xs: [6, 7], n: 8 };
+    print_int(a[1]);
+    print_int(s[1].n);
+    print_int(kc(k[1]));
+    print_int(kc(kb[0]));
+    print_int(kc(t.0));
+    print_int(t.1);
+    print_int(h.xs[1]);
+    for x in a { print_int(x); }
+    print_int(second(a));
+}
+"#,
+        "alias_of_array",
+    );
+    assert_eq!(out, "2\n4\n1\n1\n1\n5\n7\n1\n2\n2\n");
+}
+
+/// An ARRAY payload is refused by this compiler, by name, for every element
+/// type and through an alias. `enum E { Many([i64; 2]) }` reached gcc as
+/// `long long[2] field0` on 2563001.
+#[test]
+fn an_array_payload_is_refused_before_any_c_exists() {
+    for (shape, source) in [
+        (
+            "i64",
+            "enum E { Many([i64; 2]), Nothing }\nfn main() { print_int(1); }",
+        ),
+        (
+            "enum",
+            "enum K { A, B }\nenum E { Many([K; 2]), Nothing }\nfn main() { print_int(1); }",
+        ),
+        (
+            "alias",
+            "type IA = [i64; 2];\nenum E { Many(IA), Nothing }\nfn main() { print_int(1); }",
+        ),
+    ] {
+        let text = refused(source, "array_payload");
+        assert!(
+            text.contains("carries an ARRAY in its payload"),
+            "{}: {}",
+            shape,
+            text
+        );
+    }
 }

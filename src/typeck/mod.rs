@@ -2427,7 +2427,7 @@ impl TypeChecker {
         // `struct Color { v: i64 }` was classified `Enum("Color")` and refused
         // with `Type mismatch: expected Color, found Color`. A union is the
         // wrong shape for a question whose answer has PRECEDENCE.
-        self.enum_names = Self::enum_names_in_scope(program, &self.imported_modules);
+        self.enum_names = Self::unambiguous_enum_names(program, &self.imported_modules)?;
         self.drop_imports_shadowed_by_local_types(program);
 
         // DECLARATIONS WITH NO LAYOUT ARE REFUSED HERE, BEFORE ANY C EXISTS.
@@ -2513,12 +2513,12 @@ impl TypeChecker {
             // order; `register_global` catches the other, because the first
             // pass walks items in source order and either can come first.
             match item {
-                Item::Function(func) => self.refuse_global_collision(&func.name, "a function", true)?,
+                Item::Function(f) => self.refuse_dup(program, &f.name, f.span, "a function", true)?,
                 Item::TypeAlias(alias) => {
-                    self.refuse_global_collision(&alias.name, "a type alias", false)?
+                    self.refuse_dup(program, &alias.name, alias.span, "a type alias", false)?
                 }
-                Item::Struct(def) => self.refuse_global_collision(&def.name, "a struct", false)?,
-                Item::Enum(def) => self.refuse_global_collision(&def.name, "an enum", false)?,
+                Item::Struct(d) => self.refuse_dup(program, &d.name, d.span, "a struct", false)?,
+                Item::Enum(d) => self.refuse_dup(program, &d.name, d.span, "an enum", false)?,
                 _ => {}
             }
             match item {
@@ -2752,13 +2752,13 @@ impl TypeChecker {
                             let param_types: Vec<CheckerType> = method
                                 .params
                                 .iter()
-                                .map(|param| self.with_enum_kinds(&param.ty))
+                                .map(|param| self.kinded(&param.ty, &impl_block.type_params))
                                 .collect();
 
                             let return_type = method
                                 .return_type
                                 .as_ref()
-                                .map(|ty| self.with_enum_kinds(ty))
+                                .map(|ty| self.kinded(ty, &impl_block.type_params))
                                 .unwrap_or(CheckerType::Unit);
 
                             let func_type =
@@ -3010,8 +3010,8 @@ impl TypeChecker {
                 // Handle Self type
                 if name == "Self" {
                     if let Some(impl_type) = &self.current_impl_type {
-                        // Check if it's an enum or struct
-                        if self.enums.contains_key(impl_type) {
+                        // Enum or struct: the set every other reader uses
+                        if self.enum_names.contains(impl_type) {
                             return CheckerType::Enum(impl_type.clone());
                         } else {
                             return CheckerType::Struct(impl_type.clone());
@@ -3028,21 +3028,21 @@ impl TypeChecker {
                     return self.ast_type_to_checker_type(aliased_type);
                 }
 
-                // Check if it's an enum.
+                // Enum or struct: ONE predicate, the one every depth uses.
                 //
-                // `enum_names` is consulted BESIDE `enums`, not instead of it:
-                // `enums` is the half-filled map this pass builds as it walks,
-                // and `enum_names` is the complete set collected before the walk
-                // begins. Reading only the first gave the same name two kinds
-                // depending on WHEN it was asked (an enum's own payload, and any
-                // enum declared after its user, both came back `Struct`); the
-                // union makes the answer a property of the program instead of a
-                // property of the walk position.
-                if self.enums.contains_key(name) || self.enum_names.contains(name) {
-                    CheckerType::Enum(name.clone())
-                } else {
-                    CheckerType::Struct(name.clone())
-                }
+                // `enum_names` is the complete set collected before the walk begins
+                // (`enum_names_in_scope`, precedence applied); `enums` is the map
+                // this pass fills AS it walks, and reading it alone gave one name two
+                // kinds depending on WHEN it was asked (an enum's own payload, and
+                // any enum declared after its user, came back `Struct`). This arm
+                // used to read their UNION while `with_enum_kinds` read the set
+                // alone — two predicates for one question. The only keys `enums` has
+                // beyond the set are the qualified `lib::Color` ones, and a qualified
+                // name in type position is a parse error (`let c: lib::Color` is
+                // refused at `::`), so the union answered nothing the set does not.
+                // The leaf here and every leaf inside a composite are now decided by
+                // the same call.
+                self.with_enum_kinds(ast_type)
             }
             crate::ast::Type::Generic { name, args } => {
                 // First check if it's a generic type alias
@@ -3860,8 +3860,8 @@ impl TypeChecker {
                     Ok(self.with_enum_kinds(ty))
                 }
             }
-            // For other types, just convert normally
-            _ => Ok(self.with_enum_kinds(ty)),
+            // A composite: its parameters are substituted at every depth
+            _ => self.substitute_type_params_below(ty, type_params, concrete_types),
         }
     }
 
@@ -6095,7 +6095,7 @@ impl TypeChecker {
                             }
                         }
                         CheckerType::Generic { name, args } if name == enum_name => {
-                            // Generic enum with type arguments
+                            Self::refuse_match_on_a_generic_enum(enum_name, variant)?;
                             if let Some(generic_enum) = self.generic_enums.get(enum_name).cloned() {
                                 // Find the variant
                                 let variant_data = generic_enum
@@ -6256,7 +6256,7 @@ impl TypeChecker {
                                 if let crate::ast::Type::TypeParam(param_name) = elem_type.as_ref()
                                 {
                                     let elem_type_str = self.checker_type_to_string(var_elem_type);
-                                    type_map.insert(param_name.clone(), elem_type_str);
+                                    Self::bind_type_argument(type_map, param_name, elem_type_str)?;
                                 }
                             }
                         }
@@ -6461,7 +6461,7 @@ impl TypeChecker {
                     inner: Box::new(substituted_inner),
                 })
             }
-            _ => Ok(ty.clone()),
+            _ => self.substitute_type_below(ty, subst_map),
         }
     }
 
@@ -6655,11 +6655,15 @@ impl TypeChecker {
     /// Convert a type with every named leaf given its KIND — `Enum` where the
     /// name is an enum in scope, `Struct` otherwise — at every depth.
     ///
-    /// THE FALLBACK OF `ast_type_to_checker_type`, and what the three sites
-    /// that used to call `CheckerType::from` directly now call: impl method
-    /// signatures, generic function instantiation, and both arms of
-    /// `substitute_type_params` — which types a generic struct's literal
-    /// fields and field reads and a generic enum's pattern bindings.
+    /// THE ONE ENUM-OR-STRUCT PREDICATE. Its callers, as wired after review
+    /// round 1: the top-level `Custom` arm of `ast_type_to_checker_type` and
+    /// that function's fallback; `kinded`, for a generic impl's method
+    /// signatures (its type parameters bound first); generic function
+    /// instantiation, after `substitute_type`; and every leaf of
+    /// `substitute_type_params` / `substitute_type_params_below` that is not
+    /// one of the item's type parameters (generic struct literal fields and
+    /// field reads, generic enum pattern bindings). Imported signatures go
+    /// through `as_enums_where_known` directly, over the same set.
     /// `CheckerType::from` has no table to consult and calls every named type
     /// a struct, so a bare `K` was right only where the top-level `Custom` arm
     /// saw it. Measured on 2563001, each refused with one type named twice:
@@ -6675,18 +6679,17 @@ impl TypeChecker {
     ///
     /// KIND ONLY, ON PURPOSE — NOT the alias and `Self` resolution the
     /// top-level arm also does. Recursing composites through
-    /// `ast_type_to_checker_type` itself was the first version, and it was
-    /// measured against the corpus before it was kept: it expands a type alias
-    /// inside `[Edge; 2]`, `&Row` and `&Graph`, which code generation does not,
-    /// so three `tests/xfail/alias_*.pd` rows went from this compiler's own
-    /// refusal to C that gcc rejects — an outcome no manifest column may
-    /// declare — and two passed. `[Self; 2]` in a method body did the same
-    /// (`struct Self` in the C). Expanding an alias before a type is compared
-    /// AND before it is named in C is the normaliser those rows assign to M3;
-    /// doing the first half alone here trades a diagnostic for a gcc failure.
-    /// So a composite's alias and `Self` leaves stay exactly as they were,
-    /// and only the enum-vs-struct question — which code generation does not
-    /// ask — is answered at every depth.
+    /// `ast_type_to_checker_type` itself was the first version, measured
+    /// against the corpus before it was kept: it expands a type alias inside
+    /// `[Edge; 2]`, `&Row` and `&Graph`, so the five `tests/xfail/alias_*.pd`
+    /// rows — whose refusals are this checker's own words, owned by M3's
+    /// normaliser — stopped being refused (two passed; three reached gcc,
+    /// before code generation expanded aliases too). Code generation now
+    /// expands every alias before it names a C type
+    /// (`crate::ast::expand_type_aliases`), so the C half is done; the
+    /// COMPARISON half is what this function deliberately does not do, and
+    /// those five rows are why. `[Self; 2]` in a method body is left alone for
+    /// the same kind of reason: resolving it here emitted `struct Self`.
     ///
     /// The enum set is `enum_names`, the precedence-applied answer
     /// (`enum_names_in_scope`), through the same rewrite the import
@@ -6724,6 +6727,294 @@ impl TypeChecker {
              in a struct and pass that, or write the function for the concrete type",
             concrete_type
         )))
+    }
+
+    // TYPE PARAMETERS FIRST, AT EVERY DEPTH (WT-01 W2a review round 1).
+    //
+    // A type parameter is a binding, and a binding is read before any global
+    // of the same name. The parser gets this right inside a function — a
+    // type parameter in scope parses as `Type::TypeParam` wherever it sits —
+    // but a generic STRUCT's fields, a generic ENUM's payloads and a generic
+    // IMPL's method signatures are parsed with no parameter in scope, so their
+    // `T` arrives as `Custom("T")`. Every substitution site already asked
+    // "is this `Custom` one of my parameters?" at the TOP of a type and
+    // nowhere below it, so `[T; 2]` and `(T, i64)` kept a bare `T` — which
+    // was `Struct("T")` on 2563001, and which the enum-kind repair then
+    // re-read as a global `enum T` when one existed. On af5d6ac
+    // `struct G<T> { v: T, k: [T; 2] }` accepted `G { v: 3, k: [T::A, T::B] }`
+    // and gcc refused the C. The three functions below are the "below the
+    // top" half, one per substitution site, each delegating every LEAF back
+    // to the site's existing top-level arms so that a leaf is decided in one
+    // place.
+
+    /// `substitute_type_params` for a composite: recurse, and hand every leaf
+    /// back to `substitute_type_params`, whose arms already answer both
+    /// spellings of a parameter and give a non-parameter name its kind.
+    fn substitute_type_params_below(
+        &self,
+        ty: &crate::ast::Type,
+        type_params: &[String],
+        concrete_types: &[CheckerType],
+    ) -> Result<CheckerType> {
+        let below =
+            |t: &crate::ast::Type| self.substitute_type_params(t, type_params, concrete_types);
+        Ok(match ty {
+            crate::ast::Type::Array(elem, _) => {
+                // The length through `CheckerType::from`, the one conversion
+                // of an `ArraySize` there is.
+                let CheckerType::Array(_, size) = CheckerType::from(ty) else {
+                    unreachable!("`CheckerType::from` maps an array to an array")
+                };
+                CheckerType::Array(Box::new(below(elem)?), size)
+            }
+            crate::ast::Type::Tuple(types) => {
+                CheckerType::Tuple(types.iter().map(below).collect::<Result<_>>()?)
+            }
+            // A reference is its referent, as in `CheckerType::from`.
+            crate::ast::Type::Reference { inner, .. } => below(inner)?,
+            crate::ast::Type::Future { output } => CheckerType::Generic {
+                name: "Future".to_string(),
+                args: vec![GenericArgValue::Type(below(output)?)],
+            },
+            crate::ast::Type::Generic { name, args } => CheckerType::Generic {
+                name: name.clone(),
+                args: args
+                    .iter()
+                    .map(|arg| match arg {
+                        GenericArg::Type(t) => Ok(GenericArgValue::Type(below(t)?)),
+                        GenericArg::Const(c) => Ok(GenericArgValue::Const(match c {
+                            ConstValue::Integer(n) => ConstValueResolved::Integer(*n),
+                            ConstValue::ConstParam(n) => ConstValueResolved::ConstParam(n.clone()),
+                        })),
+                    })
+                    .collect::<Result<_>>()?,
+            },
+            // A leaf with no name to resolve.
+            _ => self.with_enum_kinds(ty),
+        })
+    }
+
+    /// `substitute_type` (a generic FUNCTION's instantiation) for the shapes
+    /// its own arms do not walk. It recursed into arrays and references only,
+    /// so `p: (T, i64)` kept its `TypeParam` and `f(5, (T::A, 6))` over a
+    /// global `enum T` was refused as `expected (T, Int), found (T, Int)` —
+    /// a type parameter and an enum, printed alike.
+    ///
+    /// NOT INTO A GENERIC TYPE'S ARGUMENTS, measured: substituting there made
+    /// `fn wrap<T>(x: T) -> Box2<T>` with `let b: Box2<i64> = wrap(5);` type-
+    /// check, and code generation declares an annotated generic-struct local
+    /// as `void*` (the open defect in CLAUDE.md), so the program moved from a
+    /// refusal to gcc. A `T` left there stays a `TypeParam` — refused when it
+    /// is compared, and never read as a global type, which is the property
+    /// this round is about.
+    fn substitute_type_below(
+        &self,
+        ty: &crate::ast::Type,
+        subst_map: &HashMap<String, String>,
+    ) -> Result<crate::ast::Type> {
+        Ok(match ty {
+            crate::ast::Type::Tuple(types) => crate::ast::Type::Tuple(
+                types
+                    .iter()
+                    .map(|t| self.substitute_type(t, subst_map))
+                    .collect::<Result<_>>()?,
+            ),
+            crate::ast::Type::Future { output } => crate::ast::Type::Future {
+                output: Box::new(self.substitute_type(output, subst_map)?),
+            },
+            _ => ty.clone(),
+        })
+    }
+
+    /// A generic IMPL's method signature: the impl's own parameters are bound
+    /// first, then the remaining names are kinded. Generic impls are not
+    /// otherwise implemented — their bodies are skipped by `check`, a method
+    /// call cannot find them, and code generation refuses their receivers —
+    /// but the signature is registered, and the rule for a name is the rule
+    /// wherever the name is read.
+    fn kinded(&self, ty: &crate::ast::Type, type_params: &[String]) -> CheckerType {
+        self.with_enum_kinds(&Self::type_params_bound(ty, type_params))
+    }
+
+    /// `ty` with every `Custom(name)` that names one of `type_params` turned
+    /// into the `TypeParam` it is, at every depth.
+    fn type_params_bound(ty: &crate::ast::Type, type_params: &[String]) -> crate::ast::Type {
+        use crate::ast::Type as T;
+        let bound = |t: &T| Self::type_params_bound(t, type_params);
+        match ty {
+            T::Custom(name) if type_params.contains(name) => T::TypeParam(name.clone()),
+            T::Array(elem, size) => T::Array(Box::new(bound(elem)), size.clone()),
+            T::Tuple(types) => T::Tuple(types.iter().map(bound).collect()),
+            T::Reference {
+                lifetime,
+                mutable,
+                inner,
+            } => T::Reference {
+                lifetime: lifetime.clone(),
+                mutable: *mutable,
+                inner: Box::new(bound(inner)),
+            },
+            T::Future { output } => T::Future {
+                output: Box::new(bound(output)),
+            },
+            T::Generic { name, args } => T::Generic {
+                name: name.clone(),
+                args: args
+                    .iter()
+                    .map(|arg| match arg {
+                        GenericArg::Type(t) => GenericArg::Type(bound(t)),
+                        other => other.clone(),
+                    })
+                    .collect(),
+            },
+            _ => ty.clone(),
+        }
+    }
+
+    /// `refuse_global_collision`, and then the same one-namespace rule between
+    /// the program's own TYPES, and between a type and a function.
+    ///
+    /// Nothing refused a second `struct K`, a second `enum K`, `struct K`
+    /// beside `enum K`, or `fn K` beside `struct K`: every one passed the front
+    /// end and gcc reported `redefinition of 'K'`. The enum-kind repair made
+    /// the `struct K` + `enum K` case WORSE to read — `let xs: [K; 2]` of
+    /// struct literals was refused as `expected [K; 2], found [K; 2]`, one
+    /// spelling for the two declarations — so the collision is now refused
+    /// where it is written, at the second declaration, under the code the
+    /// rule already has. `type K = ...` beside `struct K` compiled and ran
+    /// (an alias emits no C), and is refused too: a reader of `K` could not
+    /// tell which of the two it names.
+    ///
+    /// Two FUNCTIONS of one name are not this rule's: they are measured to
+    /// reach gcc as `redefinition` as well, and `stdlib/` contains them, so
+    /// refusing them changes what the stdlib gate pins and is its own change.
+    /// An IMPORTED declaration is not either — a local one shadows it, which
+    /// is legal, and two imports colliding is the M4 row
+    /// `test_ambiguous_import_is_diagnosed_by_the_compiler_not_by_gcc`.
+    fn refuse_dup(
+        &self,
+        program: &Program,
+        name: &str,
+        span: Span,
+        what: &str,
+        callable: bool,
+    ) -> Result<()> {
+        self.refuse_global_collision(name, what, callable)?;
+        let first = program.items.iter().find_map(|item| match item {
+            Item::Function(f) if f.name == name && !callable => Some((f.span, "a function")),
+            Item::Struct(d) if d.name == name => Some((d.span, "a struct")),
+            Item::Enum(d) if d.name == name => Some((d.span, "an enum")),
+            Item::TypeAlias(a) if a.name == name => Some((a.span, "a type alias")),
+            _ => None,
+        });
+        match first {
+            Some((first_span, first_what)) if first_span.start < span.start => {
+                let reason = if what == "a type alias" || first_what == "a type alias" {
+                    "an alias emits no C, but a reader of the name could not tell which of \
+                     the two it means"
+                } else {
+                    "the emitted C would define the name twice"
+                };
+                Err(CompileError::Generic(format!(
+                    "`{}` is declared as {} here and as {} at line {}, and a program has one \
+                     namespace for top-level names: {}",
+                    name, what, first_what, first_span.line, reason
+                ))
+                .with_code(DiagnosticCode::TopLevelNamesShareOneNamespace))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// `enum_names_in_scope`, refusing an import whose KIND is ambiguous: one
+    /// imported module exports a public `enum N` and another a public
+    /// `struct N`, and no local declaration takes the name. On 2563001 that
+    /// reached gcc as `redefinition of 'N'`; with the enum-kind repair a
+    /// `[N; 2]` of struct literals was refused as `expected [N; 2], found
+    /// [N; 2]`, because the set said enum and the literal said struct. Two
+    /// imports of the SAME kind are the M4 row
+    /// `test_ambiguous_import_is_diagnosed_by_the_compiler_not_by_gcc` and are
+    /// not this rule's; a kind conflict is, because the kind is what this pass
+    /// decides from the name.
+    fn unambiguous_enum_names(
+        program: &Program,
+        imported: &HashMap<String, crate::resolver::ModuleInfo>,
+    ) -> Result<HashSet<String>> {
+        let names = Self::enum_names_in_scope(program, imported);
+        let mut modules: Vec<(&String, &crate::resolver::ModuleInfo)> = imported.iter().collect();
+        modules.sort_by_key(|(name, _)| *name);
+        for (module, info) in &modules {
+            for item in &info.ast.items {
+                let Item::Struct(s) = item else { continue };
+                if !matches!(s.visibility, crate::ast::Visibility::Public)
+                    || !names.contains(&s.name)
+                    || crate::ast::local_type_shadows_import(program, &s.name)
+                {
+                    continue;
+                }
+                let enum_module = modules.iter().find(|(_, m)| {
+                    m.ast.items.iter().any(|i| {
+                        matches!(i, Item::Enum(e) if e.name == s.name
+                            && matches!(e.visibility, crate::ast::Visibility::Public))
+                    })
+                });
+                if let Some((enum_module, _)) = enum_module {
+                    return Err(CompileError::Generic(format!(
+                        "`{}` is imported as a public enum from `{}` and as a public struct \
+                         from `{}`, and a program has one namespace for type names, so no use \
+                         of `{}` could say which it means. Declare a local type of that name, \
+                         or import only one of the two modules",
+                        s.name, enum_module, module, s.name
+                    ))
+                    .with_code(DiagnosticCode::TopLevelNamesShareOneNamespace));
+                }
+            }
+        }
+        Ok(names)
+    }
+
+    /// A `match` whose scrutinee is a GENERIC enum. No value of one can exist —
+    /// every constructor is refused (PD0048) because code generation emits no
+    /// type, no tag and no constructor for a generic enum — and the `match`
+    /// itself names tag constants nothing defines, so a function that matches
+    /// one compiled through the front end and died in gcc. Measured on
+    /// 2563001: `enum Opt<T> { Some(T), None }` with
+    /// `fn f(o: Opt<i64>) -> i64 { match o { Opt::Some(x) => ... _ => ... } }`.
+    /// Uncoded, because the registry's PD0048 row names the CONSTRUCTOR
+    /// condition and a registry row is never rewritten; the rule is the same.
+    fn refuse_match_on_a_generic_enum(enum_name: &str, variant: &str) -> Result<()> {
+        Err(CompileError::Generic(format!(
+            "this `match` reads `{}::{}` out of a value of a GENERIC enum, and generic enums \
+             are not implemented: no value of one can be constructed, and code generation \
+             emits no type and no tag for one, so this would fail in the C compiler. Declare \
+             a non-generic enum for each concrete type you need",
+            enum_name, variant
+        )))
+    }
+
+    /// Record that type parameter `param` is `concrete` — or refuse, if an
+    /// earlier argument already said otherwise. The array-argument path of
+    /// `infer_from_expr_and_type` used to INSERT without looking, so
+    /// `f<T>(x: T, ys: [T; 2])` called as `f(5, ks)` with `ks` an array of a
+    /// global `enum T` silently rebound `T` from `i64` to that enum and
+    /// reported the consequence (`expected T, found Int`) instead of the
+    /// cause. The message is the one the scalar path already gives.
+    fn bind_type_argument(
+        type_map: &mut HashMap<String, String>,
+        param: &str,
+        concrete: String,
+    ) -> Result<()> {
+        match type_map.get(param) {
+            Some(existing) if *existing != concrete => Err(CompileError::Generic(format!(
+                "Type parameter '{}' has conflicting types: '{}' and '{}'",
+                param, existing, concrete
+            ))),
+            Some(_) => Ok(()),
+            None => {
+                type_map.insert(param.to_string(), concrete);
+                Ok(())
+            }
+        }
     }
 }
 
@@ -7914,5 +8205,158 @@ mod tests {
                 err
             );
         }
+    }
+
+    // A TYPE PARAMETER IS READ BEFORE ANY TYPE OF THE SAME NAME, AT EVERY DEPTH.
+    //
+    // Review round 1 of WT-01 unit W2a (gpt-6-astra, reproduced by the
+    // coordinator) found the enum-kind repair making this worse: with a global
+    // `enum T`, the `T` inside a generic struct's `[T; 2]` field was handed to
+    // the enum-kind rewrite instead of being substituted, so on af5d6ac
+    //
+    // ```text
+    // enum T { A, B }
+    // struct G<T> { v: T, k: [T; 2] }
+    // fn main() { let g = G { v: 3, k: [T::A, T::B] }; }
+    // ```
+    //
+    // type-checked with `T = i64` and an array of the ENUM in the field, and
+    // gcc refused the C. On 2563001 it was refused as `expected [T; 2], found
+    // [T; 2]`. Every row is a shape where a type parameter sits below the top
+    // of a type and a global type shares its name; the expected text is the
+    // substituted type, so no row can pass by naming one type twice.
+    #[test]
+    fn a_type_parameter_is_read_before_a_global_type_of_the_same_name() {
+        let refused: [(&str, &str, &str); 5] = [
+            (
+                "generic struct, array field",
+                "enum T { A, B }\nstruct G<T> { v: T, k: [T; 2] }\n\
+                 fn main() { let g = G { v: 3, k: [T::A, T::B] }; print_int(g.v); }",
+                "expected [Int; 2], found [T; 2]",
+            ),
+            (
+                "generic struct, tuple field",
+                "enum T { A, B }\nstruct G<T> { v: T, p: (T, i64) }\n\
+                 fn main() { let g = G { v: 3, p: (T::A, 5) }; print_int(g.v); }",
+                "expected (Int, Int), found (T, Int)",
+            ),
+            (
+                "generic fn, array parameter",
+                "enum T { A, B }\nfn f<T>(x: T, ys: [T; 2]) -> i64 { return 1; }\n\
+                 fn main() { let ks: [T; 2] = [T::A, T::B]; print_int(f(5, ks)); }",
+                "Type parameter 'T' has conflicting types: 'i64' and 'T'",
+            ),
+            (
+                "generic fn, tuple parameter",
+                "enum T { A, B }\nfn f<T>(x: T, p: (T, i64)) -> i64 { return 1; }\n\
+                 fn main() { let t: (T, i64) = (T::A, 6); print_int(f(5, t)); }",
+                "expected (Int, Int), found (T, Int)",
+            ),
+            (
+                "generic enum, array payload bound by a pattern",
+                "enum T { A, B }\nenum Opt<T> { Some([T; 2]), None }\n\
+                 fn f(o: Opt<i64>) -> i64 { match o { Opt::Some(xs) => { let n: T = xs[0]; \
+                 return 1; } _ => { return 0; } } }\nfn main() { print_int(1); }",
+                "out of a value of a GENERIC enum, and generic enums are not implemented",
+            ),
+        ];
+        // Every row is run before anything is asserted, so a failure names
+        // every shape that is wrong rather than the first one.
+        let mut wrong: Vec<String> = Vec::new();
+        for (shape, source, want) in refused {
+            match check(source) {
+                Ok(()) => wrong.push(format!("{}: accepted, wanted {:?}", shape, want)),
+                Err(e) if !e.to_string().contains(want) => wrong.push(format!(
+                    "{}: wanted {:?} in {:?}",
+                    shape,
+                    want,
+                    e.to_string()
+                )),
+                Err(_) => {}
+            }
+        }
+        let accepted: [(&str, &str); 3] = [
+            (
+                "generic struct, array field",
+                "enum T { A, B }\nstruct G<T> { v: T, k: [T; 2] }\n\
+                 fn main() { let g = G { v: 3, k: [1, 2] }; print_int(g.k[1]); }",
+            ),
+            (
+                "generic fn, array parameter",
+                "enum T { A, B }\nfn f<T>(x: T, ys: [T; 2]) -> i64 { return 1; }\n\
+                 fn main() { let ks: [i64; 2] = [1, 2]; print_int(f(5, ks)); }",
+            ),
+            (
+                "generic fn, tuple parameter",
+                "enum T { A, B }\nfn f<T>(x: T, p: (T, i64)) -> i64 { return p.1; }\n\
+                 fn main() { let t: (i64, i64) = (4, 6); print_int(f(5, t)); }",
+            ),
+        ];
+        for (shape, source) in accepted {
+            if let Err(e) = check(source) {
+                wrong.push(format!("{}: refused a legal program: {}", shape, e));
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
+    // ONE NAMESPACE FOR TOP-LEVEL NAMES, between the program's own types and
+    // between a type and a function. Every row below passed the front end on
+    // 2563001 and reached gcc as `redefinition of 'K'`, except the alias row,
+    // which compiled and ran with `K` meaning two things. After the enum-kind
+    // repair the struct/enum pair read worse: `let xs: [K; 2]` of struct
+    // literals beside `enum K` was refused as `expected [K; 2], found [K; 2]`.
+    #[test]
+    fn a_name_declared_twice_at_the_top_level_is_refused_where_it_is_written() {
+        let cases: [(&str, &str, &str); 6] = [
+            (
+                "struct, struct",
+                "struct K { n: i64 }\nstruct K { m: i64 }\nfn main() { print_int(1); }",
+                "`K` is declared as a struct here and as a struct at line 1",
+            ),
+            (
+                "enum, enum",
+                "enum K { A }\nenum K { B }\nfn main() { print_int(1); }",
+                "`K` is declared as an enum here and as an enum at line 1",
+            ),
+            (
+                "enum, struct",
+                "enum K { A, B }\nstruct K { n: i64 }\n\
+                 fn main() { let xs: [K; 2] = [K { n: 1 }, K { n: 2 }]; print_int(1); }",
+                "`K` is declared as a struct here and as an enum at line 1",
+            ),
+            (
+                "function, struct",
+                "fn K() -> i64 { return 1; }\nstruct K { n: i64 }\nfn main() { print_int(1); }",
+                "`K` is declared as a struct here and as a function at line 1",
+            ),
+            (
+                "struct, function",
+                "struct K { n: i64 }\nfn K() -> i64 { return 1; }\nfn main() { print_int(1); }",
+                "`K` is declared as a function here and as a struct at line 1",
+            ),
+            (
+                "type alias, struct",
+                "type K = i64;\nstruct K { n: i64 }\nfn main() { print_int(1); }",
+                "an alias emits no C, but a reader of the name could not tell",
+            ),
+        ];
+        let mut wrong: Vec<String> = Vec::new();
+        for (shape, source, want) in cases {
+            match check(source) {
+                Ok(()) => wrong.push(format!("{}: accepted", shape)),
+                Err(e) if !e.to_string().contains(want) => wrong.push(format!(
+                    "{}: wanted {:?} in {:?}",
+                    shape,
+                    want,
+                    e.to_string()
+                )),
+                Err(e) if e.code() != Some(DiagnosticCode::TopLevelNamesShareOneNamespace) => {
+                    wrong.push(format!("{}: not PD0005: {:?}", shape, e.code()))
+                }
+                Err(_) => {}
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 }

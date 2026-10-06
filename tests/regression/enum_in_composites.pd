@@ -13,6 +13,14 @@
 //
 // Every value printed is a variant code (0, 1, 2), so a wrong index or a
 // wrong variant is a wrong number rather than a silent pass.
+//
+// Review round 1 added two sections. TYPE PARAMETERS FIRST: a generic struct's
+// `[P; 2]` and a generic function's `(P, i64)` are substituted even though a
+// global `enum P` exists — on af5d6ac the struct's `P` was read as that enum,
+// so an array of it type-checked into an `i64` slot and gcc refused the C.
+// ALIASES OF ARRAYS: `type KA = [K; 2]` and friends are declared as the array
+// they name; every one printed `long long[2] xs` (brackets before the name)
+// and gcc refused it, for `[i64; 2]` and `[S; 2]` on 2563001 too.
 
 enum K {
     A,
@@ -69,6 +77,39 @@ fn id<T>(x: T) -> T {
     return x;
 }
 
+enum P {
+    X,
+    Y,
+}
+
+struct Gp<P> {
+    v: P,
+    k: [P; 2],
+}
+
+fn tsecond<P>(x: P, t: (P, i64)) -> i64 {
+    return t.1;
+}
+
+struct Seat {
+    n: i64,
+}
+
+type IA = [i64; 2];
+type SA = [Seat; 2];
+type KA = [K; 2];
+type KB = KA;
+type KT = (K, i64);
+
+struct Row {
+    xs: IA,
+    n: i64,
+}
+
+fn last_of(xs: IA) -> i64 {
+    return xs[1];
+}
+
 fn main() {
     // Both literal forms against an annotation.
     let xs: [K; 4] = [K::B; 4];
@@ -115,4 +156,30 @@ fn main() {
     print_int(m.code());
     let picked: K = id(r);
     print_int(kcode(picked));
+
+    // A type parameter named like the global `enum P` is still the parameter.
+    let gp = Gp { v: 3, k: [40, 41] };
+    let pt: (i64, i64) = (7, 8);
+    print("\nType parameters first:");
+    print_int(gp.v);
+    print_int(gp.k[1]);
+    print_int(tsecond(5, pt));
+
+    // Aliases of arrays, declared as the arrays they name.
+    let ia: IA = [50, 51];
+    let sa: SA = [Seat { n: 60 }, Seat { n: 61 }];
+    let ka: KA = [K::C, K::A];
+    let kb: KB = [K::B, K::C];
+    let kt: KT = (K::C, 70);
+    let row: Row = Row { xs: [80, 81], n: 82 };
+    print("\nAliases:");
+    print_int(ia[0]);
+    print_int(sa[1].n);
+    print_int(kcode(ka[0]));
+    print_int(kcode(kb[0]));
+    print_int(kcode(kt.0));
+    print_int(kt.1);
+    print_int(row.xs[1]);
+    print_int(row.n);
+    print_int(last_of(ia));
 }

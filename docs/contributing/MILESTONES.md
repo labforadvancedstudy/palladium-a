@@ -373,7 +373,7 @@ reverting either guard alone now fails a fixture of its own; then `feat/m2-types
 | Thesis gate itself | 334 unique cases, **checked** and digest-pinned; 72 drive `main()` end to end and 262 exercise a helper directly — the decomposition the gate itself prints, replacing a `70 / 16 / 14` split that no longer appeared in its output and that nothing could re-derive. An adversary wrong on exactly one mutation scores one short of full marks — measured, by a control that now exists; the round that first quoted that figure had none, which is why `score < total` looked like coverage | `make test-thesis-runner` |
 | Documentation | every snippet compiles; 427 citations fingerprinted, 29 no-compile fences pinned | `make check-docs` |
 | Rust tests | 1006 pass, **0 fail**, 46 ignored (585 lib + 421 integration, 28 integration binaries) | `make test-honest` |
-| Declared failures | 45 `xfail` + 1 `slow`, none passing; 45 of 45 failing for their DECLARED diagnostic | `make test-xfail` |
+| Declared failures | 43 `xfail` + 1 `slow`, none passing; 43 of 43 failing for their DECLARED diagnostic (WT-01 W2a round 1 paid two M3 alias rows: aliases are expanded before C is named) | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 34 builtins accounted, the registry is exactly N14's normative 34, and no builtin is registered-and-refused (was 6) | `make stdlib-gate` |
 | Traits · generics · effects · async · unsafe · modules | conformance coverage is **zero** for each | `make conformance` |
 | 1.0 requirements | 79 satisfied · 110 owed · 8 blocked, over 197 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |

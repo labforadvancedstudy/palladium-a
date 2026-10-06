@@ -718,7 +718,7 @@ fn test_type_aliases_complex() {
 /// Both assert the SUCCESS they should have: when the lowering is fixed, they pass and
 /// the rows transition to `paid`. Neither pins the current broken output.
 #[test]
-#[ignore = "XFAIL: A TYPE ALIAS TO AN ARRAY MIS-PLACES THE C DECLARATOR. `type Row = [i64; 4]; let r: Row = [...]` emits `long long[4] r = {...}` instead of `long long r[4] = {...}`, so gcc refuses it with \"brackets are not allowed here; to declare an array, place the brackets after the identifier\". The front end approves the program, which makes this the forbidden class rather than a fixture property (owned by M3, alias resolution in the C-name path)"]
+// PAID (WT-01 W2a review round 1): aliases are expanded before C is named.
 fn test_type_alias_to_array_lowers_to_valid_c() {
     let source = r#"
     type Row = [i64; 4];
@@ -736,7 +736,7 @@ fn test_type_alias_to_array_lowers_to_valid_c() {
 
 /// The same family, one boundary out: the alias NAME reaches C as if it were a C type.
 #[test]
-#[ignore = "XFAIL: AN ALIAS-TYPED PARAMETER LEAKS ITS ALIAS NAME INTO THE SYNTHESISED TUPLE STRUCT. `fn pair(a: NodeId, b: NodeId) -> (i64, i64)` emits `typedef struct { NodeId f0; NodeId f1; } __pd_tuple2_NodeId_NodeId;` — the tuple struct is named and typed from the UNRESOLVED alias, so gcc reports \"unknown type name 'NodeId'\" four times. Constructing the same tuple in a LOCAL works (measured, both annotated and inferred), so the defect is the function boundary, not tuple construction (owned by M3, alias resolution in the C-name path)"]
+// PAID (WT-01 W2a review round 1): the same expansion, at a parameter.
 fn test_alias_typed_params_lower_to_valid_c_across_a_tuple_return() {
     let source = r#"
     type NodeId = i64;

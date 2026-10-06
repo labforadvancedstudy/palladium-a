@@ -317,14 +317,15 @@ PINNED_PROSE_FIGURES = frozenset({
     "1 of 23", "0 of 21",   # gate counts: evaluated thesis rows, stdlib files
     # Added 2026-08-23 with the M2 exit criterion. Both are gate counts and neither is an
     # adversary score, which is the distinction this list exists to make a reviewer state:
-    "45 of " + "45",        # test-xfail: owed rows failing for their DECLARED diagnostic
+    "43 of " + "43",        # test-xfail: owed rows failing for their DECLARED diagnostic
                             # Falls whenever a row is PAID: feat/m2-expressions paid five
                             # (test_else_if_chain, test_loop_keyword,
                             # test_bitwise_operators, test_compound_assignment_operators,
                             # test_as_cast), and feat/m2-patterns paid three more
                             # (test_match_on_integer_literal with N6-02,
                             # test_use_after_move_is_rejected_without_a_type_annotation,
-                            # and the linker's -Werror=return-type row with N6-11).
+                            # and the linker's -Werror=return-type row with N6-11;
+                            # WT-01 W2a paid the two M3 alias-lowering rows).
                             # feat/m2-items paid two more with N3-09/N3-10
                             # (test_top_level_const, test_top_level_static) and
                             # RE-DECLARED a third rather than paying it:
@@ -333,8 +334,7 @@ PINNED_PROSE_FIGURES = frozenset({
                             # named with a refusal that names macro_rules! —
                             # which is the inventory doing its job, since an
                             # XFAIL any failure satisfies declares nothing.
-                            # NO RETIRED FIGURE IS WRITTEN OUT HERE: this file is scanned
-                            # for prose figures by its own self-test, and a superseded
+                            # NO RETIRED FIGURE IS WRITTEN OUT HERE: this file is scanned for prose figures by its own self-test, and a superseded
                             # count quoted in a comment reads as an undeclared one —
                             # measured, by that check, on the edit that first said so.
     "51 of 82",             # the m2-exit aggregation lattice, under its own inversion control
@@ -5068,7 +5068,7 @@ def self_test() -> int:
     # re-declare is a place to hide a figure.
     case("the pinned prose figures are the two quoted retractions and the four gate counts",
          sorted(PINNED_PROSE_FIGURES),
-         ["0 of 21", "1 of 23", "100" + "%", "45 of " + "45", "51 of 82", "85" + "%"],
+         ["0 of 21", "1 of 23", "100" + "%", "43 of " + "43", "51 of 82", "85" + "%"],
          drives_main=False)
     case("the scan is NARROW and says so: an English spelling of a measurement passes",
          sorted(prose_figures("roughly half of the cases, most of them")), [],
