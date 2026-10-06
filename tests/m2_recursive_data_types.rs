@@ -760,8 +760,8 @@ fn main() { print("ok"); }
     for expected in [
         // The exclusion, named, with the row that actually carries it. N4-23 is
         // the non-overstatement row; N4-22 is the positive one and says nothing
-        // about arrays. This string is the conformance fingerprint too, so the
-        // two move together or `make conformance` goes red.
+        // about arrays. Its conformance row pins only `code=PD0070` now, so this
+        // assertion is what holds the sentence; `make conformance` does not.
         "the refusal is a deliberate exclusion (requirement N4-23)",
         // Reason one: there is no C to emit.
         "incomplete element type",

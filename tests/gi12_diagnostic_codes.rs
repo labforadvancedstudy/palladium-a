@@ -310,6 +310,31 @@ fn compile_source(source: &str) -> (Refusal, TempDir) {
     )
 }
 
+/// The same, for a program that IMPORTS a module written here too.
+///
+/// Some positions are reached only by an imported declaration: the deferred
+/// refusals in `TypeChecker::check`. The resolver looks for
+/// `<module>.pd` beside the file being compiled, so `lib.pd` is written next to
+/// the program and the program says `import lib;`.
+fn compile_with_import(lib: &str, source: &str) -> (Refusal, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    fs::write(dir.path().join("lib.pd"), lib).expect("write module");
+    fs::write(dir.path().join("written.pd"), source).expect("write source");
+    let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
+        .current_dir(dir.path())
+        .args(["compile", "written.pd", "-o", "written"])
+        .output()
+        .expect("run pdc");
+    (
+        Refusal {
+            code: out.status.code(),
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        },
+        dir,
+    )
+}
+
 /// Compile, LINK and RUN a program written for this test, returning its stdout.
 ///
 /// The acceptance side. Without it, every assertion in this file could be
@@ -1566,10 +1591,13 @@ fn the_exhaustiveness_rule_is_one_code_over_ten_witnesses_and_eight_payloads() {
 /// A RULE STATED AT SEVERAL TYPE-CHECKER POSITIONS CARRIES THE CODE AT ALL OF
 /// THEM — including the positions the corpus does not witness.
 ///
-/// Six positions, each reached by a program written here because no `.pd` in
+/// Nine positions, each reached by a program written here because no `.pd` in
 /// the tree reaches it. Without this the registry rows that say "three
 /// positions" or "four positions" would be prose: the witness compile proves
-/// one of them and a refactor could leave the rest uncoded.
+/// one of them and a refactor could leave the rest uncoded. The last three are
+/// reached only through an IMPORT — the deferred async refusals in
+/// `TypeChecker::check`, each the rule `check_function` refuses a LOCAL
+/// declaration under, raised for an imported one with the same sentence.
 #[test]
 fn the_su3_positions_the_corpus_does_not_witness_carry_the_code_too() {
     let cases: &[(&str, &str, &str, &str)] = &[
@@ -1610,9 +1638,37 @@ fn the_su3_positions_the_corpus_does_not_witness_carry_the_code_too() {
             "found `1114112 as char`",
         ),
     ];
+    let imported: &[(&str, &str, &str, &str, &str)] = &[
+        (
+            "PD0054, an imported non-generic `async fn` with a value return",
+            "pub async fn av() -> i64 { return 42; }\npub fn ok() { print_int(1); }\n",
+            "import lib;\n\nfn main() { ok(); }\n",
+            "PD0054",
+            "(imported: `av`) is not implemented",
+        ),
+        (
+            "PD0054, an INSTANTIATED imported generic `async fn` with a value return",
+            "pub async fn agv<T>(x: T) -> i64 { return 42; }\npub fn ok() { print_int(1); }\n",
+            "import lib;\n\nfn main() { agv(7); ok(); }\n",
+            "PD0054",
+            "(imported: `agv`) is not implemented",
+        ),
+        (
+            "PD0018, an INSTANTIATED imported generic `async fn`",
+            "pub async fn ag<T>(x: T) { print(\"x\"); }\npub fn ok() { print_int(1); }\n",
+            "import lib;\n\nfn main() { ag(7); ok(); }\n",
+            "PD0018",
+            "`async fn` (imported: `ag`) is not implemented",
+        ),
+    ];
 
-    for (what, source, want_code, fragment) in cases {
-        let (r, _dir) = compile_source(source);
+    let local = cases
+        .iter()
+        .map(|(what, source, code, frag)| (*what, compile_source(source), *code, *frag));
+    let via_import = imported.iter().map(|(what, lib, source, code, frag)| {
+        (*what, compile_with_import(lib, source), *code, *frag)
+    });
+    for (what, (r, _dir), want_code, fragment) in local.chain(via_import) {
         assert_eq!(
             r.code,
             Some(1),
@@ -1621,7 +1677,7 @@ fn the_su3_positions_the_corpus_does_not_witness_carry_the_code_too() {
             r.stdout
         );
         let (code, payload) = r.sole_coded_header(what);
-        assert_eq!(code, *want_code, "{}: carries {}", what, code);
+        assert_eq!(code, want_code, "{}: carries {}", what, code);
         assert!(
             payload.contains(fragment),
             "{}: reached a different refusal.\n  want fragment: {}\n  got payload:   {}",

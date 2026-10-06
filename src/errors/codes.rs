@@ -188,11 +188,13 @@ pub enum DiagnosticCode {
 
     /// PD0018 — an `async fn` is not implemented (N7-18): there is no runtime
     /// to drive the future, and code generation would emit a `<name>_Future`
-    /// and a `<name>_poll` that nothing calls. THREE POSITIONS in
+    /// and a `<name>_poll` that nothing calls. FOUR POSITIONS in
     /// `src/typeck/mod.rs` — the entry point, the general `is_async`
-    /// predicate, and the deferred check for an `async fn main` that an
-    /// imported module might have shadowed — and the source says of the first
-    /// that it is a "named sub-case" of the second, kept only for its wording.
+    /// predicate, the deferred check for an `async fn main` that an imported
+    /// module might have shadowed, and the deferred check for an instantiated
+    /// imported generic `async fn` (the general predicate's sentence, with the
+    /// imported names) — and the source says of the first that it is a "named
+    /// sub-case" of the second, kept only for its wording.
     /// The spelling (`async fn` / `async fn main`) is the parameter.
     AsyncFnIsNotImplemented,
 
@@ -458,7 +460,10 @@ pub enum DiagnosticCode {
 
     /// PD0054 — a `return` with a value inside an `async fn` is not
     /// implemented: the poll function the body is emitted into returns an
-    /// `int` readiness flag, so there is nowhere to put the value. Its own
+    /// `int` readiness flag, so there is nowhere to put the value. THREE
+    /// POSITIONS in `src/typeck/mod.rs`: `check_function`, and the two deferred
+    /// checks for an imported `async fn` with a value return, non-generic and
+    /// instantiated generic, which print the same sentence. Its own
     /// number rather than `AsyncFnIsNotImplemented`'s because the locked map
     /// allocated two; the source calls this arm a "named sub-case" of the
     /// general `is_async` refusal, which is recorded as a tension in the unit's

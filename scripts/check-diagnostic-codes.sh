@@ -133,8 +133,11 @@ note() { printf '  %s--%s   %s\n' "$YELLOW" "$NC" "$1"; }
 # when they carry one (`OK `, `RED `, `NOVERDICT `, the dialect
 # `check_first_witness_emission` speaks, so that check goes through here like the
 # others); an untagged line takes the return code's meaning. A return of 1 that
-# names no defect, or of 2 that says nothing, is still spent as 1 or 2: the code
-# is the verdict and the lines only explain it. Pinned by M30 below.
+# names no defect is still spent as a RED, and a return of 2 that names no
+# abstention is still spent as a NO VERDICT — beside a tagged RED line too, which
+# records its own defect and does not stand in for the abstention: the code is the
+# verdict and the lines only explain it. (The exit is unchanged by that: a RED
+# outranks a NO VERDICT in `final_exit_code`.) Pinned by M30 below.
 LIVE_REQUIRED=("registry" "inventory" "pin grammar" "every active code pinned"
                "R5 membership" "refusal-set size" "map = manifest" "pin grammar copies"
                "first-witness emission" "counts requirement")
@@ -161,8 +164,8 @@ live() {                     # label, ok-text | ok-function | "", check, args...
   done <<<"$out"
   if [ "$rc" -eq 1 ] && [ "$fails" -eq "$f0" ]; then
     bad "$label: the check returned 1 and named no defect"
-  elif [ "$rc" -eq 2 ] && [ "$fails" -eq "$f0" ] && [ "$abstained" -eq "$a0" ]; then
-    absta "$label: the check returned 2 (could not look) and said nothing"
+  elif [ "$rc" -eq 2 ] && [ "$abstained" -eq "$a0" ]; then
+    absta "$label: the check returned 2 (could not look) and reported no abstention detail"
   elif [ "$rc" -eq 0 ] && [ -n "$text" ]; then
     declare -F "$text" >/dev/null && text=$("$text")
     ok "$text"
@@ -369,11 +372,16 @@ check_registry() {           # $1 = registry -> 0 clean / 1 complained
 # A dump that SUCCEEDS and lists nothing stays a RED: the binary answered, an
 # inventory with no code in it contradicts the registry it is held to, and the
 # loop below would otherwise pass by having nothing to read. M31 pins both.
+# The abstention says WHY: the exit status and the first two lines of pdc's own
+# stderr, folded onto the ONE tagged line — `live` reads line by line, and a
+# second, untagged line would be spent as a second abstention.
 check_compiler_inventory() { # $1 = registry -> 0 clean / 1 complained / 2 could not ask
-  local reg=$1 n=0 code status name
+  local reg=$1 n=0 code status name rc why
   local dump="$TMPROOT/dump"
-  if ! "$PDC" --dump-diagnostic-codes >"$dump" 2>/dev/null; then
-    echo "NOVERDICT pdc --dump-diagnostic-codes did not succeed, so what the binary can emit is unknown"
+  if "$PDC" --dump-diagnostic-codes >"$dump" 2>"$dump.err"; then :; else
+    rc=$?
+    why=$(head -2 "$dump.err" 2>/dev/null | tr '\t\n' '  ' | sed 's/ *$//')
+    echo "NOVERDICT pdc --dump-diagnostic-codes exited $rc (stderr: ${why:-empty}), so what the binary can emit is unknown"
     return 2
   fi
   [ -s "$dump" ] || { echo "RED pdc --dump-diagnostic-codes succeeded and listed no code at all"; return 1; }
@@ -1128,6 +1136,8 @@ live_case "M30f a status that is none of 0, 1 and 2 is a NO VERDICT, not a pass"
   "0 1 recorded" probe "fine" live_stub 7 "something"
 live_case "M30g paired control: a check that returns 0 spends nothing and is recorded" \
   "0 0 recorded" probe "fine" live_stub 0 "an untagged line from a clean check"
+live_case "M30h exit 2 retains its abstention alongside a tagged defect" \
+  "1 1 recorded" probe "" live_stub 2 "RED a measured defect"
 
 # M31 — THE INVENTORY, through `live`, with a stub binary in place of pdc. The
 # subshell carries its own PDC and its own TMPROOT, so the live run's dump is
@@ -1163,6 +1173,22 @@ inventory_case "M31b paired control: a dump that names a code the registry lacks
   "$M/pdc-unknowncode" "1 0 recorded"
 inventory_case "M31c paired control: a dump that succeeds and lists nothing is still a RED" \
   "$M/pdc-emptydump" "1 0 recorded"
+# M31d — the abstention says why: a dump that fails WITH a reason carries its exit
+# status and the first two stderr lines on the one NOVERDICT line, and still spends
+# exactly one abstention (a reason spilled onto a second line would spend two).
+cat >"$M/pdc-says" <<'STUB'
+#!/bin/sh
+printf 'pdc: first reason\nsecond reason\nthird line\n' >&2
+exit 3
+STUB
+chmod +x "$M/pdc-says"
+out=$( PDC="$M/pdc-says"; TMPROOT="$M/inv"; check_compiler_inventory "$REGISTRY" ); rc=$?
+case "$rc|$(printf '%s\n' "$out" | wc -l | tr -d ' ')|$out" in
+  "2|1|NOVERDICT pdc --dump-diagnostic-codes exited 3 (stderr: pdc: first reason second reason),"*)
+    inventory_case "M31d a failed dump names its exit status and stderr on ONE line, one abstention" \
+      "$M/pdc-says" "0 1 recorded" ;;
+  *) bad "M31d a failed dump's NOVERDICT did not carry its reason on one line: rc=$rc, said '${out:-<nothing>}'" ;;
+esac
 
 # M15 — A WITNESS THAT DOES NOT REFUSE. The registry row is re-pointed at a
 # fixture pdc ACCEPTS (a `run`-class corpus row), which is the shape a witness

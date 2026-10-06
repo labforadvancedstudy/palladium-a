@@ -391,7 +391,7 @@ src/typeck/mod.rs	1898-1898	docs/specification/language-spec.md	17c4d76b3ea8	fn 
 src/typeck/mod.rs	2786-2787	docs/specification/language-spec.md	459dfb6fab18	// Second pass: type check function bodies for item in &program.items {
 src/typeck/mod.rs	2798-2800	docs/reference/features/feature-index.toml	ac1124ff7652	Item::Trait(_) => { // Traits are already processed in the first pass // TODO: Type check trait methods with bodies
 src/typeck/mod.rs	2798-2801	docs/design/trait_system_design.md	b3187d597291	Item::Trait(_) => { // Traits are already processed in the first pass // TODO: Type check trait methods with bodies }
-src/typeck/mod.rs	2943-2949	tests/d3b_tail_if.rs	a2f01bad413f	let generic_offenders = self.emitted_generic_offenders(program, &self.deferre ... eError::async_value_return_unimplemented_in_imports( &generic_offenders, )); }
+src/typeck/mod.rs	2943-2949	tests/d3b_tail_if.rs	37db5c83c36c	let generic_offenders = self.emitted_generic_offenders(program, &self.deferre ... rn Err(refusal.with_code(DiagnosticCode::AsyncValueReturnIsNotImplemented)); }
 src/typeck/mod.rs	2983-3004	tests/d3b_tail_if.rs	4326381ba4ac	fn emitted_generic_offenders( &self, program: &Program, deferred: &[(String,  ...  .then(a.1.start.cmp(&b.1.start)) .then(a.1.end.cmp(&b.1.end)) }); offenders }
 src/typeck/mod.rs	3172-3175	src/typeck/mod.rs	0cfaaf978eca	if func.is_async && Self::has_value_return(&func.body) { return Err(CompileEr ... ed(func.span) .with_code(DiagnosticCode::AsyncValueReturnIsNotImplemented)); }
 src/typeck/mod.rs	3199-3199	docs/specification/language-spec.md	de12aa7cdb7f	// the construct cannot be honoured wherever it sits, while an imported

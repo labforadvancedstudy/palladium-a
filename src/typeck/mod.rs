@@ -2358,9 +2358,9 @@ impl TypeChecker {
                 .then(a.1.end.cmp(&b.1.end))
         });
         if !offenders.is_empty() {
-            return Err(CompileError::async_value_return_unimplemented_in_imports(
-                &offenders,
-            ));
+            let refusal = CompileError::async_value_return_unimplemented_in_imports(&offenders);
+            // PD0054: the rule `check_function` refuses a LOCAL value return under.
+            return Err(refusal.with_code(DiagnosticCode::AsyncValueReturnIsNotImplemented));
         }
 
         // THE ENTRY POINT, NOT ANY DECLARATION. An imported `pub async fn main`
@@ -2943,9 +2943,9 @@ impl TypeChecker {
         let generic_offenders =
             self.emitted_generic_offenders(program, &self.deferred_generic_async_value_returns);
         if !generic_offenders.is_empty() {
-            return Err(CompileError::async_value_return_unimplemented_in_imports(
-                &generic_offenders,
-            ));
+            let refusal =
+                CompileError::async_value_return_unimplemented_in_imports(&generic_offenders);
+            return Err(refusal.with_code(DiagnosticCode::AsyncValueReturnIsNotImplemented));
         }
 
         // N7-18, the superset. Same filter, applied through the SAME function
@@ -2955,9 +2955,9 @@ impl TypeChecker {
         let generic_async_offenders =
             self.emitted_generic_offenders(program, &self.deferred_generic_async_imports);
         if !generic_async_offenders.is_empty() {
-            return Err(CompileError::async_fn_unimplemented_in_imports(
-                &generic_async_offenders,
-            ));
+            let refusal = CompileError::async_fn_unimplemented_in_imports(&generic_async_offenders);
+            // PD0018: the rule `check_function` refuses a LOCAL `async fn` under.
+            return Err(refusal.with_code(DiagnosticCode::AsyncFnIsNotImplemented));
         }
 
         Ok(())

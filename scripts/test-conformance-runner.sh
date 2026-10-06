@@ -1148,9 +1148,9 @@ start "code: the row's OWN PIN, written in the fixture and echoed into the log, 
 # F12 with the WHOLE pin as the planted text. The comment sits on the refused line,
 # which pdc echoes verbatim, so `code=PD0054;msg~…` reaches the log exactly as column 4
 # spells it — an equality test of the pin against text pulled from the log would MATCH.
-# The refusal really carries PD0039. The thesis gate's static reader (GI-12) exempts
-# exactly that comparison at conformance.sh's top level (`[` against the whole,
-# untransformed pin, which the run-stage check uses), so this case is what catches it.
+# The refusal really carries PD0039. The thesis gate's static reader (GI-12) reads that
+# comparison as a leak unless the run-stage guard `[ "$stage_act" = "run" ] &&` heads
+# it, as it does the `exit=<N>` check; this case catches it by RUNNING it, either way.
 D=$(new_repo codeownpin)
 fixture "$D" tests/ownpin.pd 'fn main() {
     @@@ // code=PD0054;msg~there is no async keyword
@@ -1168,6 +1168,24 @@ start "code: ...paired control: the same fixture pinned to the code it really ca
 manifest "$D" 'tests/ownpin.pd|reject|compile|code=PD0039|-|the code it carries'
 run_case "$D"
 expect_rc 0 && expect_out "reject=1" && ok
+
+start "code: ...and a BARE own pin, echoed into the log, does not satisfy it either"
+# The same plant with no `;msg~`: the comment is exactly the row's bare pin, so a
+# comparison of `$fp` with `code=PD[0-9]*` pulled from the log would MATCH, and the
+# `;msg~` case above would not see it — that extraction cannot equal a pin with a
+# fragment. The refusal still carries PD0039.
+D=$(new_repo codeownbare)
+fixture "$D" tests/ownbare.pd 'fn main() {
+    @@@ // code=PD0054
+}'
+manifest "$D" 'tests/ownbare.pd|reject|compile|code=PD0054|-|bare own pin in the echo'
+if ! premise_in_stderr "$D/tests/ownbare.pd" '@@@ // code=PD0054'; then
+  bad "premise: the row's bare pin did not reach the stderr capture outside the header, so this plants nothing"
+else
+  run_case "$D"
+  expect_rc 1 && expect_out "WRONG_CODE" && expect_out "pinned PD0054" && expect_out "carries PD0039" \
+    && expect_not_out "reject=1" && ok
+fi
 
 start "code: an unreadable stderr capture is HARNESS_ERROR, never a verdict"
 # The stub replaces the file its own stderr was redirected to with a DIRECTORY,

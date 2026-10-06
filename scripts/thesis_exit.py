@@ -986,6 +986,7 @@ _SH_UNREAD = frozenset({"eval", "alias", "trap", "export", "readonly", "declare"
                         "command", "builtin", "env", "xargs", "nohup", "time", "set",
                         "shift", "unset", "let", "hash", "enable"})
 _SH_TOP_LEVEL = frozenset({"set", "trap", "read", "declare"})
+_SH_STAGE = "stage_act"          # the run-stage guard's name (L1039); see `_ShReach._guarded`
 _SH_DEPTH = 32
 DIAG_PARSE_SH = "scripts/lib/diag-parse.sh"
 REFUSAL_CLASSES = ("reject", "skip")
@@ -1166,7 +1167,8 @@ def _sh_tokens(src):
 class _ShParser:
     """Commands, not text. A node is a dict: `simple` (words, redirs), `case` (subject,
     arms), `func` (name, body), or `group` — anything compound (if/while/for/{ }/( )),
-    whose control flow this reader does NOT model; it only needs what is inside."""
+    whose control flow this reader does NOT model; it only needs what is inside. Each node
+    in a list keeps `link`, the operator that joined it to the one before (`&&`, `||`, …)."""
 
     def __init__(self, src, base=0):
         self.toks = [(k, v, o + base) for k, v, o in _sh_tokens(src)]
@@ -1193,12 +1195,14 @@ class _ShParser:
         return nodes
 
     def parse_list(self, stop_words=(), stop_ops=()):
-        nodes = []
+        nodes, link = [], None                     # link: the operator before each node
         while True:
             k, v, o = self.peek()
             if k == "N" or (k == "O" and v in (";", "&", "&&", "||", "|", "|&")):
                 if v in ("|", "|&") and nodes:
                     nodes[-1]["pipe"] = v          # its stdout (and with `|&`, stderr) leaves
+                if k == "O" or link not in ("&&", "||", "|", "|&"):
+                    link = v                       # `&&` then a newline is still `&&`
                 self.i += 1
             elif k == "E":
                 if stop_words or stop_ops:
@@ -1211,6 +1215,7 @@ class _ShParser:
                 raise _ShParseError(f"unexpected {v!r} at offset {o}")
             else:
                 nodes.append(self.parse_command())
+                nodes[-1]["link"], link = link, None
 
     def through(self, word):
         kids = self.parse_list((word,))
@@ -1426,6 +1431,39 @@ class _ShReach:
         self.parses, self.sourced, self.captures, self._seen = [], set(), set(), set()
         self.unmet = {"existence": {}, "absence": {}}
         self.fp, self.fp_plain, self.cls_plain = self._global_taint()
+        self.stage_sound = self._stage_sound()
+
+    def _stage_sound(self):
+        """May `[ "$stage_act" = "run" ]` be read as "this row's program RAN"? Only if every
+        assignment of `stage_act` in the file is `stage_act=<literal>` and exactly one literal
+        is `run` (L946, where the built program exited nonzero). Computed, appended, read,
+        looped over or set to `run` a second time, and no guard is honoured."""
+        vals = [(val, any(w == f"{_SH_STAGE}={val}" for w, _o in nd["words"]))
+                for nd, _f in self._nodes(self.tree) for nm, val, _d in self._decls(nd)
+                if nm == _SH_STAGE]
+        if any(nd["kind"] == "group" and nd["words"][:1] and nd["words"][0][0] == _SH_STAGE
+               for nd, _f in self._nodes(self.tree)) or not all(
+                   val is not None and plain and not any(_sh_word(val)[0::2])
+                   for val, plain in vals):
+            return False
+        return sum(_sh_word(val)[3] == "run" for val, _p in vals) == 1
+
+    def _guarded(self, nodes, n):
+        """Does a run-stage guard, `[ "$stage_act" = "run" ]` exactly as L1039 spells it,
+        stand before nodes[n] in an unbroken `&&` chain that heads its and-or list? Then
+        nodes[n] runs only for a row whose program ran."""
+        j = n
+        while j > 0 and nodes[j].get("link") == "&&":
+            j -= 1
+        if not self.stage_sound or nodes[j].get("link") in ("&&", "||", "|", "|&"):
+            return False
+        for nd in nodes[j:n]:
+            w = [x for x, _o in nd.get("words", ())] if nd["kind"] == "simple" else []
+            if (len(w) == 5 and (w[0], w[2], w[4]) == ("[", "=", "]") and not nd["redirs"]
+                    and _sh_word(w[1])[1] == _SH_STAGE and _sh_word(w[3])[3] == "run"
+                    and not any(_sh_word(w[3])[0::2])):
+                return True
+        return False
 
     def line(self, off):
         return bisect.bisect_right(self._nl, off) + 1
@@ -1503,9 +1541,12 @@ class _ShReach:
     def _eval(self, word, env):
         """A word as the walk carries it: (holds-the-fingerprint, is-the-fingerprint-
         untransformed, is-the-class-untransformed, normalised text, KNOWN). Known is a
-        literal, or the shared parser's output — `$(pd_diag_parse …)`, or another
-        `$(pd_diag_* …)` over known arguments — the only things the pin may be matched
-        against."""
+        literal, or the shared parser's output — the only things the pin may be matched
+        against. The parser's output is a substitution that is ONE simple command and
+        nothing else (no operator, pipe or redirection): `$(pd_diag_parse X)`, X one of
+        pdc's stderr captures, or another `$(pd_diag_* …)` over one or more known
+        arguments. A parse of anything else, or one with a second command beside it, is
+        not."""
         refs, plain, subs, norm = _sh_word(word)
         params, local = env["params"], env["local"]
 
@@ -1520,10 +1561,11 @@ class _ShReach:
             return params[int(plain) - 1]
         if plain in local:
             return local[plain]
-        call = ([w for k, w, _o in _sh_tokens(subs[0][1]) if k == "W"]
-                if len(subs) == 1 and norm == f"$({subs[0][1]})" else [""])
-        parsed = call[0] == "pd_diag_parse" or (call[0].startswith("pd_diag_") and all(
-            self._eval(w, env)[4] for w in call[1:]))
+        one = _sh_tokens(subs[0][1]) if len(subs) == 1 and norm == f"$({subs[0][1]})" else ()
+        call = [w for _k, w, _o in one] if one and {k for k, _w, _o in one} == {"W"} else [""]
+        got = [self._eval(w, env) for w in call[1:]] if call[0].startswith("pd_diag_") else ()
+        parsed = bool(got) and (len(got) == 1 and got[0][3] in self.captures
+                                if call[0] == "pd_diag_parse" else all(g[4] for g in got))
         return (any(tainted(r) for r in refs), plain in self.fp_plain,
                 plain in self.cls_plain, norm, parsed or not (refs or subs))
 
@@ -1564,11 +1606,12 @@ class _ShReach:
     def walk(self, nodes, env):
         if not env["live"]:
             return
-        for nd in nodes:
+        for n, nd in enumerate(nodes):
             if nd["kind"] == "func":
                 continue                       # a definition runs nothing
             here = {**env, "out": env["out"] or bool(nd.get("pipe"))
-                    or any(">" in op for op, _w in nd.get("redirs", ()))}
+                    or any(">" in op for op, _w in nd.get("redirs", ())),
+                    "run": self._guarded(nodes, n)}
             for _op, (w, o) in nd.get("redirs", ()):
                 self._subs(w, o, env)
             if nd["kind"] == "simple":
@@ -1630,9 +1673,11 @@ class _ShReach:
             env["params"] if _sh_word(w)[1] == "@" else (self._eval(w, env),)))
         opts = {c for a in args if a[3][:1] == "-" for c in a[3][1:]}
         if name in ("[", "test"):
-            # At the top level the verdict chain compares the WHOLE pin, untransformed, by
-            # `[` (L1039, `[ "$detail" != "$fp" ]`); that one shape is not paired there.
-            self._pair([a for a in args if not (top and a[1])], f"`{name}`", nd["off"], env)
+            # L1039, `[ "$stage_act" = "run" ] && [ "$detail" != "$fp" ]`, compares the WHOLE
+            # pin with `exit=<N>`: a run-stage row's check, not refusal attribution. Only
+            # there — top level, behind that guard (`_guarded`) — is the whole pin not paired.
+            self._pair([a for a in args if not (top and env["run"] and a[1])], f"`{name}`",
+                       nd["off"], env)
         if name in (".", "source") and [a[3] for a in args] == [DIAG_PARSE_SH]:
             self.sourced.add(DIAG_PARSE_SH)
         elif (name in _SH_UNREAD and not (top and name in _SH_TOP_LEVEL)
@@ -1704,8 +1749,12 @@ def code_attribution_wiring(conformance_source: str) -> tuple[list[str], list[st
       (followed) or a `pd_diag_*` call, or handed to `local`, `[`/`test`, `return`, or
       printf/echo whose output is not leaving for a file or a pipe. Handed to any other
       command — grep, awk and sed among them — it is a leak. So is pairing it with what is
-      neither a literal nor the shared parser's output (`$(pd_diag_parse …)`, or a
-      `$(pd_diag_* …)` over such) in ONE MATCHER, whatever the operator: the operands of
+      neither a literal nor the shared parser's output in ONE MATCHER. The parser's output
+      is a substitution holding ONE simple command and nothing else — no operator, pipe or
+      redirection: `$(pd_diag_parse X)` with X one of pdc's stderr captures (the `2>`
+      target ① names), or `$(pd_diag_* …)` over one or more such outputs. A parse of the
+      merged log, or one with a second command beside it, is not. The matchers, whatever
+      the operator: the operands of
       `[`, `test` and `[[ ]]`, a `case` subject and its pattern, and the value and pattern
       of `${x#…}`/`${x%…}`/`${x/…}`. A phrase match hoisted above the dispatch runs for
       every row and is caught the same way.
@@ -1728,22 +1777,33 @@ def code_attribution_wiring(conformance_source: str) -> tuple[list[str], list[st
         the shared parser; a comparator that parses and then ignores the pin passes it.
       * Control flow inside an arm: a call after an unconditional `return`, or under a
         condition that is always false, counts as made.
-      * At the top level, `[`/`test` comparing the WHOLE pin, untransformed, with anything:
-        the verdict chain's run-stage check is one (L1039, `[ "$detail" != "$fp" ]`, and
-        `detail` is read off the log on another branch), so that one shape is not paired
-        there. A transformed pin, or the same comparison on the refusal path, is. What
-        catches it is BEHAVIOURAL: scripts/test-conformance-runner.sh's case "the row's OWN
-        PIN, written in the fixture and echoed into the log, does not satisfy it" puts
-        that exact pin text in the log over a refusal with another code and requires
-        WRONG_CODE — measured RED with `[ "$(grep -o …"$log"…)" = "$fp" ]` planted there.
+      * The run-stage check. L1039 is `elif [ "$stage_act" = "run" ] && [ "$detail" !=
+        "$fp" ]`: a row whose program RAN and exited nonzero, pinned `exit=<N>` — the
+        run-stage domain, never a refusal row's `code=` pin — and `detail` is read off the
+        log on another branch. So at the top level, a `[`/`test` comparing the WHOLE pin,
+        untransformed, is not paired when an unbroken `&&` chain heading its and-or list
+        (an `if`/`elif` condition or a plain `a && b`) holds that guard before it, spelled
+        as L1039 spells it. Anything placed there is unpaired for the same reason, a
+        whole-log extraction compared to `$fp` included: that is the run-stage domain, not
+        refusal attribution. The guard is honoured only while every
+        assignment of `stage_act` in the file is a literal and `run` is assigned once
+        (L946), so a guard forged by `stage_act=run` reads unmet. Everything else pairs:
+        unguarded, behind `||`, `!` or `|`, nested in the guard's `if` body, transformed,
+        or on the refusal path. The behavioural backstop is still run, by
+        scripts/test-conformance-runner.sh's two OWN-PIN cases (a `;msg~` pin and a bare
+        one, written in the fixture and echoed into the log over a refusal with another
+        code, each required to be WRONG_CODE) — measured RED with a whole-log extraction
+        compared to `$fp` planted unguarded at the top level.
       * A class dispatch spelled `if [ "$class" = … ]`: ① does not find it and the walk
         does not treat it as the refusal path. Both fail CLOSED or under-scope; neither
         reads met by accident.
       * The two manifest arrays are trusted as built at the top level by `=( … )`/`+=(…)`.
       * `case` patterns inside `$( )`: the pattern's `)` ends the substitution here.
+      * The capture file's CONTENT between the `$PDC` command and the parse: a command
+        that rewrites the file in between is not followed.
       * WHAT IT IS KEYED ON: the arrays `M_FP` and `M_CLASS`, the command `$PDC`, the
-        names `pd_diag_*` and the path scripts/lib/diag-parse.sh. Renaming any of them
-        fails closed.
+        names `pd_diag_*` and `stage_act`, and the path scripts/lib/diag-parse.sh.
+        Renaming any of them fails closed.
     """
     hit = _WIRING_CACHE.get(conformance_source)
     if hit is None:
@@ -3228,7 +3288,15 @@ VARIANT_OF_BASE = {
 # against a piece of the log — became cases that fail ABSENCE when the matcher rule was
 # applied to `[`/`test`/`[[` operands and `${…#…}` patterns. Label sets diffed: two
 # ADDED, none changed or removed.
-EXPECTED_CASE_SHA = "8a4f0ceb06bc6515a3a4005199c7cdb3d98b4a53f9fab11fb6d46d89b1ac157f"
+# RE-PINNED for suF-b review round 2 (8a4f0ceb... superseded), 329 -> 334 labels, the
+# CASE-NAME SET diffed: FIVE ADDED — R2' unguarded at the top level (absence unmet),
+# the same line behind the run-stage guard (met: the exit=<N> domain), that guard forged
+# by `stage_act=run` (absence unmet), a parser call with a second command beside it (five
+# spellings, one case), and the parser run over the merged log — and TWO CHANGED, each a
+# case whose expectation moved from (False, True) to (False, False) when only a parse of
+# pdc's stderr capture became the parser's output: the comparator handed the merged log,
+# and panel 3's `1>&2`. Their labels now say so. No control removed or weakened.
+EXPECTED_CASE_SHA = "88265267ff6a3ea7b4b13276eb8d0edbdff3a1f3ea64f06963556d442b93eace"
 
 EXPECTED_UNCOVERED = frozenset({
     "the real `make` subprocess: a control would need a deliberately broken build. Its "
@@ -5243,11 +5311,15 @@ def self_test() -> int:
                       "# " + _conf_call + "\n        echo '" + _conf_call
                       + "'\n        if pin_verdict=MATCH; then")), (False, True),
          drives_main=False)
-    case("...and the comparator handed the MERGED log instead of pdc's stderr fails it too "
-         "(spec R6: a stdout line can be header-shaped)",
+    # Was (False, True): any `$(pd_diag_parse …)` counted as the shared parser's output.
+    # Only a parse of pdc's stderr capture does now, so the pin compared against a parse of
+    # the merged log is a match against something else, and ABSENCE fails as well.
+    case("...and the comparator handed the MERGED log instead of pdc's stderr fails BOTH "
+         "(spec R6: a stdout line can be header-shaped): a parse of the log is not the "
+         "shared parser's output to compare the pin with",
          _gi12(mutate(_conf, _conf_call, _conf_call.replace('"$TMPROOT/pdc_stderr"',
                                                             '"$log"'))),
-         (False, True), drives_main=False)
+         (False, False), drives_main=False)
     case("...and so does a comparator handed a LITERAL instead of the declared pin",
          _gi12(mutate(_conf, _conf_call, _conf_call.replace('"$fp"', '"code=PD0001"'))),
          (False, True), drives_main=False)
@@ -5325,10 +5397,12 @@ def self_test() -> int:
          _gi12_says(mutate(_conf, _conf_arm, _conf_arm + '        fp="code=PD0001"\n'),
                     "existence", "`fp`, which holds the declared pin"),
          ((False, True), True), drives_main=False)
+    # Was ((False, True), True): with no stderr-only capture left, the comparator's parse
+    # is not of one, so it is not the shared parser's output and ABSENCE fails too.
     case("panel 3 (gpt-6-astra): `1>&2` after pdc's `2>` capture fails EXISTENCE: the "
-         "capture is no longer stderr alone",
+         "capture is no longer stderr alone — and ABSENCE, since a parse of it is no capture's",
          _gi12_says(mutate(_conf, _pdc_line, _pdc_line + " 1>&2"), "existence", "1>&2"),
-         ((False, True), True), drives_main=False)
+         ((False, False), True), drives_main=False)
     case("panel 4 (gpt-6-astra): an unquoted heredoc whose body runs `declared_phrase_match` "
          "fails BOTH: a body that expands is code this reader does not read",
          _gi12_says(mutate(_conf, _conf_arm, _conf_arm
@@ -5365,7 +5439,45 @@ def self_test() -> int:
                            '"$log" | head -1)" = "${fp:5:6}" ] && pin_verdict=MATCH\n'),
                     "absence", "matched by `[`"),
          ((True, False), True), drives_main=False)
-    _deep = "".join(f'd{i}() {{ d{i + 1} "$@"; }}\n' for i in range(_SH_DEPTH + 8))
+    # ROUND 2. The top-level carve-out covered every `[` on the WHOLE pin; it now covers only
+    # the run-stage check it exists for. And a substitution was the parser's output by its
+    # FIRST WORD; it now has to be one parse of a stderr capture and nothing else.
+    _verdict_hdr = "\n  # ---- verdict -------------------------------------------------------------\n"
+    _r2w = '[ "$(grep -o "code=[^\\"]*" "$log" | head -1)" = "$fp" ] && pin_verdict=MATCH'
+    _run_guard = '[ "$stage_act" = "run" ] && '
+    case("R2' (gpt-6-astra): the WHOLE pin compared by `[` with a whole-log extraction at the "
+         "top level, unguarded, fails ABSENCE — the carve-out is the run-stage check's alone",
+         _gi12_says(mutate(_conf, _verdict_hdr, "\n  " + _r2w + "\n" + _verdict_hdr),
+                    "absence", "matched by `[`"),
+         ((True, False), True), drives_main=False)
+    case("...and the same line behind `[ \"$stage_act\" = \"run\" ] &&` holds: that is the "
+         "run-stage domain (an exit=<N> pin), not refusal attribution",
+         _gi12(mutate(_conf, _verdict_hdr, "\n  " + _run_guard + _r2w + "\n" + _verdict_hdr)),
+         (True, True), drives_main=False)
+    case("...but a guard FORGED by setting `stage_act=run` around it is not honoured: the "
+         "guard counts only while `stage_act` is assigned literals and `run` exactly once",
+         _gi12_says(mutate(_conf, _verdict_hdr, "\n  was=$stage_act; stage_act=run; "
+                           + _run_guard + _r2w + "; stage_act=$was\n" + _verdict_hdr),
+                    "absence", "matched by `[`"),
+         ((True, False), True), drives_main=False)
+    _payload = 'payload=$(pd_diag_payload "$state")'
+    case("a parser call with a SECOND COMMAND beside it is not the parser's output — "
+         "`; cat`, `| cat`, `&& cat`, a redirection, a zero-argument `pd_diag_*` (reads stdin) "
+         "— and each fails ABSENCE at the fragment match",
+         [_gi12_says(mutate(_conf, _payload, "payload=$(" + sub + ")"), "absence",
+                     "`case` pattern")
+          for sub in ('pd_diag_parse "$cap"; cat "$cap"', 'pd_diag_parse "$cap" | cat',
+                      'pd_diag_parse "$cap" && cat "$cap"', 'pd_diag_payload "$state" 2>&1',
+                      "pd_diag_strip_ansi")],
+         [((True, False), True)] * 5, drives_main=False)
+    case("...and the parser run over the MERGED log (R6), compared by `[` with the pin's "
+         "code, fails ABSENCE: only a parse of pdc's stderr capture is the parser's output",
+         _gi12_says(mutate(_conf, _conf_arm_whole, _conf_arm_whole.replace(
+             "        fi ;;\n", '        fi\n        [ "$(pd_diag_code "$(pd_diag_parse '
+             '"$log")")" = "${fp:5:6}" ] && pin_verdict=MATCH ;;\n')), "absence",
+             "matched by `[`"),
+         ((True, False), True), drives_main=False)
+    _deep ="".join(f'd{i}() {{ d{i + 1} "$@"; }}\n' for i in range(_SH_DEPTH + 8))
     case("calls nested past the depth bound RAISE and read unmet on both halves: the walk "
          "does not quietly stop following",
          _gi12_says(mutate(mutate(_conf, "coded_pin_verdict() {\n",
