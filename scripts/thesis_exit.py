@@ -67,6 +67,7 @@ Usage:
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import importlib.util
 import io
@@ -153,7 +154,7 @@ GP = None  # the gate_probe module; loaded on first use
 # compares the declaration against the dispatch table.
 
 LIVENESS_MODEL = "lexical"        # -> "call-graph" when GI-11 lands
-ATTRIBUTION_MODEL = "substring"   # -> "code" when GI-12 lands
+ATTRIBUTION_MODEL = "code"        # was "substring" until the GI-12 cutover
 
 # The dispatch each model implies. `_wiring_matches_declaration()` checks reality.
 LIVENESS_PROBES_LEXICAL = ("p_has_ref_param", "p_total_on_fn", "p_effect_is_transitive")
@@ -163,10 +164,14 @@ PRECONDITIONS = (
      "TH-03/04/05 are decided by a lexical model disclosed as unsound for liveness: it "
      "answers P1 (the construct exists) and P2 (nothing names it), never whether the "
      "construct is on a path the program runs"),
+    # Printed only when one of GI-12's two halves fails, so it says what a failed half
+    # MEANS rather than describing the pre-cutover script as if it were still current.
     ("GI-12", "ATTRIBUTION_MODEL", "substring", "code",
-     "rejection attribution is decided by `grep -qF` over the whole ANSI-stripped log, "
-     "disclosed as unsound for attribution: measured, a fixture failing on a stray `@@@` "
-     "satisfies a pinned fingerprint that its source line merely contains"),
+     "rejection attribution is not decided by a CODE: scripts/conformance.sh must hand "
+     "every reject and skip row's declared pin and pdc's stderr to the shared diagnostic "
+     "parser, and must not match that declaration as a substring on any path those rows "
+     "run — measured before the cutover, a fixture failing on a stray `@@@` satisfied a "
+     "pinned phrase that its source line merely contained"),
 )
 
 
@@ -185,6 +190,16 @@ PRECONDITIONS = (
 # signature added in round 20 — before that they asserted a bare `2` and would have
 # passed). A pin is stronger: it makes the failure a REFUSAL rather than a verdict, which
 # is the property every other definitional set on this branch already has.
+#
+# THE GI-12 CUTOVER FLIPPED `ATTRIBUTION_MODEL` AND DID NOT MOVE THIS PIN, and that is the
+# pin doing its job, not a re-pin skipped. It records WHICH constant a safeguard watches
+# and that constant's unsound and sound values — the safeguard's identity — never the
+# value it holds today, so GI-12's entry still reads ("ATTRIBUTION_MODEL", "substring",
+# "code"). What keeps the flip honest is `wiring_matches_declaration`, which compares the
+# declared `code` against conformance.sh's reject/skip dispatch on every run, and
+# `incomplete_definition`, which decides GI-12 from that dispatch without reading the
+# constant at all. Re-pinning here would only be right if GI-12 started watching
+# something else.
 EXPECTED_PRECONDITION_IDS = ("GI-11", "GI-12")
 EXPECTED_PRECONDITION_CONSTS = {"GI-11": ("LIVENESS_MODEL", "lexical", "call-graph"),
                                 "GI-12": ("ATTRIBUTION_MODEL", "substring", "code")}
@@ -916,81 +931,739 @@ def _dispatch_reaches(tree, roots: tuple[str, ...], target: str) -> bool:
     return False
 
 
-def _has_fingerprint_comparison(tree) -> bool:
-    """Is `want_fp.strip() != decl.strip()` present AS AN EXPRESSION?
-
-    THE DEFECT THIS EXISTS TO FIX WAS ON THE LINE THAT ASKED THE QUESTION. It read
-    `"want_fp.strip() != decl.strip()" in source`, and that line contains the string it
-    searches for, so the answer was True whether or not the comparison existed anywhere.
-    The check that decides whether this command may compute a verdict at all satisfied
-    itself, in the file it was searching, by being written down in it.
-
-    An `ast.Compare` cannot be forged by a string literal: a literal is a `Constant`.
-    """
-    import ast as _ast
-
-    def stripped_name(node):
-        """`X.strip()` -> "X", anything else -> None."""
-        if (isinstance(node, _ast.Call)
-                and isinstance(node.func, _ast.Attribute)
-                and node.func.attr == "strip"
-                and isinstance(node.func.value, _ast.Name)):
-            return node.func.value.id
-        return None
-
-    for n in _ast.walk(tree):
-        if not (isinstance(n, _ast.Compare) and len(n.ops) == 1
-                and isinstance(n.ops[0], _ast.NotEq)):
-            continue
-        # AS A SET, BECAUSE `a != b` IS `b != a`. Matching `want_fp` on the LEFT meant a
-        # no-op refactor to `decl.strip() != want_fp.strip()` read as "the substring
-        # adjudicator is gone" — semantically identical code, and GI-12's guard reported
-        # the mechanism retired while `conformance.sh` still matched fingerprints with
-        # `grep -qF`. An operand order is not a fact about what the code does.
-        if {stripped_name(n.left), stripped_name(n.comparators[0])} == {"want_fp", "decl"}:
-            return True
-    return False
-
-
 CONFORMANCE_SH = ROOT / "scripts/conformance.sh"
 
 
-def substring_attribution_live(gate_source: str, conformance_source: str) -> list[str]:
-    """Is rejection attribution STILL decided by fixed-string matching? -> the evidence.
+def _conformance_text(override: str | None) -> str:
+    """The adjudicating script's source: the injected one, or the real file. An absent or
+    unreadable file reads as EMPTY, which no half accepts — GI-12 then reads unmet, and a
+    `code` declaration against it is a harness error, never a silent pass."""
+    if override is not None:
+        return override
+    try:
+        return CONFORMANCE_SH.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
 
-    THE PREVIOUS TEST WAS KEYED ON TWO IDENTIFIERS IN THIS FILE, and review defeated it
-    with two semantics-preserving edits, neither a constant:
 
-        _l, _r = want_fp, decl          # no Compare over {want_fp, decl} survives
-        if _l.strip() != _r.strip():    # still a string comparison
+# --- GI-12: THE REJECT/SKIP DISPATCH, READ AS COMMANDS ------------------------------------
+#
+# Two detectors stood here and both are retired. `_has_fingerprint_comparison` asked
+# whether `want_fp.strip() != decl.strip()` was an EXPRESSION in THIS file, after its first
+# form had asked whether it was a SUBSTRING of this file and been answered by the line
+# asking. `substring_attribution_live` then read conformance.sh, lexically: `"grep -qF" in
+# conformance_source`. After the cutover the first asks about the wrong file — p_verdict's
+# Compare is two of our own pins, contract against manifest, by equality — and the second
+# is tripped forever by the xfail arm's legitimate phrase match. What replaced them reads
+# the script as shell: tokens, commands, `case` arms and function bodies, so the answer
+# comes from what conformance.sh DOES with a reject row, and a comment or a string that
+# spells the right call is not a call.
 
-    plus `ATTRIBUTION_MODEL = "code"`. GI-12 outstanding went to 0 with `grep -qF` fully
-    live. My own standard, turned around: an operand ORDER is not a fact about what the
-    code does — and a variable NAME is not one either.
+class _ShParseError(Exception):
+    """conformance.sh could not be read by the reader below. GI-12 then reads UNMET: an
+    unparsed dispatch has proved nothing."""
 
-    So the decision reads the artifact GI-12's text actually names. `conformance.sh` is what
-    adjudicates a rejection, with `grep -qF` over the ANSI-stripped log; while that is how a
-    fingerprint is matched, attribution is by substring no matter what this file calls its
-    locals. Both signals are consulted and EITHER keeps GI-12 outstanding, because a
-    precondition should need every route closed, not any one.
 
-    WHAT THIS STILL CANNOT SEE, said rather than implied: it is a lexical test over a shell
-    script. Fixed-string matching reintroduced by some other means — `case` globbing, a
-    Python helper, `grep -F` spelled differently — would pass it. It is harder to defeat
-    than two identifiers in one file because it reads the file that decides; it is not a
-    proof that substring attribution is gone.
+_SH_META = " \t\n;&|()<>"
+_SH_OPS = (";;&", ";;", ";&", "&&", "||", "|&", ";", "&", "|", "(", ")")
+_SH_REDIR = re.compile(r"\d*(?:<<<|<<-|<<|>>|>&|<&|>\||<>|&>>|&>|>|<)")
+_SH_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_SH_ASSIGN = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=")
+_SH_REF = re.compile(r"\$\{?[#!]?([A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*])")
+_SH_CLOSERS = frozenset({"then", "elif", "else", "fi", "do", "done", "esac", "}", "in"})
+_SH_PREFIXES = frozenset({"command", "builtin", "exec", "nohup", "time", "env", "!"})
+_SH_GREPS = frozenset({"grep", "egrep", "fgrep"})
+REFUSAL_CLASSES = ("reject", "skip")
+
+
+def _sh_end_squote(src, i):
+    j = src.find("'", i + 1)
+    if j < 0:
+        raise _ShParseError(f"unterminated ' at offset {i}")
+    return j + 1
+
+
+def _sh_end_escaped(src, i, close):
+    """Past the `close` ending a construct opened at `i`, backslash escapes honoured."""
+    j = i + 1
+    while j < len(src):
+        if src[j] == "\\":
+            j += 2
+        elif src[j] == close:
+            return j + 1
+        else:
+            j += 1
+    raise _ShParseError(f"unterminated {close} at offset {i}")
+
+
+def _sh_end_dquote(src, i):
+    j = i + 1
+    while j < len(src):
+        c = src[j]
+        if c == "\\":
+            j += 2
+        elif c == '"':
+            return j + 1
+        elif c == "$":
+            j = _sh_end_dollar(src, j)
+        elif c == "`":
+            j = _sh_end_escaped(src, j, "`")
+        else:
+            j += 1
+    raise _ShParseError(f'unterminated " at offset {i}')
+
+
+def _sh_end_group(src, i, open_, close):
+    """Past the bracket matching src[i], quote-aware. `#` opens a comment only inside
+    `$( )`, where it is shell; inside `${ }` it is an operator (`${pin#*";msg~"}`)."""
+    depth, j = 0, i
+    while j < len(src):
+        c = src[j]
+        if c == "\\":
+            j += 2
+        elif c == "'":
+            j = _sh_end_squote(src, j)
+        elif c == '"':
+            j = _sh_end_dquote(src, j)
+        elif c == "`":
+            j = _sh_end_escaped(src, j, "`")
+        elif c == "$" and src[j + 1:j + 2] in ("'", "(", "{"):
+            j = _sh_end_dollar(src, j)
+        elif c == "#" and open_ == "(" and src[j - 1] in " \t\n;(|&":
+            k = src.find("\n", j)
+            j = len(src) if k < 0 else k
+        else:
+            depth += (c == open_) - (c == close)
+            j += 1
+            if depth == 0:
+                return j
+    raise _ShParseError(f"unterminated {open_} at offset {i}")
+
+
+def _sh_end_dollar(src, i):
+    nxt = src[i + 1:i + 2]
+    if nxt == "'":
+        return _sh_end_escaped(src, i + 1, "'")
+    if nxt == "(":
+        return _sh_end_group(src, i + 1, "(", ")")
+    if nxt == "{":
+        return _sh_end_group(src, i + 1, "{", "}")
+    return i + 1
+
+
+def _sh_end_word(src, i):
+    j = i
+    while j < len(src) and src[j] not in _SH_META:
+        c = src[j]
+        if c == "\\":
+            j += 2
+        elif c == "'":
+            j = _sh_end_squote(src, j)
+        elif c == '"':
+            j = _sh_end_dquote(src, j)
+        elif c == "`":
+            j = _sh_end_escaped(src, j, "`")
+        elif c == "$":
+            j = _sh_end_dollar(src, j)
+        else:
+            j += 1
+    # `NAME=(…)` and `NAME+=(…)` are ONE word: a compound assignment, not a subshell.
+    if src[j:j + 1] == "(" and re.fullmatch(r"[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=", src[i:j]):
+        j = _sh_end_group(src, j, "(", ")")
+    return j
+
+
+def _sh_tokens(src):
+    """-> [(kind, text, offset)]: W word, O operator, R redirection, N newline.
+
+    COMMENTS ARE DROPPED HERE, which is what makes the rest of the reader immune to the
+    defect its predecessors had: nothing written in a comment can satisfy or defeat a check
+    downstream. Heredoc bodies are skipped as data."""
+    toks, i, n, pending = [], 0, len(src), []
+    while i < n:
+        c = src[i]
+        if c in " \t":
+            i += 1
+        elif src.startswith("\\\n", i):
+            i += 2
+        elif c == "\n":
+            toks.append(("N", "\n", i))
+            i += 1
+            for delim, tabs in pending:
+                while i < n:
+                    k = src.find("\n", i)
+                    k = n if k < 0 else k
+                    body, i = (src[i:k].lstrip("\t") if tabs else src[i:k]), k + 1
+                    if body == delim:
+                        break
+            pending = []
+        elif c == "#":
+            k = src.find("\n", i)
+            i = n if k < 0 else k
+        elif src.startswith("[[", i) and src[i + 2:i + 3] in (" ", "\t"):
+            # A conditional is ONE word here: `(`, `;` and `<` inside it are operands.
+            j = i + 2
+            while not (src.startswith(" ]]", j - 1) and src[j + 2:j + 3] in ("", " ", "\t",
+                                                                              "\n", ";", ")")):
+                if j >= n or src[j] == "\n":
+                    raise _ShParseError(f"unterminated [[ at offset {i}")
+                c2 = src[j]
+                if c2 == "\\":
+                    j += 2
+                elif c2 in "'\"$":
+                    j = {"'": _sh_end_squote, '"': _sh_end_dquote,
+                         "$": _sh_end_dollar}[c2](src, j)
+                else:
+                    j += 1
+            toks.append(("W", src[i:j + 2], i))
+            i = j + 2
+        elif src.startswith("((", i):
+            j = _sh_end_group(src, i, "(", ")")
+            toks.append(("W", src[i:j], i))
+            i = j
+        elif (m := _SH_REDIR.match(src, i)):
+            toks.append(("R", m.group(0), i))
+            i = m.end()
+            if m.group(0).lstrip("0123456789") in ("<<", "<<-"):
+                while src[i:i + 1] in (" ", "\t"):
+                    i += 1
+                j = _sh_end_word(src, i)
+                pending.append((re.sub(r"[\"'\\]", "", src[i:j]), m.group(0).endswith("-")))
+        elif (op := next((o for o in _SH_OPS if src.startswith(o, i)), None)):
+            toks.append(("O", op, i))
+            i += len(op)
+        else:
+            j = _sh_end_word(src, i)
+            toks.append(("W", src[i:j], i))
+            i = j
+    return toks
+
+
+class _ShParser:
+    """Commands, not text. A node is a dict: `simple` (words, redirs), `case` (subject,
+    arms), `func` (name, body), or `group` — anything compound (if/while/for/{ }/( )),
+    whose control flow this reader does NOT model; it only needs what is inside."""
+
+    def __init__(self, src, base=0):
+        self.toks = [(k, v, o + base) for k, v, o in _sh_tokens(src)]
+        self.i = 0
+
+    def peek(self):
+        return self.toks[self.i] if self.i < len(self.toks) else ("E", "", -1)
+
+    def take(self, kind, text=None):
+        k, v, o = self.peek()
+        if k != kind or (text is not None and v != text):
+            raise _ShParseError(f"expected {text or kind} at offset {o}, found {v!r}")
+        self.i += 1
+        return (v, o)
+
+    def skip_newlines(self):
+        while self.peek()[0] == "N":
+            self.i += 1
+
+    def parse(self):
+        nodes = self.parse_list()
+        if self.peek()[0] != "E":
+            raise _ShParseError(f"unexpected {self.peek()[1]!r} at offset {self.peek()[2]}")
+        return nodes
+
+    def parse_list(self, stop_words=(), stop_ops=()):
+        nodes = []
+        while True:
+            k, v, o = self.peek()
+            if k == "N" or (k == "O" and v in (";", "&", "&&", "||", "|", "|&")):
+                self.i += 1
+            elif k == "E":
+                if stop_words or stop_ops:
+                    raise _ShParseError(f"input ended inside a construct; wanted "
+                                        f"{stop_words or stop_ops}")
+                return nodes
+            elif (k == "W" and v in stop_words) or (k == "O" and v in stop_ops):
+                return nodes
+            elif (k == "W" and v in _SH_CLOSERS) or k == "O":
+                raise _ShParseError(f"unexpected {v!r} at offset {o}")
+            else:
+                nodes.append(self.parse_command())
+
+    def through(self, word):
+        kids = self.parse_list((word,))
+        self.take("W", word)
+        return kids
+
+    def redirs(self):
+        out = []
+        while self.peek()[0] == "R":
+            out.append((self.take("R")[0], self.take("W")))
+        return out
+
+    def group(self, kids, o, words=()):
+        return {"kind": "group", "kids": kids, "words": list(words), "redirs": self.redirs(),
+                "off": o}
+
+    def parse_command(self):
+        k, v, o = self.peek()
+        if k == "W" and v == "if":
+            self.i += 1
+            kids = self.through("then") + self.parse_list(("elif", "else", "fi"))
+            while self.peek()[1] in ("elif", "else"):
+                if self.take("W")[0] == "elif":
+                    kids += self.through("then") + self.parse_list(("elif", "else", "fi"))
+                else:
+                    kids += self.parse_list(("fi",))
+            self.take("W", "fi")
+            return self.group(kids, o)
+        if k == "W" and v in ("while", "until", "for", "select"):
+            self.i += 1
+            words, kids = [], []
+            if v in ("for", "select"):
+                while self.peek()[:2] != ("W", "do"):
+                    if self.peek()[0] == "E":
+                        raise _ShParseError(f"`{v}` at offset {o} has no `do`")
+                    if self.peek()[0] == "W":
+                        words.append(self.peek()[1:])
+                    self.i += 1
+            else:
+                kids = self.parse_list(("do",))
+            self.take("W", "do")
+            kids += self.parse_list(("done",))
+            self.take("W", "done")
+            return self.group(kids, o, words)
+        if k == "W" and v == "case":
+            self.i += 1
+            subject = self.take("W")
+            self.skip_newlines()
+            self.take("W", "in")
+            arms = []
+            while True:
+                self.skip_newlines()
+                if self.peek()[:2] == ("W", "esac"):
+                    self.i += 1
+                    break
+                if self.peek()[:2] == ("O", "("):
+                    self.i += 1
+                pats = [self.take("W")]
+                while self.peek()[:2] == ("O", "|"):
+                    self.i += 1
+                    pats.append(self.take("W"))
+                self.take("O", ")")
+                body = self.parse_list(("esac",), (";;", ";&", ";;&"))
+                term = self.take("O")[0] if self.peek()[0] == "O" else ";;"
+                arms.append((pats, body, term))
+            return {"kind": "case", "subject": subject, "arms": arms, "redirs": self.redirs(),
+                    "off": o}
+        if (k, v) == ("W", "{"):
+            self.i += 1
+            return self.group(self.through("}"), o)
+        if (k, v) == ("O", "("):
+            self.i += 1
+            kids = self.parse_list((), (")",))
+            self.take("O", ")")
+            return self.group(kids, o)
+        named = k == "W" and _SH_IDENT.fullmatch(v) and [t[:2] for t in
+                                                         self.toks[self.i + 1:self.i + 3]]
+        if (k == "W" and v == "function") or named == [("O", "("), ("O", ")")]:
+            self.i += 1
+            name = v if v != "function" else self.take("W")[0]
+            if self.peek()[:2] == ("O", "("):
+                self.i += 1
+                self.take("O", ")")
+            self.skip_newlines()
+            return {"kind": "func", "name": name, "body": [self.parse_command()], "off": o}
+        words, redirs = [], []
+        while self.peek()[0] in ("W", "R"):
+            if self.peek()[0] == "W":
+                words.append(self.take("W"))
+            else:
+                redirs.append((self.take("R")[0], self.take("W")))
+        if not words and not redirs:
+            raise _ShParseError(f"unexpected {v!r} at offset {o}")
+        return {"kind": "simple", "words": words, "redirs": redirs, "off": o}
+
+
+def _sh_word(text):
+    """One word, read -> (refs, plain, subs, norm).
+
+    refs   every parameter it expands, command substitutions included — over-approximate,
+           so the absence half can only see the declared fingerprint MORE often
+    plain  the parameter, when the WHOLE word is one bare expansion of it (`$x`, `"$x"`,
+           `${x}`, `${M_FP[$i]}`): a copy of the value, not a transform of it
+    subs   (offset-in-word, text) of each `$( )` and backtick, to be read as commands
+    norm   quotes removed and `${x}` spelled `$x`, so two spellings of a path compare equal
     """
-    live = []
-    if _has_fingerprint_comparison(_ast_module().parse(gate_source)):
-        live.append("this gate still compares a corpus-declared fingerprint as a string")
-    if "grep -qF" in conformance_source:
-        live.append("scripts/conformance.sh still matches a diagnostic by FIXED STRING "
-                    "(`grep -qF`), which is what GI-12's text names as the unsound "
-                    "adjudicator")
-    return live
+    refs, subs, norm = set(), [], []
+    plain, exps, lits, j, dq = None, 0, 0, 0, False
+    while j < len(text):
+        c, nxt = text[j], text[j + 1:j + 2]
+        if c == "\\" and nxt:
+            norm.append(nxt)
+            lits, j = lits + 1, j + 2
+        elif c == "'" and not dq:
+            k = _sh_end_squote(text, j)
+            norm.append(text[j + 1:k - 1])
+            lits, j = lits + k - j, k
+        elif c == '"':
+            dq, j = not dq, j + 1
+        elif c == "$" and nxt == "'" and not dq:
+            k = _sh_end_dollar(text, j)
+            norm.append(text[j:k])
+            lits, j = lits + k - j, k
+        elif c == "`" or (c == "$" and nxt == "("):
+            k = (_sh_end_escaped(text, j, "`") if c == "`" else _sh_end_dollar(text, j))
+            if not text.startswith("$((", j):
+                at = j + (1 if c == "`" else 2)
+                subs.append((at, text[at:k - 1]))
+            refs.update(m.group(1) for m in _SH_REF.finditer(text[j:k]))
+            norm.append(text[j:k])
+            exps, plain, j = exps + 1, None, k
+        elif c == "$" and nxt == "{":
+            k = _sh_end_dollar(text, j)
+            m = re.fullmatch(r"([A-Za-z_]\w*|[0-9]+|[@*])(\[[^\]]*\])?", text[j + 2:k - 1])
+            refs.update(m2.group(1) for m2 in _SH_REF.finditer(text[j:k]))
+            norm.append(f"${m.group(1)}" if m and not m.group(2) else text[j:k])
+            exps, plain, j = exps + 1, (m.group(1) if m else None), k
+        elif c == "$" and (m := re.match(r"[A-Za-z_]\w*|[0-9@*#?$!-]", text[j + 1:])):
+            refs.add(m.group(0))
+            norm.append("$" + m.group(0))
+            exps, plain, j = exps + 1, m.group(0), j + 1 + len(m.group(0))
+        else:
+            norm.append(c)
+            lits, j = lits + 1, j + 1
+    return refs, (plain if exps == 1 and lits == 0 else None), subs, "".join(norm)
 
 
-def wiring_matches_declaration(source: str) -> list[str]:
+def _sh_glob(word, value):
+    """Does `case` pattern `word` match `value`? Quoted text is literal, as in bash. An
+    expansion in a class pattern is undecidable here and is REFUSED rather than guessed."""
+    rx, j, dq = [], 0, False
+    while j < len(word):
+        c = word[j]
+        if c == "\\" and j + 1 < len(word):
+            rx.append(re.escape(word[j + 1]))
+            j += 2
+        elif c == "'" and not dq:
+            k = _sh_end_squote(word, j)
+            rx.append(re.escape(word[j + 1:k - 1]))
+            j = k
+        elif c == '"':
+            dq, j = not dq, j + 1
+        elif c in "$`":
+            raise _ShParseError(f"a pattern of the class dispatch expands something ({word!r})")
+        elif not dq and c in "*?":
+            rx.append(".*" if c == "*" else ".")
+            j += 1
+        elif not dq and c == "[" and (k := word.find("]", j + 2)) > 0:
+            body = word[j + 1:k]
+            rx.append("[" + ("^" + body[1:] if body[:1] in "!^" else body) + "]")
+            j = k + 1
+        else:
+            rx.append(re.escape(c))
+            j += 1
+    return re.fullmatch("".join(rx), value) is not None
+
+
+def _sh_arm_reach(arms):
+    """For each arm, the refusal classes it RUNS for, by bash's rules: the first matching
+    arm wins, `;&` falls into the next body unconditionally, `;;&` goes on testing."""
+    runs = [set() for _ in arms]
+    for cls in REFUSAL_CLASSES:
+        falling = False
+        for n, (pats, _body, term) in enumerate(arms):
+            if falling or any(_sh_glob(p, cls) for p, _o in pats):
+                runs[n].add(cls)
+                if term == ";;":
+                    break
+                falling = term == ";&"
+    return [frozenset(r) for r in runs]
+
+
+class _ShReach:
+    """The walk over conformance.sh, from its main body.
+
+    Both refusal classes start LIVE. Every `case` whose subject is the manifest class
+    narrows the live set to the classes each arm really runs for; code where neither is
+    live is not walked at all. Every call to an in-file function is followed with its
+    arguments bound, so `$1`, a `local x=$2` alias and a helper two calls down carry the
+    same value they had at the call site. What it collects: each grep handed the declared
+    fingerprint (`sinks`), each call of the shared parser (`parses`), what is sourced, and
+    where pdc's stderr goes.
+    """
+
+    def __init__(self, src):
+        self.src = src
+        self._nl = [m.start() for m in re.finditer("\n", src)]
+        self.tree = _ShParser(src).parse()
+        self.funcs = {}
+        for nd, _f in self._nodes(self.tree):
+            if nd["kind"] == "func":
+                self.funcs.setdefault(nd["name"], []).append(nd)
+        self.sinks, self.parses, self.sourced, self._seen = [], [], set(), set()
+        self.fp, self.fp_plain, self.cls_plain = self._global_taint()
+
+    def line(self, off):
+        return bisect.bisect_right(self._nl, off) + 1
+
+    def _nodes(self, nodes, func=None):
+        """(node, enclosing function or None), depth first, function bodies included."""
+        for nd in nodes:
+            yield nd, func
+            if nd["kind"] == "func":
+                yield from self._nodes(nd["body"], nd)
+            elif nd["kind"] == "group":
+                yield from self._nodes(nd["kids"], func)
+            elif nd["kind"] == "case":
+                for _p, body, _t in nd["arms"]:
+                    yield from self._nodes(body, func)
+
+    @staticmethod
+    def _decls(nd):
+        """(name, value-word or None, made-by-local/declare/typeset) for one command.
+        `export` and `readonly` assign too, and what they assign is global."""
+        if nd["kind"] != "simple":
+            return
+        words = [w for w, _o in nd["words"]]
+        n = 0
+        while n < len(words) and (m := _SH_ASSIGN.match(words[n])):
+            yield m.group(1), words[n][m.end():], False
+            n += 1
+        if n < len(words) and words[n] in ("local", "declare", "typeset", "export",
+                                           "readonly"):
+            scoped = words[n] in ("local", "declare", "typeset")
+            for w in words[n + 1:]:
+                if (m := _SH_ASSIGN.match(w)):
+                    yield m.group(1), w[m.end():], scoped
+                elif _SH_IDENT.fullmatch(w) and scoped:
+                    yield w, None, True
+
+    def _locals_of(self, func):
+        return {nm for nd, f in self._nodes(func["body"], func) if f is func
+                for nm, _v, declared in self._decls(nd) if declared}
+
+    def _global_taint(self):
+        """File-wide and flow-insensitive: which names can hold the declared fingerprint —
+        `M_FP`, the manifest's column-4 array, and anything assigned from it — which hold it
+        UNTRANSFORMED, and which hold the manifest class (`M_CLASS`) untransformed. ROOTED
+        AT THE TWO ARRAYS, so renaming the loop's `fp` or `class` changes nothing, and
+        renaming an array leaves nothing tainted, which fails CLOSED."""
+        local = {id(f): self._locals_of(f) for fs in self.funcs.values() for f in fs}
+        assigns = [(nm, val) for nd, f in self._nodes(self.tree)
+                   for nm, val, _d in self._decls(nd)
+                   if val is not None and (f is None or nm not in local[id(f)])]
+        fp, fpp, clp = {"M_FP"}, {"M_FP"}, {"M_CLASS"}
+        while True:
+            size = (len(fp), len(fpp), len(clp))
+            for nm, val in assigns:
+                refs, plain, _s, _n = _sh_word(val)
+                if refs & fp:
+                    fp.add(nm)
+                if plain in fpp:
+                    fpp.add(nm)
+                if plain in clp:
+                    clp.add(nm)
+            if size == (len(fp), len(fpp), len(clp)):
+                return fp, fpp, clp
+
+    def _eval(self, word, params, local):
+        """A word as the walk carries it: (holds-the-fingerprint, is-the-fingerprint-
+        untransformed, is-the-class-untransformed, normalised text)."""
+        refs, plain, _subs, norm = _sh_word(word)
+
+        def tainted(r):
+            if r.isdigit():
+                return 0 < int(r) <= len(params) and params[int(r) - 1][0]
+            if r in ("@", "*"):
+                return any(p[0] for p in params)
+            return local[r][0] if r in local else r in self.fp
+
+        if plain is not None and plain.isdigit() and 0 < int(plain) <= len(params):
+            return params[int(plain) - 1]
+        if plain in local:
+            return local[plain]
+        return (any(tainted(r) for r in refs), plain in self.fp_plain,
+                plain in self.cls_plain, norm)
+
+    def _bind_locals(self, func, params):
+        """`local x=$1` and every later `x=…`, to fixpoint, for ONE activation. A local
+        assigned twice holds the fingerprint if either value does, and is an untransformed
+        copy only if both are — the direction that makes the existence half HARDER."""
+        names = self._locals_of(func)
+        vals = {nm: [val for nd, f in self._nodes(func["body"], func) if f is func
+                     for n2, val, _d in self._decls(nd) if n2 == nm and val is not None]
+                for nm in names}
+        local = {nm: (False, False, False, "") for nm in names}
+        for _ in range(len(names) + 1):
+            for nm, vs in vals.items():
+                got = [self._eval(v, params, local) for v in vs]
+                if got:
+                    local[nm] = (any(g[0] for g in got), all(g[1] for g in got),
+                                 all(g[2] for g in got),
+                                 got[0][3] if all(g[3] == got[0][3] for g in got) else "")
+        return local
+
+    def walk(self, nodes, env):
+        if not env["live"]:
+            return
+        for nd in nodes:
+            if nd["kind"] == "func":
+                continue                       # a definition runs nothing
+            for _op, (w, o) in nd.get("redirs", ()):
+                self._subs(w, o, env)
+            if nd["kind"] == "simple":
+                self._simple(nd, env)
+            elif nd["kind"] == "group":
+                for w, o in nd["words"]:
+                    self._subs(w, o, env)
+                self.walk(nd["kids"], env)
+            elif nd["kind"] == "case":
+                w, o = nd["subject"]
+                self._subs(w, o, env)
+                is_class = self._eval(w, env["params"], env["local"])[2]
+                reach = (_sh_arm_reach(nd["arms"]) if is_class
+                         else [env["live"]] * len(nd["arms"]))
+                for (_p, body, _t), runs in zip(nd["arms"], reach):
+                    self.walk(body, {**env, "live": env["live"] & runs})
+
+    def _subs(self, word, off, env):
+        for at, text in _sh_word(word)[2]:
+            self.walk(_ShParser(text, off + at).parse(), env)
+
+    def _simple(self, nd, env):
+        words = list(nd["words"])
+        for w, o in words:
+            self._subs(w, o, env)
+        while words and (_SH_ASSIGN.match(words[0][0]) or words[0][0] in _SH_PREFIXES):
+            words.pop(0)
+        if not words:
+            return
+        name = self._eval(words[0][0], env["params"], env["local"])[3]
+        args = []
+        for w, _o in words[1:]:
+            if _sh_word(w)[1] == "@":          # `"$@"` forwards every argument, in place
+                args.extend(env["params"])
+            else:
+                args.append(self._eval(w, env["params"], env["local"]))
+        args = tuple(args)
+        where = env["chain"] + ((name, self.line(nd["off"])),)
+        if name in _SH_GREPS and any(a[0] for a in args):
+            self.sinks.append((env["live"], where))
+        elif name == "pd_diag_parse":
+            self.parses.append((env["live"], args[0][3] if args else "", any(env["pinned"])))
+        elif name in (".", "source") and args:
+            self.sourced.add(args[0][3])
+        key = (name, env["live"], args, any(env["pinned"]))
+        if name not in self.funcs or key in self._seen or len(where) > 32:
+            return
+        self._seen.add(key)
+        for func in self.funcs[name]:
+            self.walk(func["body"], {"params": args, "local": self._bind_locals(func, args),
+                                     "live": env["live"], "chain": where,
+                                     "pinned": env["pinned"] + (any(a[1] for a in args),)})
+
+    def pdc_stderr(self):
+        """Where pdc's stderr is captured ON ITS OWN: the `2>` target of the command named
+        `$PDC`. A merged `2>&1` is not a capture, and the merged log is not one either."""
+        return {_sh_word(w)[3] for nd, _f in self._nodes(self.tree)
+                if nd["kind"] == "simple" and nd["words"]
+                and _sh_word(nd["words"][0][0])[3] == "$PDC"
+                for op, (w, _o) in nd["redirs"] if op == "2>"}
+
+
+_WIRING_CACHE: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
+
+
+def code_attribution_wiring(conformance_source: str) -> tuple[list[str], list[str]]:
+    """GI-12's two halves (spec R3), read off conformance.sh -> (missing, leaking).
+
+    BOTH EMPTY is the only state in which a reject or skip row is judged by its code.
+
+    ① EXISTENCE — `missing`. From the arm of the class dispatch that runs for `reject`,
+      and separately from the one that runs for `skip`, a path reaches `pd_diag_parse` —
+      the one shared parser: sourced from scripts/lib/diag-parse.sh, not redefined here —
+      on pdc's STDERR capture (the `2>` target of the `$PDC` command, never the merged
+      log), from inside a call that was handed the declared pin UNTRANSFORMED. Function
+      names are not consulted: `coded_pin_verdict` is what does this today, and renaming
+      it changes nothing.
+    ② ABSENCE — `leaking`. No path a reject or skip row can run hands the declared
+      fingerprint to grep, directly or through any depth of in-file calls. That is how
+      `declared_phrase_match` -> `grep_status` is reached, and why it has to sit under an
+      arm that runs for neither class: a phrase match hoisted above the dispatch runs for
+      every row and is caught. Every grep mode counts — `-E` over the declaration is no
+      more an attribution than `-F` — so `grep_status` is a sink for its pattern whatever
+      mode it is handed.
+
+    WHY TWO. An absence check alone fails OPEN: unbolt the comparator and nothing is left
+    that matches by substring either, so absence holds over a dispatch that adjudicates
+    nothing. An existence check alone fails open the other way, with the phrase match
+    bolted on beside the comparator. `wiring_matches_declaration` already says the first
+    half of this about GI-11.
+
+    HOW IT READS. A tokenizer that knows quoting, `$( )`, `${ }`, backticks, comments and
+    heredocs; a parser for commands, nested `case` arms and function bodies; and the walk in
+    `_ShReach`. Comments and string literals are not commands, so spelling the comparator
+    call in either satisfies nothing — the defect the retired detectors had, where the line
+    asking the question could contain the answer. The fingerprint and the class are tracked
+    from the manifest ARRAYS, so renaming locals changes nothing and renaming an array fails
+    closed.
+
+    WHAT IT CANNOT SEE, said rather than implied:
+      * What a call COMPUTES. ① proves the pin and the capture meet in a call that reaches
+        the shared parser; a comparator that parses and then ignores the pin passes it.
+        That behaviour is pinned by scripts/test-conformance-runner.sh, not here.
+      * Matching that is not grep: `case` and `[[ == ]]` globbing, `=~`, awk, sed, a
+        Python helper. The comparator's own `msg~` test is a `case` glob on the header
+        payload, which is exactly why globbing cannot simply be flagged.
+      * Data leaving through a file, a pipe, stdin, the environment or `eval`; a grep
+        invoked through a variable or `xargs`; a global set inside a function from `$1`.
+      * Control flow inside an arm: a call after an unconditional `return`, or under a
+        condition that is always false, counts as made.
+      * A class dispatch spelled `if [ "$class" = … ]`: ① does not find it and ② does not
+        treat it as a guard. Both fail CLOSED.
+      * `case` patterns inside `$( )`: the pattern's `)` ends the substitution here.
+      * WHAT IT IS KEYED ON, so a rename there is not mistaken for a refactor: the arrays
+        `M_FP` and `M_CLASS`, the command `$PDC`, the parser `pd_diag_parse`, the path
+        scripts/lib/diag-parse.sh and the command names `grep`/`egrep`/`fgrep`. Renaming
+        any of the first five fails closed; grep under another name is a blind spot.
+    Each of those either fails closed or is named here. None of this is a proof that code
+    attribution is the only path a reject row can take.
+    """
+    hit = _WIRING_CACHE.get(conformance_source)
+    if hit is None:
+        hit = _code_attribution_wiring(conformance_source)
+        _WIRING_CACHE[conformance_source] = hit
+    return list(hit[0]), list(hit[1])
+
+
+def _code_attribution_wiring(src: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    try:
+        reach = _ShReach(src)
+        reach.walk(reach.tree, {"params": (), "local": {}, "chain": (), "pinned": (),
+                                "live": frozenset(REFUSAL_CLASSES)})
+        captures = reach.pdc_stderr()
+    except _ShParseError as exc:
+        why = f"scripts/conformance.sh could not be read as shell ({exc})"
+        return (why,), (why,)
+    missing = []
+    if not captures:
+        missing.append("no `$PDC` command captures its stderr on its own (`2>` to a file)")
+    if "scripts/lib/diag-parse.sh" not in reach.sourced:
+        missing.append("scripts/lib/diag-parse.sh, the one shared parser, is not sourced")
+    if "pd_diag_parse" in reach.funcs:
+        missing.append("`pd_diag_parse` is redefined inside conformance.sh, so the parser "
+                       "reached is not the shared one")
+    for cls in REFUSAL_CLASSES:
+        if not any(cls in live and arg in captures and pinned
+                   for live, arg, pinned in reach.parses):
+            missing.append(f"no path from the `{cls}` arm of the class dispatch reaches the "
+                           f"shared parser on pdc's stderr inside a call handed the "
+                           f"declared pin")
+    leaking = [f"the declared fingerprint reaches grep for {'/'.join(sorted(live))} rows: "
+               + " -> ".join(f"{n} (conformance.sh:{ln})" for n, ln in where)
+               for live, where in reach.sinks]
+    return tuple(missing), tuple(leaking)
+
+
+def wiring_matches_declaration(source: str,
+                               conformance_source: str | None = None) -> list[str]:
     """Does the code do what LIVENESS_MODEL / ATTRIBUTION_MODEL say it does?
 
     THIS IS WHAT STOPS THE CONSTANT FROM BEING THE NEW EMPTY TEST. Declaring
@@ -1003,8 +1676,15 @@ def wiring_matches_declaration(source: str) -> list[str]:
     `LIVENESS_PROBES_LEXICAL`, in comments, in their own `def`s and in self-test labels —
     so `"p_has_ref_param" in source` stayed True with every dispatch deleted; and the
     fingerprint half was answered by the line that asked it. Now: a probe counts as wired
-    when its name is LOADED as a value somewhere, and the comparison counts as present
-    when it is a `Compare` node.
+    when its name is LOADED as a value somewhere.
+
+    THE ATTRIBUTION HALF READS conformance.sh, NOT THIS FILE. It used to ask whether
+    `p_verdict` still compared a corpus fingerprint here, which after the GI-12 cutover is
+    the wrong file: that Compare is two of our own pins by equality, and what decides how a
+    rejection is attributed is the reject/skip dispatch in the script that judges it. So
+    `code` is checked against `code_attribution_wiring` — both halves must hold — and
+    `substring` against the same facts the other way round. `conformance_source` is for
+    the self-test; None means the real script.
     """
     import ast as _ast
     problems = []
@@ -1045,13 +1725,20 @@ def wiring_matches_declaration(source: str) -> list[str]:
             "an existence check is required fails OPEN.")
     if liveness == "lexical" and not lexical_wired:
         problems.append("LIVENESS_MODEL says `lexical` but the lexical probes are not wired")
-    substring_wired = _has_fingerprint_comparison(tree)
-    if attribution == "code" and substring_wired:
+    missing, leaking = code_attribution_wiring(_conformance_text(conformance_source))
+    if attribution == "code" and (missing or leaking):
         problems.append(
-            "ATTRIBUTION_MODEL says `code` but reject rows are still adjudicated by the "
-            "corpus fingerprint declaration, which conformance.sh matches as a substring.")
-    if attribution == "substring" and not substring_wired:
-        problems.append("ATTRIBUTION_MODEL says `substring` but that comparison is gone")
+            "ATTRIBUTION_MODEL says `code` but scripts/conformance.sh does not judge every "
+            "reject and skip row by its code: " + "; ".join(missing + leaking))
+    if attribution == "substring" and not (missing or leaking):
+        problems.append(
+            "ATTRIBUTION_MODEL says `substring` but scripts/conformance.sh judges every "
+            "reject and skip row by its code, and no path those rows run hands the declared "
+            "fingerprint to grep")
+    if attribution not in ("code", "substring"):
+        # A third value satisfied neither branch above and passed in silence.
+        problems.append(f"ATTRIBUTION_MODEL says {attribution!r}, which names neither "
+                        "attribution model")
     return problems
 
 
@@ -1091,8 +1778,14 @@ def ctx_for_observable() -> "Context":
     return Context()
 
 
-def incomplete_definition(gate_source: str | None = None) -> list[tuple[str, str]]:
+def incomplete_definition(*, conformance_source: str | None = None
+                          ) -> list[tuple[str, str]]:
     """(requirement id, why no verdict is available). Empty means: a verdict is.
+
+    KEYWORD-ONLY, because its one argument changed meaning at the GI-12 cutover: it was
+    THIS gate's source, which GI-12 no longer reads, and is now conformance.sh's (None =
+    the real script). A caller still passing the old positional argument fails loudly
+    instead of being read as a shell script.
 
     GI-11 needs BOTH, and neither substitutes for the other:
 
@@ -1117,8 +1810,6 @@ def incomplete_definition(gate_source: str | None = None) -> list[tuple[str, str
     GI-11 clear on scalar verdicts while the structure it contracted for was unbuilt.
     """
     validate_preconditions()
-    src = (gate_source if gate_source is not None
-           else (ROOT / "scripts/thesis_exit.py").read_text())
     why = {rid: w for rid, _c, _u, _s, w in PRECONDITIONS}
     out = []
     # GI-11's CONSTANT HALF, no longer `continue`d past. A precondition whose only test was
@@ -1169,21 +1860,18 @@ def incomplete_definition(gate_source: str | None = None) -> list[tuple[str, str
     # while the substring adjudicator was still the thing deciding every reject row. "Met"
     # meant TWO LABELS AGREE, which is not a fact about the gate.
     #
-    # The physical stop condition instead: GI-12 is unmet for as long as the substring
-    # fingerprint comparator is still present as an EXPRESSION in this gate's source. No
-    # constant participates, so no edit to a constant can retire it; the declaration is
-    # still checked against the same physical fact by `wiring_matches_declaration`, which
-    # is what makes a mismatched label a harness error rather than a silent lift.
-    conf = CONFORMANCE_SH.read_text() if CONFORMANCE_SH.is_file() else ""
-    live = substring_attribution_live(src, conf)
-    if live:
-        out.append(("GI-12", why["GI-12"] + " — still live: " + "; ".join(live)))
+    # The physical stop condition instead, and since the cutover it is read where
+    # rejections are actually judged: GI-12 is unmet while EITHER of R3's halves fails over
+    # scripts/conformance.sh — the reject/skip dispatch does not reach the shared parser
+    # with the pin and pdc's stderr, or some path those rows run still hands the declared
+    # fingerprint to grep (`code_attribution_wiring`). No constant participates, so no edit
+    # to a constant lifts it or re-opens it; the declaration is checked against the same
+    # facts by `wiring_matches_declaration`, which is what makes a mismatched label a
+    # harness error rather than a silent lift.
+    missing, leaking = code_attribution_wiring(_conformance_text(conformance_source))
+    if missing or leaking:
+        out.append(("GI-12", why["GI-12"] + " — " + "; ".join(missing + leaking)))
     return out
-
-
-def _ast_module():
-    import ast as _ast
-    return _ast
 
 
 AGGREGATE_ROW = "D1-01"          # cites this command as its evidence: it is the summary
@@ -1282,11 +1970,23 @@ EXPECTED_THESIS_CONTRACT = {
     # tuple is where that fact is now decidable, and it is compared to the manifest on
     # every run — the file-name token that used to stand in for it was prose.
     "GI-11": ("gate", "make thesis-exit", "-"),
-    # NOT a `reject` row: a reject row is adjudicated by the substring matcher this
-    # requirement exists to replace, so it could never have proved itself.
+    # NOT a `reject` row: a reject row WAS adjudicated by the substring matcher this
+    # requirement replaced, so it could never have proved itself — and a requirement about
+    # how every reject row is judged is not one more reject row.
     "GI-12": ("gate", "make check-diagnostic-codes", "-"),
 }
 EXPECTED_THESIS_IDS = frozenset(EXPECTED_THESIS_CONTRACT)
+
+
+# THE REFUSAL-PIN GRAMMAR, character for character conformance.sh's `PIN_RE` (and
+# check-diagnostic-codes.sh's `pin_re`): since the GI-12 cutover it is the only thing a
+# reject or skip row's column 4 may hold, so a value in this grammar is a refusal the
+# manifest CAN pin, and a value outside it is one it cannot.
+CODE_PIN = re.compile(r"code=PD[0-9]{4}(;msg~.+)?")
+
+
+def is_code_pin(fp: str) -> bool:
+    return CODE_PIN.fullmatch(fp) is not None
 
 
 def _validate_contract(contract=None):
@@ -1296,6 +1996,13 @@ def _validate_contract(contract=None):
     row were pinned with `-`, the manifest would match, the comparison would pass, and
     `p_verdict` would skip the fingerprint check — rejection-at-the-wrong-reason, reopened
     from the one direction the comparison cannot see.
+
+    A REJECT ROW'S FINGERPRINT HAS EXACTLY TWO FORMS since the GI-12 cutover: a code pin
+    (`is_code_pin`), which a manifest row can equal, or a RULE PHRASE naming a refusal no
+    code has been minted for yet — an UNMINTED requirement, which `p_verdict` reports as
+    owed and which nothing can satisfy (see there). A third shape is refused: a value that
+    starts out as a pin and is not one (`code=PD12`, `code=PD0001;msg~`, ` code=…`) would
+    otherwise read as an unminted phrase and turn a typo into a requirement nobody owes.
     """
     contract = EXPECTED_THESIS_CONTRACT if contract is None else contract
     for rid, (kind, ev, fp) in sorted(contract.items()):
@@ -1310,6 +2017,12 @@ def _validate_contract(contract=None):
                 f"pinned contract: {rid} is a `reject` row with no required fingerprint. "
                 "Any rejection would satisfy it, including one for incidental unsupported "
                 "syntax.")
+        if (kind == "reject" and fp.strip().lower().startswith("code=")
+                and not is_code_pin(fp)):
+            raise HarnessError(
+                f"pinned contract: {rid} is pinned {fp!r}, which is shaped like a code pin "
+                "and is not one (`code=PD####` or `code=PD####;msg~<fragment>`, exactly). "
+                "It is not a rule phrase either, so it names nothing.")
         if kind != "reject" and fp != "-":
             raise HarnessError(f"pinned contract: {rid} is {kind} but carries a fingerprint")
 KINDS = {"fixture", "reject", "skip", "observable", "gate", "decision"}
@@ -1805,6 +2518,16 @@ class Context:
     # landed. A case asserts the REAL run never sets it, so this cannot become the fifth
     # existence check by another name.
     assume_definition_complete: bool = False
+    # The other script whose wiring `main()` reads: GI-12's halves are decided over
+    # scripts/conformance.sh, so it is an input like `gate_source` is, and for the same
+    # reason — an input no injected state can reach leaves its drift branch undrivable.
+    # None means the real file.
+    conformance_source: str | None = None
+    # The contract the manifest is compared against. The real run uses THE PINNED ONE — a
+    # case asserts `Context().contract is EXPECTED_THESIS_CONTRACT` — and only the
+    # self-test hands in its minted copy (see `_C`), because since the GI-12 cutover the
+    # pinned contract's unminted refusals make an all-green state unreachable by design.
+    contract: Mapping = field(default_factory=lambda: EXPECTED_THESIS_CONTRACT)
 
 
 # Environment variables that change WHICH corpus a delegated run measures, or whether it
@@ -1894,6 +2617,18 @@ def declared_fingerprint(ctx: Context, path: str) -> str:
 
 def p_verdict(ctx, verdicts, path, kind, want_fp) -> tuple[bool, str]:
     want = REQUIRED_VERDICT[kind]
+    if kind == "reject" and want_fp and want_fp != "-" and not is_code_pin(want_fp):
+        # AN UNMINTED REQUIREMENT, decided before anything is compared. The row names its
+        # refusal by a rule phrase because no code exists for that rule yet, and since the
+        # GI-12 cutover every reject pin in the manifest is `code=…` grammar — so a phrase
+        # here could never equal one, and comparing anyway would print "rejected for the
+        # wrong reason" about a fixture that may be rejected for exactly the right one, or
+        # may not exist. The truth is earlier than either: there is nothing to pin yet.
+        # This is ALWAYS RED, whatever the corpus says, until the rule's refusal is minted
+        # with a code and this row's contract entry is re-pinned to it, deliberately.
+        return False, (f"the refusal this row requires ('{want_fp}') has no stable code "
+                       f"yet — it cannot be satisfied by any manifest pin, so {path} is "
+                       f"not consulted")
     got = verdicts.get(path)
     if got is None:
         return False, f"DECLARED, ABSENT — no conformance row ran for {path} (want {want})"
@@ -1904,13 +2639,14 @@ def p_verdict(ctx, verdicts, path, kind, want_fp) -> tuple[bool, str]:
         # rejection. "Refused because the prohibition is enforced" and "refused for
         # incidental unsupported syntax" are the same verdict at this layer, and a
         # sibling branch can turn a reject fixture green with no compiler change. So the
-        # row names the fingerprint and the corpus must declare it; conformance.sh has
-        # already matched that declaration against the actual diagnostic.
+        # row names the code pin and the corpus must declare it; conformance.sh has
+        # already judged that declaration against the actual refusal — by its CODE, on the
+        # one primary header of pdc's stderr, with any `msg~` read from that header's
+        # payload alone (GI-12) — or the verdict above would not be REJECTED.
         # EQUALITY, not substring. Both sides of this comparison are ours — the row's
-        # pin and the corpus's declaration — so there is no reason to be loose, and
-        # `conformance.sh` is already substring-matching the declaration against the real
-        # diagnostic (`grep -qF`, scripts/conformance.sh:204-211,870). Being loose here
-        # too would compound two approximations into one unstated one.
+        # pin and the corpus's declaration — so there is no reason to be loose: a manifest
+        # pin that merely CONTAINS this one (`…;msg~x` around a bare code) is a different
+        # pin, and accepting it would make this line the substring matcher GI-12 retired.
         decl = declared_fingerprint(ctx, path)
         if want_fp.strip() != decl.strip():
             return False, (f"{path} is REJECTED, but for the wrong reason: the corpus "
@@ -2001,7 +2737,13 @@ def effect_report(ctx: Context, witness: str) -> str:
 # ---------------------------------------------------------------------------
 def thesis_rows(ctx: Context) -> list[dict]:
     """Closed, in the sense tests/conformance-manifest.txt is closed."""
-    _validate_contract()
+    contract = ctx.contract
+    # The ID SET is the pinned one even for an injected contract: the self-test's minted
+    # copy may differ in the six unminted fingerprints and nowhere else (a case pins that),
+    # and it can never add, drop or rename a row.
+    if frozenset(contract) != EXPECTED_THESIS_IDS:
+        raise HarnessError("the contract in use does not carry the pinned thesis ids")
+    _validate_contract(contract)
     rows, seen = [], set()
     try:
         lines = ctx.requirements.read_text(encoding="utf-8").splitlines()
@@ -2030,7 +2772,7 @@ def thesis_rows(ctx: Context) -> list[dict]:
             "EXPECTED_THESIS_CONTRACT in this file in the same commit, deliberately.")
     _validate_pin_keys(set(PINNED_ACCEPTANCE_SHA))
     for r in rows:
-        want = EXPECTED_THESIS_CONTRACT[r["id"]]
+        want = contract[r["id"]]
         got = (r["kind"], r["ev"], r["fp"])
         if got != want:
             raise HarnessError(
@@ -2157,7 +2899,7 @@ def main(ctx: Context | None = None) -> int:
     ctx = ctx or Context()
     gate_src = (ctx.gate_source if ctx.gate_source is not None
                 else (ROOT / "scripts/thesis_exit.py").read_text())
-    drift = wiring_matches_declaration(gate_src)
+    drift = wiring_matches_declaration(gate_src, ctx.conformance_source)
     if drift:
         raise HarnessError("the gate's declared models do not match its wiring: "
                            + "; ".join(drift))
@@ -2169,7 +2911,7 @@ def main(ctx: Context | None = None) -> int:
     # mutable workspace could produce two different answers in one run, and the corpora
     # were walked twice for nothing.
     blocked_early = ([] if ctx.assume_definition_complete
-                     else incomplete_definition(gate_src))
+                     else incomplete_definition(conformance_source=ctx.conformance_source))
     print("=" * 78)
     print("  make thesis-exit — the definition of Palladium 1.0")
     print(f"  {len(rows)} `thesis` rows from {ctx.requirements.name}; "
@@ -2272,6 +3014,36 @@ VARIANT_OF_BASE = {
     "inside-else": "mm-inside-else-renamed",
 }
 
+# RE-PINNED AT GI-12 suF-b, chosen and not forced: GI-12's precondition is now decided by
+# R3's two halves over scripts/conformance.sh, and the cases that probed the retired
+# detectors went with them. Measured by diffing the CASE-NAME SET against suF-a's tree:
+# 292 labels before, 319 after; 14 removed, 41 added, none reworded in place. Four groups:
+#   * RETIRED (8 labels): the in-file signal — p_verdict's Compare as an AST node, its
+#     STRING-of-itself and literal-only controls, the casefold and operand-swap edits — and
+#     MF4's three lexical cases over `"grep -qF" in conformance_source`. Their detectors are
+#     deleted; their lesson (a comment or a string must not satisfy the check) is a case of
+#     the new matrix.
+#   * RE-TRUTHED (6 labels out, 7 in): every case that asserted GI-11 AND GI-12
+#     outstanding now asserts GI-11 alone; the `code`-declaration case is driven over a
+#     reverted conformance.sh; the LABEL case gained its second direction.
+#   * R3'S MUTANT MATRIX (23 labels): both halves on the real tree; the comparator
+#     unbolted, re-spelled in a comment, fed the merged log, fed a literal, parser gone or
+#     shadowed; the phrase match re-attached, bolted on beside, grepped inline, reached
+#     through a helper by argument, by a second-position `"$@"` forward, through `export`
+#     and by global, hoisted above the dispatch; the skip arm alone; meaning-preserving
+#     renames, reorders, split and `*)` arms; the rename attack on a reverted dispatch; a
+#     renamed array, an unparseable and an empty script; GI-12 listed iff a half fails; a
+#     `code` declaration over a failing half driven through main(), and a `substring`
+#     declaration over two holding halves.
+#   * THE SIX UNMINTED ROWS AND THE PIN GRAMMAR (11 labels): equality proved by behaviour
+#     (an extended pin and a bare code are different pins); the pinned contract red on
+#     exactly the six, with the reason, decided before the corpus is read; SYNTHETIC_PINS
+#     scoped to them and the minted contract differing nowhere else; both injection points
+#     guarded; the two forms `_validate_contract` accepts, and the shapes it refuses.
+# The forward and `export` cases were added after this reader first went green: each
+# was measured MISSED by it first (both halves read as holding), then fixed in the reader.
+# Superseded: 8cfb27f5... (suF-a).
+#
 # RE-PINNED AT THE GI-12 CUTOVER (suF-a), forced and not chosen. The CROSS-LAYER
 # incidental-diagnostic probe drives the REAL scripts/conformance.sh, and after the
 # cutover its phrase-pinned reject row is a manifest error, so it measured nothing.
@@ -2312,8 +3084,8 @@ VARIANT_OF_BASE = {
 # Both are true of the merged tree and neither branch's digest is, which is the whole
 # reason this pin exists. Recomputed here via `--print-case-digest`.
 # Superseded: 1dd2b683... (base), 2bc2aabd... (lexical), bc01d66e... (builtins-exit),
-# 60351814... (pre-GI-12-cutover).
-EXPECTED_CASE_SHA = "8cfb27f5e5c070e3bf390d5f40879e362b32f1187186c7b5e7ba7c99733fae33"
+# 60351814... (pre-GI-12-cutover), 8cfb27f5... (suF-a).
+EXPECTED_CASE_SHA = "bf4f266ef732eed6781d66dcd96f902f8ddf03f229699208e05c1edde7bf6beb"
 
 EXPECTED_UNCOVERED = frozenset({
     "the real `make` subprocess: a control would need a deliberately broken build. Its "
@@ -2605,19 +3377,44 @@ def module_level_file_reads(source: str) -> list[str]:
                 bad.append(f"line {node.lineno}: open() at module level")
     return bad
 
+# THE SELF-TEST MINTS THE SIX REFUSALS THE REAL CONTRACT CANNOT PIN YET.
+#
+# Since the GI-12 cutover a reject row in the manifest pins a CODE, and the six thesis
+# reject rows name refusals no code exists for (M5-M7 work: no `async`, no await, a pure
+# function calling IO, an unproven `#[total]`, a lifetime parameter list, an ambiguous
+# region). `p_verdict` reports each as owed before comparing anything, so with the PINNED
+# contract no repository state reaches exit 0 — true of the real gate, and asserted below
+# ("an UNMINTED row …"). But "the gate must be capable of BOTH answers" is about the
+# MACHINERY, and the machinery can only be driven to 0 by a contract that is satisfiable.
+# So the synthetic repository uses the pinned contract with exactly those six fingerprints
+# replaced by these pins, and nothing else: a case compares the two contracts field by
+# field. PD9901-PD9906 are allocated nowhere — the registry is append-only from PD0001 —
+# so no real refusal can ever carry one, and one carries a `msg~` so the compound form is
+# exercised too. When a refusal is minted for real, its row leaves this map (a case
+# asserts the map's keys are exactly the contract's unminted rows).
+SYNTHETIC_PINS = {
+    "N7-01": "code=PD9901",
+    "N7-02": "code=PD9902",
+    "N7-08": "code=PD9903",
+    "N8-08": "code=PD9904",
+    "N9-04": "code=PD9905",
+    "N9-06": "code=PD9906;msg~ambiguous region",
+}
+
 BASE_ROWS = [
     ("D1-01", "M9", "gate", "make thesis-exit", "-"),
-    ("N7-01", "M5", "reject", "tests/reject/async_fn.pd", "there is no `async` keyword"),
-    ("N7-02", "M5", "reject", "tests/10_async_await.pd", "there is no await operator"),
+    ("N7-01", "M5", "reject", "tests/reject/async_fn.pd", SYNTHETIC_PINS["N7-01"]),
+    ("N7-02", "M5", "reject", "tests/10_async_await.pd", SYNTHETIC_PINS["N7-02"]),
     ("N7-04", "M5", "fixture", "tests/09_effects_propagate.pd", "-"),
-    ("N7-08", "M5", "reject", "tests/reject/pure_function_calls_io.pd", "declared pure"),
+    ("N7-08", "M5", "reject", "tests/reject/pure_function_calls_io.pd",
+     SYNTHETIC_PINS["N7-08"]),
     ("N8-01", "M6", "fixture", "tests/13_total_attribute.pd", "-"),
     ("N8-06", "M6", "fixture", "tests/13_structural_recursion.pd", "-"),
-    ("N8-08", "M6", "reject", "tests/reject/total_unproven.pd", "cannot prove termination"),
+    ("N8-08", "M6", "reject", "tests/reject/total_unproven.pd", SYNTHETIC_PINS["N8-08"]),
     ("N9-01", "M7", "fixture", "tests/05_ref_shared.pd", "-"),
     ("N9-03", "M7", "fixture", "tests/05_ref_named_region.pd", "-"),
-    ("N9-04", "M7", "reject", "tests/reject/lifetime_param_list.pd", "lifetime parameter list"),
-    ("N9-06", "M7", "reject", "tests/reject/ambiguous_region.pd", "ambiguous region"),
+    ("N9-04", "M7", "reject", "tests/reject/lifetime_param_list.pd", SYNTHETIC_PINS["N9-04"]),
+    ("N9-06", "M7", "reject", "tests/reject/ambiguous_region.pd", SYNTHETIC_PINS["N9-06"]),
     ("SH-01", "-", "gate", "make selfhost", "-"),
     ("SH-02", "M9", "gate", "make selfhost-corpus", "-"),
     ("SH-03", "M9", "gate", "make selfhost-corpus", "-"),
@@ -2635,11 +3432,12 @@ BASE_ROWS = [
 ]
 
 
-def _rows(drop=None, retype=None, repoint=None, blank_fp=None, extra=""):
+def _rows(drop=None, retype=None, repoint=None, blank_fp=None, extra="", fps=None):
     out = [HDR]
     for rid, ms, kind, ev, fp in BASE_ROWS:
         if rid == drop:
             continue
+        fp = (fps or {}).get(rid, fp)
         req = real_acceptance().get(rid, f"req {rid}")
         if retype and rid == retype[0]:
             kind, ev = retype[1], retype[2]
@@ -2661,8 +3459,13 @@ fn main() { drive(s, c); }
 """
 GOOD_REPORT = "Function 'emit' has effects: [Io]\nFunction 'header' has effects: [Io]\n"
 # The synthetic corpus uses the REAL evidence locators, because the contract is pinned:
-# a synthetic state that disagreed with it would be rejected before any case ran.
-_C = EXPECTED_THESIS_CONTRACT
+# a synthetic state that disagreed with it would be rejected before any case ran. The
+# fingerprints are the pinned ones with SYNTHETIC_PINS minted in; see there.
+_C = MappingProxyType({rid: (kind, ev, SYNTHETIC_PINS.get(rid, fp))
+                       for rid, (kind, ev, fp) in EXPECTED_THESIS_CONTRACT.items()})
+# The six rows as the REAL manifest carries them, for the cases that drive the pinned
+# contract: its rule phrases, verbatim.
+REAL_FPS = {rid: EXPECTED_THESIS_CONTRACT[rid][2] for rid in SYNTHETIC_PINS}
 ALL_VERDICTS = "\n".join(
     f"{ev} {'REJECTED' if kind == 'reject' else 'PASS_VERIFIED'}"
     for kind, ev, _fp in _C.values() if kind in ("reject", "fixture"))
@@ -2737,7 +3540,7 @@ def _verdict(row_id: str, verdict: str) -> str:
 # used to cover one row; the other five rows had `-` and skipped the comparison, which is
 # the hole MF2 closed.
 # The corpus must declare EXACTLY the pinned fingerprint — that is the contract the gate
-# enforces, and conformance.sh then greps that literal against the real diagnostic.
+# enforces, and conformance.sh then judges that pin against the real refusal by its code.
 GOOD_FP = {ev: fp for kind, ev, fp in _C.values() if kind == "reject" and fp != "-"}
 
 
@@ -2746,7 +3549,8 @@ def _drive(*, rows=None, witness_b=GOOD_WITNESS, verdicts=ALL_VERDICTS, make=Non
            omit_report_b=False, real_conformance=None, real_pdc=None,
            unreadable_requirements=False, unreadable_makefile=False,
            real_make=False, drop_observable=False, observables=None,
-           definition_incomplete=False, gate_source=None) -> int:
+           definition_incomplete=False, gate_source=None, conformance_source=None,
+           contract=None) -> int:
     """Run the WHOLE gate against an injected repository state."""
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
@@ -2794,7 +3598,8 @@ def _drive(*, rows=None, witness_b=GOOD_WITNESS, verdicts=ALL_VERDICTS, make=Non
                       observable_results=(None if drop_observable
                                           else (observables or GOOD_OBSERVABLE)),
                       assume_definition_complete=not definition_incomplete,
-                      gate_source=gate_source)
+                      gate_source=gate_source, conformance_source=conformance_source,
+                      contract=_C if contract is None else contract)
         if real_make:
             (tmp / "Makefile").write_text(
                 "".join(f"{tgt}:\n\t@true\n" for tgt in GOOD_MAKE))
@@ -2810,7 +3615,8 @@ def _drive(*, rows=None, witness_b=GOOD_WITNESS, verdicts=ALL_VERDICTS, make=Non
                       observable_results=(None if drop_observable
                                           else (observables or GOOD_OBSERVABLE)),
                       assume_definition_complete=not definition_incomplete,
-                      gate_source=gate_source)
+                      gate_source=gate_source, conformance_source=conformance_source,
+                      contract=_C if contract is None else contract)
         buf = io.StringIO()
         # THE REASON A HARNESS ERROR CARRIES IS ON stderr, and only stdout was captured —
         # so a case asserting WHY the gate refused could not see the why at all, and the
@@ -2913,8 +3719,34 @@ def self_test() -> int:
     _me_for_drive = (ROOT / "scripts/thesis_exit.py").read_text()
     # Assembled at run time; written whole each would occur twice and `mutate()` refuses an
     # ambiguous anchor.
-    _fp_anchor = "if want_fp" + ".strip() != decl.strip():"
     _disp_anchor = "return p_effect_is_" + "transitive(effect_report(ctx, w), src)"
+
+    # GI-12'S MUTANTS ARE EDITS TO scripts/conformance.sh, the script that judges a
+    # rejection, so these anchors are that file's text and need no run-time assembly: this
+    # file is not the one they mutate. Each occurs there exactly once, and `mutate()` says so
+    # loudly the day one stops matching.
+    _conf = CONFORMANCE_SH.read_text()
+    _conf_call = 'if pin_verdict=$(coded_pin_verdict "$fp" "$TMPROOT/pdc_stderr"); then'
+    _conf_arm = "      reject|skip)\n"
+    _conf_phrase = 'declared_phrase_match "$fp" "$log"; fp_match=$?'
+    _conf_xarm = "      xfail)\n        " + _conf_phrase + " ;;\n"
+    _conf_arm_whole = _conf[_conf.index(_conf_arm):
+                            _conf.index("        fi ;;\n", _conf.index(_conf_arm)) + 14]
+    # The reject/skip arm as it was before the cutover: the phrase match, no comparator.
+    _conf_reverted = mutate(_conf, _conf_arm_whole,
+                            _conf_arm + "        " + _conf_phrase + " ;;\n")
+
+    def _gi12(src):
+        """(EXISTENCE holds, ABSENCE holds) over one conformance.sh source."""
+        missing, leaking = code_attribution_wiring(src)
+        return (not missing, not leaking)
+
+    def _rename(src, old, new):
+        """Every whole-word `old` -> `new`, refusing a rename that renames nothing."""
+        out, n = re.subn(rf"(?<![A-Za-z0-9_]){re.escape(old)}(?![A-Za-z0-9_])", new, src)
+        if n == 0:
+            raise HarnessError(f"self-test: renaming {old!r} matched nothing")
+        return out
 
     def _raises_harness(fn):
         try:
@@ -2947,13 +3779,63 @@ def self_test() -> int:
     # version handed in a map for a path that is not in the contract at all: all six real
     # rows then had no declaration, the run went red for THAT, and deleting the comparison
     # outright would not have turned it green.
+    # The wrong reason is a CODE now, because that is all a manifest reject row can say:
+    # PD0039 is the parser's expected-expression refusal, the one a stray `@@@` draws.
     case("REJECTED for the WRONG reason goes RED (incidental unsupported syntax)",
-         _why(_drive(fingerprints=mutate_fp("N9-06",
-                                       "Unsupported type in reference parameter"))), '1 RED=N9-06')
+         _why(_drive(fingerprints=mutate_fp("N9-06", "code=PD0039"))), '1 RED=N9-06')
     case("the other declarations are untouched by that mutation",
          len(GOOD_FP), sum(1 for k, _e, f in _C.values() if k == "reject" and f != "-"),
          drives_main=False)
     case("REJECTED at the fingerprint the row demands is green", _drive(), 0)
+    # EQUALITY, MEASURED. The AST check that p_verdict's comparison existed is retired with
+    # the detector it served; what the comparison must DO is asserted here instead, in the
+    # direction a loosening would take: a pin that merely CONTAINS the contract's is a
+    # different pin.
+    case("a manifest pin that EXTENDS the contract's is not it — `code=` plus a `msg~` the "
+         "row never asked for is a different pin, and substring would accept it",
+         _why(_drive(fingerprints=mutate_fp("N7-01", _C["N7-01"][2] + ";msg~x"))),
+         '1 RED=N7-01')
+    case("...and the bare code does not satisfy a row whose pin carries a `msg~`",
+         _why(_drive(fingerprints=mutate_fp("N9-06", _C["N9-06"][2].split(";")[0]))),
+         '1 RED=N9-06')
+
+    print("\n  the six refusals no code exists for yet (GI-12 cutover)")
+    # Driven through main() with the PINNED contract and the real manifest's own phrases,
+    # declared VERBATIM — the old world's all-green. It is red on exactly the six, for the
+    # one reason that is true of each: nothing has been minted to pin.
+    case("an UNMINTED row cannot pass: with the PINNED contract, a state that is otherwise "
+         "all green — its manifest declaring each rule phrase verbatim — is RED on exactly "
+         "the six rows whose refusal has no code",
+         _why(_drive(contract=EXPECTED_THESIS_CONTRACT, rows=_rows(fps=REAL_FPS),
+                     fingerprints={_C[r][1]: REAL_FPS[r] for r in REAL_FPS})),
+         "1 RED=" + ",".join(sorted(REAL_FPS)))
+    case("...and each of the six says WHY, rather than `rejected for the wrong reason`",
+         (_drive.last_output.count("has no stable code yet"),
+          "for the wrong reason" in _drive.last_output),
+         (len(REAL_FPS), False), drives_main=False)
+    case("...decided BEFORE the corpus is read: an unminted row whose fixture never ran "
+         "says unminted, not absent",
+         p_verdict(None, {}, _C["N8-08"][1], "reject", REAL_FPS["N8-08"])[1].startswith(
+             f"the refusal this row requires ('{REAL_FPS['N8-08']}') has no stable code"),
+         True, drives_main=False)
+    case("SYNTHETIC_PINS mints EXACTLY the pinned contract's unminted reject rows — a "
+         "refusal minted for real must leave it",
+         sorted(SYNTHETIC_PINS),
+         sorted(r for r, (k, _e, f) in EXPECTED_THESIS_CONTRACT.items()
+                if k == "reject" and not is_code_pin(f)), drives_main=False)
+    case("...and the self-test's contract differs from the pinned one in THOSE six "
+         "fingerprints and nowhere else, each a code pin replacing a rule phrase",
+         (sorted(r for r in EXPECTED_THESIS_CONTRACT if _C[r] != EXPECTED_THESIS_CONTRACT[r]),
+          all(_C[r][:2] == EXPECTED_THESIS_CONTRACT[r][:2] and is_code_pin(_C[r][2])
+              and not is_code_pin(EXPECTED_THESIS_CONTRACT[r][2]) for r in SYNTHETIC_PINS)),
+         (sorted(SYNTHETIC_PINS), True), drives_main=False)
+    case("the real run uses the PINNED contract and the real conformance.sh — both "
+         "injection points are the self-test's alone",
+         (Context().contract is EXPECTED_THESIS_CONTRACT, Context().conformance_source),
+         (True, None), drives_main=False)
+    case("an injected contract cannot change the ROW SET — only fingerprints may differ",
+         _why(_drive(contract={**_C, "ZZ-99": ("fixture", "x.pd", "-")})),
+         "2 HARNESS=the contract in use does not carry the pinne")
 
     print("\n  condition 1 — the witnesses, and the gates beneath them")
     case("a real `async fn` in a witness goes RED",
@@ -3204,10 +4086,12 @@ def self_test() -> int:
          drives_main=False)
 
     print("\n  the definition is INCOMPLETE, so no verdict is offered at all")
-    case("with GI-11/GI-12 outstanding the gate REFUSES — exit 2, not a RED verdict",
-         _why(_drive(definition_incomplete=True)), '2 BLOCKED=GI-11,GI-12')
+    # GI-12 left this list at its cutover (its halves hold over conformance.sh); GI-11 is
+    # what refuses now, and the signature names it alone.
+    case("with GI-11 outstanding the gate REFUSES — exit 2, not a RED verdict",
+         _why(_drive(definition_incomplete=True)), '2 BLOCKED=GI-11')
     case("it refuses even when every scored row would pass",
-         _why(_drive(definition_incomplete=True)), '2 BLOCKED=GI-11,GI-12')
+         _why(_drive(definition_incomplete=True)), '2 BLOCKED=GI-11')
     _drive(definition_incomplete=True)
     case.mark = _drive.calls          # likewise
     _out = _drive.last_output
@@ -3220,8 +4104,10 @@ def self_test() -> int:
          drives_main=False)
     case("no aggregate tally is printed under refusal — a total is the quotable certificate",
          "of 22 evaluated rows would pass" in _out, False, drives_main=False)
-    case("it names both outstanding preconditions",
-         "GI-11" in _out and "GI-12" in _out, True, drives_main=False)
+    case("it names the outstanding precondition — GI-11 — and not GI-12, whose halves "
+         "hold over conformance.sh",
+         tuple(f"{rid} outstanding" in re.sub(r"\x1b\[[0-9;]*m", "", _out)
+               for rid in ("GI-11", "GI-12")), (True, False), drives_main=False)
     case("the real run never assumes the definition is complete",
          Context().assume_definition_complete, False, drives_main=False)
 
@@ -4080,40 +4966,35 @@ def self_test() -> int:
               ("GI-12", "LIVENESS_MODEL", "substring", "code", "x"))),
              validate_preconditions())[-1]), True, drives_main=False)
     globals()["PRECONDITIONS"] = _saved_pre
-    case("as committed, both safeguards are outstanding and BOTH refuse",
-         _no_check, ["GI-11", "GI-12"], drives_main=False)
+    case("as committed, ONLY GI-11 refuses — GI-12's halves hold, and deleting its tuple "
+         "is refused all the same: a met safeguard still guards",
+         _no_check, ["GI-11"], drives_main=False)
 
     # F3/MF2. WHAT "MET" MEANS. It used to mean two labels agree: the decision read
     # `globals()[const] != sound`, and `validate_preconditions()` compared `sound` against
     # a pin in the SAME FILE — pin against pin. Dual-edit both and GI-12 read as met while
     # the substring adjudicator was still deciding every reject row. The decision is
-    # physical now, and these cases drive both directions.
+    # physical now, and these cases drive both directions. After the cutover the two
+    # in-file cases that lived here — a casefold `in` and an operand swap in p_verdict's
+    # comparison — are retired with the in-file signal they probed: GI-12 is decided over
+    # conformance.sh, and p_verdict's Compare is pin against pin.
     _saved_attr = ATTRIBUTION_MODEL
     try:
+        globals()["ATTRIBUTION_MODEL"] = "substring"
+        _label_down = sorted({r for r, _w in incomplete_definition()})
         globals()["ATTRIBUTION_MODEL"] = "code"
-        _label_only = sorted({r for r, _w in incomplete_definition(_me_for_drive)})
+        _label_up = sorted({r for r, _w in incomplete_definition(
+            conformance_source=_conf_reverted)})
     finally:
         globals()["ATTRIBUTION_MODEL"] = _saved_attr
-    case("editing the LABEL does not lift GI-12 — `met` is not `two labels agree`, and a "
-         "dual edit of the tuple and its pin was the whole attack",
-         _label_only, ["GI-11", "GI-12"], drives_main=False)
-    # The lift now requires BOTH routes closed — this gate's comparator AND the shell that
-    # actually adjudicates — which is what round 23 added, so the in-file half alone no
-    # longer lifts it and this case says so by asserting GI-12 is STILL there.
-    case("closing only THIS file's comparator does not lift GI-12 while `conformance.sh` "
-         "still matches by fixed string — one route closed is not the mechanism retired",
-         sorted({r for r, _w in incomplete_definition(mutate(
-             _me_for_drive, _fp_anchor,
-             "if want_fp.casefold() not in decl.casefold():"))}),
-         ["GI-11", "GI-12"], drives_main=False)
-    case("...and a NO-OP OPERAND SWAP does not lift it: `a != b` is `b != a`, and matching "
-         "one order read a semantically identical refactor as the mechanism being retired",
-         sorted({r for r, _w in incomplete_definition(mutate(
-             _me_for_drive, _fp_anchor, "if decl.strip() != want_fp.strip():"))}),
-         ["GI-11", "GI-12"], drives_main=False)
+    case("editing the LABEL does not lift GI-12 — `met` is not `two labels agree`: `code` "
+         "over a dispatch reverted to the phrase match leaves it outstanding",
+         _label_up, ["GI-11", "GI-12"], drives_main=False)
+    case("...nor re-open it: `substring` over the dispatch that judges by code leaves it met",
+         _label_down, ["GI-11"], drives_main=False)
     case("GI-11 refuses on THREE grounds now — the model in use, and each corpus — so a "
          "corpus that passes cannot declare the model replaced",
-         len([r for r, _w in incomplete_definition(_me_for_drive) if r == "GI-11"]), 3,
+         len([r for r, _w in incomplete_definition() if r == "GI-11"]), 3,
          drives_main=False)
 
     # F2. `_validate_contract` names the defect "a reject row with no required fingerprint";
@@ -4125,6 +5006,20 @@ def self_test() -> int:
     case("...while a real fingerprint still validates",
          _raises_harness(lambda: _validate_contract(
              {"X-01": ("reject", "x.pd", "declared pure")})), False, drives_main=False)
+    # The GI-12 cutover's TWO FORMS: a code pin, or a rule phrase for a refusal not yet
+    # minted. A third shape — one that starts out as a pin and is not one — would read as
+    # an unminted phrase and turn a typo into a requirement nobody owes, so it is refused.
+    case("a reject row pins a CODE or names an unminted RULE PHRASE — both validate, the "
+         "compound pin with a `;` inside its fragment included",
+         [_raises_harness(lambda fp=fp: _validate_contract({"X-01": ("reject", "x.pd", fp)}))
+          for fp in ("code=PD0001", "code=PD0042;msg~[Int; N]", "lifetime parameter list")],
+         [False] * 3, drives_main=False)
+    case("...and a value SHAPED like a pin that is not one is refused, in every spelling "
+         "that misses the grammar",
+         [_raises_harness(lambda fp=fp: _validate_contract({"X-01": ("reject", "x.pd", fp)}))
+          for fp in ("code=PD12", "code=PD00012", "code=pd0001", "CODE=PD0001",
+                     " code=PD0001", "code=PD0001 ", "code=PD0001;msg~", "code=PD0001;")],
+         [True] * 8, drives_main=False)
 
     print("\n  THE CATCHING TOOLS THEMSELVES — round 23")
     # Twenty-two rounds of finding self-satisfying checks, and the last instances were in
@@ -4184,19 +5079,123 @@ def self_test() -> int:
          len(corpus_figures_in("planted.md", f"A11 says {_stale_fig} today", 70)), 1,
          drives_main=False)
 
-    # MF4. Rename + label defeated the identifier-keyed detector with `grep -qF` live.
-    _renamed = mutate(_me_for_drive, _fp_anchor,
-                      "_l, _r = want_fp, decl\n        if _l.strip() != _r.strip():")
-    case("the RENAME+LABEL attack no longer retires GI-12: attribution is anchored to the "
-         "file that adjudicates, and `conformance.sh` still matches by fixed string",
-         [s for s in substring_attribution_live(_renamed, CONFORMANCE_SH.read_text())
-          if "conformance.sh" in s] != [], True, drives_main=False)
-    case("...and with BOTH gone the refusal lifts, so the anchor is not a tautology",
-         substring_attribution_live(_renamed, "no fixed-string matcher here"), [],
+    # MF4. Rename + label defeated the identifier-keyed detector with `grep -qF` live, and
+    # the lexical detector that replaced it could be satisfied by neither half being wired.
+    # RETIRED AT THE GI-12 CUTOVER with both detectors; what replaced them is R3's two
+    # halves over conformance.sh (`code_attribution_wiring`), and these are its mutants —
+    # each half proved by an edit it must catch AND an edit the other half would have
+    # missed, then the refactors that must NOT move it. The rename attack keeps its place:
+    # it was the edit the old detector fell to, so it is run against the new one twice,
+    # with the dispatch wired and with it reverted.
+    print("\n  GI-12 — conformance.sh's reject/skip dispatch, both halves (spec R3)")
+    case("as committed, BOTH halves hold over the real conformance.sh",
+         _gi12(_conf), (True, True), drives_main=False)
+    _unbolted = mutate(_conf, _conf_call, "if pin_verdict=MATCH; then")
+    case("comparator UNBOLTED — the arm no longer calls it — fails EXISTENCE, while "
+         "absence alone still holds: the half that fails open",
+         _gi12(_unbolted), (False, True), drives_main=False)
+    case("...and the call written in a COMMENT and an echoed STRING in that arm does not "
+         "put it back — the line asking cannot hold the answer",
+         _gi12(mutate(_conf, _conf_call,
+                      "# " + _conf_call + "\n        echo '" + _conf_call
+                      + "'\n        if pin_verdict=MATCH; then")), (False, True),
          drives_main=False)
-    case("...and GI-12 stays outstanding on the real tree",
-         "GI-12" in {r for r, _w in incomplete_definition(_renamed)}, True,
+    case("...and the comparator handed the MERGED log instead of pdc's stderr fails it too "
+         "(spec R6: a stdout line can be header-shaped)",
+         _gi12(mutate(_conf, _conf_call, _conf_call.replace('"$TMPROOT/pdc_stderr"',
+                                                            '"$log"'))),
+         (False, True), drives_main=False)
+    case("...and so does a comparator handed a LITERAL instead of the declared pin",
+         _gi12(mutate(_conf, _conf_call, _conf_call.replace('"$fp"', '"code=PD0001"'))),
+         (False, True), drives_main=False)
+    case("...and so does one whose shared-parser call is gone, or a parser REDEFINED in "
+         "conformance.sh shadowing the shared one",
+         (_gi12(mutate(_conf, 'state=$(pd_diag_parse "$cap") || return 2',
+                       "state=CODED")),
+          _gi12(mutate(_conf, "coded_pin_verdict() {\n",
+                       "pd_diag_parse() { printf 'CODED\\tPD0001\\tx\\n'; }\n"
+                       "coded_pin_verdict() {\n"))),
+         ((False, True), (False, True)), drives_main=False)
+    case("LEGACY RE-ATTACHED — the arm reverted to the phrase match — fails BOTH halves",
+         _gi12(_conf_reverted), (False, False), drives_main=False)
+    case("...and the phrase match bolted on BESIDE the comparator fails ABSENCE, which "
+         "existence alone would have passed",
+         _gi12(mutate(_conf, _conf_arm, _conf_arm + "        " + _conf_phrase + "\n")),
+         (True, False), drives_main=False)
+    case("...and so does the declared pin grepped INLINE in the arm, with no helper",
+         _gi12(mutate(_conf, _conf_arm,
+                      _conf_arm + '        grep -qF -- "$fp" "$log" && fp_match=0\n')),
+         (True, False), drives_main=False)
+    case("the phrase match reached through a HELPER from the reject arm fails absence — "
+         "the pin is followed into `$1`, then `declared_phrase_match`, then `grep_status`",
+         _gi12(mutate(mutate(_conf, "coded_pin_verdict() {\n",
+                             'attribute_row() { declared_phrase_match "$1" "$2"; }\n'
+                             "coded_pin_verdict() {\n"),
+                      _conf_arm, _conf_arm + '        attribute_row "$fp" "$log"\n')),
+         (True, False), drives_main=False)
+    case("...and so does a pin FORWARDED by `\"$@\"` in second position — it keeps its "
+         "position through the forward, so a callee reading only `$2` still holds it",
+         _gi12(mutate(mutate(_conf, "coded_pin_verdict() {\n",
+                             'attribute_row() { phrase_second "$@"; }\n'
+                             'phrase_second() { grep -qF -- "$2" "$TMPROOT/diag"; }\n'
+                             "coded_pin_verdict() {\n"),
+                      _conf_arm, _conf_arm + '        attribute_row "$log" "$fp"\n')),
+         (True, False), drives_main=False)
+    case("...and so does a pin copied through `export` before it is grepped",
+         _gi12(mutate(_conf, _conf_arm, _conf_arm + '        export LEAK="$fp"\n'
+                      '        grep -qF -- "$LEAK" "$log"\n')),
+         (True, False), drives_main=False)
+    case("...and so does a helper that reads the pin as a GLOBAL, with no argument at all",
+         _gi12(mutate(mutate(_conf, "coded_pin_verdict() {\n",
+                             'attribute_row() { grep_status F "$fp" "$TMPROOT/diag"; }\n'
+                             "coded_pin_verdict() {\n"),
+                      _conf_arm, _conf_arm + "        attribute_row\n")),
+         (True, False), drives_main=False)
+    case("...and so does the phrase match HOISTED above the dispatch, where it runs for "
+         "every class: reachable from reject is not only `inside the reject arm`",
+         _gi12(mutate(_conf, '    case "$class" in\n      xfail)\n',
+                      "    " + _conf_phrase + '\n    case "$class" in\n      xfail)\n')),
+         (True, False), drives_main=False)
+    _skip_only = _gi12(mutate(_conf, _conf_arm, "      skip)\n        " + _conf_phrase
+                              + " ;;\n      reject)\n"))
+    case("the SKIP arm alone regressed fails both halves — and existence names `skip` "
+         "and not `reject`, so the two classes are proved separately",
+         (_skip_only, [m for m in code_attribution_wiring(mutate(
+             _conf, _conf_arm, "      skip)\n        " + _conf_phrase
+             + " ;;\n      reject)\n"))[0] if "`reject`" in m]),
+         ((False, False), []), drives_main=False)
+    _renamed = _rename(_rename(_rename(_rename(_conf, "fp", "declared_pin"), "class",
+                                       "row_class"), "cap", "capture_file"),
+                       "coded_pin_verdict", "judge_by_code")
+    case("REFACTORS THAT PRESERVE MEANING do not move it: locals renamed (`fp`, `class`, "
+         "`cap`) and the comparator itself renamed",
+         _gi12(_renamed), (True, True), drives_main=False)
+    case("...nor arms REORDERED, `reject|skip` written as TWO arms, or reached by `*)`",
+         [_gi12(mutate(mutate(_conf, _conf_xarm, ""), _conf_arm_whole,
+                       _conf_arm_whole + _conf_xarm)),
+          _gi12(mutate(_conf, _conf_arm_whole,
+                       _conf_arm_whole.replace(_conf_arm, "      reject)\n")
+                       + _conf_arm_whole.replace(_conf_arm, "      skip)\n"))),
+          _gi12(mutate(_conf, _conf_arm, "      *)\n"))],
+         [(True, True)] * 3, drives_main=False)
+    case("the RENAME attack, which retired the first detector, does not hide a reverted "
+         "dispatch from this one",
+         _gi12(_rename(_rename(_conf_reverted, "fp", "declared_pin"), "class",
+                       "row_class")), (False, False), drives_main=False)
+    case("...nor does renaming the manifest ARRAY the pin is tracked from make it met: "
+         "nothing is tracked, so existence FAILS CLOSED",
+         _gi12(_rename(_conf, "M_FP", "M_OBS")), (False, True), drives_main=False)
+    case("a conformance.sh this reader cannot parse, or an empty one, is never met",
+         (_gi12(_conf + "\ncase x in\n"), _gi12("")), ((False, False), (False, True)),
          drives_main=False)
+    case("GI-12 is listed by incomplete_definition iff a half fails — reverted, unbolted",
+         [sorted({r for r, _w in incomplete_definition(conformance_source=c)})
+          for c in (_conf_reverted, _unbolted)], [["GI-11", "GI-12"]] * 2,
+         drives_main=False)
+    case("a `code` declaration over a failing half is a HARNESS ERROR through main(), "
+         "not a silent lift",
+         _why(_drive(conformance_source=_unbolted)),
+         "2 HARNESS=the gate's declared models do not match its ")
 
     # MF5. Module-level I/O escaped the three-state boundary entirely.
     # THE CONTROL THAT MEASURES THE REQUIREMENT: run the real command against a tree whose
@@ -4435,8 +5434,9 @@ def self_test() -> int:
          len(PINNED_ACCEPTANCE_SHA["GI-11"]), 64, drives_main=False)
 
     print("\n  a precondition cannot be satisfied by naming an artifact")
-    case("both preconditions are outstanding right now",
-         sorted(set(r for r, _w in incomplete_definition())), ["GI-11", "GI-12"],
+    case("only GI-11 is outstanding right now — GI-12 is met by conformance.sh's wiring, "
+         "not by an artifact or a label",
+         sorted(set(r for r, _w in incomplete_definition())), ["GI-11"],
          drives_main=False)
     case("GI-11 is outstanding for BOTH reasons — the structural AND the liveness corpus",
          len([r for r, _w in incomplete_definition() if r == "GI-11"]), 3,
@@ -4452,9 +5452,15 @@ def self_test() -> int:
          bool(wiring_matches_declaration(mutate(
              _me, '\nLIVENESS_MODEL = "lexical"', '\nLIVENESS_MODEL = "call-graph"'))),
          True, drives_main=False)
-    case("declaring `code` while the substring comparison is still wired is caught",
-         bool(wiring_matches_declaration(mutate(
-             _me, '\nATTRIBUTION_MODEL = "substring"', '\nATTRIBUTION_MODEL = "code"'))),
+    case("declaring `code` while conformance.sh is reverted to the phrase match is caught",
+         any("ATTRIBUTION_MODEL says `code`" in d
+             for d in wiring_matches_declaration(_me, _conf_reverted)), True,
+         drives_main=False)
+    case("...and declaring `substring` while both halves hold is caught, so the label "
+         "cannot be walked back over a dispatch that judges by code",
+         any("ATTRIBUTION_MODEL says `substring`" in d
+             for d in wiring_matches_declaration(mutate(
+                 _me, '\nATTRIBUTION_MODEL = "code"', '\nATTRIBUTION_MODEL = "substring"'))),
          True, drives_main=False)
     case("the declaration and the wiring agree as committed",
          wiring_matches_declaration((ROOT / "scripts/thesis_exit.py").read_text()), [],
@@ -4463,9 +5469,12 @@ def self_test() -> int:
     # THE CHECK THAT GATES EVERYTHING ELSE USED TO SATISFY ITSELF (MUST-FIX 1). Both halves
     # were answerable by text this file contains for other reasons, so both are now read as
     # STRUCTURE, and both reverts are driven here rather than described.
-    # BOTH ANCHORS ARE ASSEMBLED AT RUN TIME. Written whole, each would occur twice in
-    # this file — once in the code being mutated and once here — and `mutate()` refuses an
+    # THE ANCHOR IS ASSEMBLED AT RUN TIME. Written whole, it would occur twice in this
+    # file — once in the code being mutated and once here — and `mutate()` refuses an
     # ambiguous anchor. That refusal is the same guard, one level down, and it fired.
+    # (The fingerprint half's three cases — a STRING of the comparison, a literal-only
+    # source, the real expression — left with `_has_fingerprint_comparison` at the GI-12
+    # cutover. Their lesson moved with the check: see the COMMENT-and-STRING case above.)
     case("DELETING the real TH-05 dispatch makes the check fail — it was satisfied by the "
          "probe name appearing in a tuple, a comment or its own `def`",
          bool(wiring_matches_declaration(mutate(
@@ -4477,18 +5486,6 @@ def self_test() -> int:
                 'return (False, "dispatch removed")').count(
                     "p_effect_is_" + "transitive") > 1,
          True, drives_main=False)
-    case("REPLACING the fingerprint comparison with a STRING of itself makes the check "
-         "fail — the defect was that the asking line contained the answer",
-         bool(wiring_matches_declaration(mutate(
-             _me, _fp_anchor, 'if ' + '"want_fp' + '.strip() != decl.strip()" and False:'))),
-         True, drives_main=False)
-    case("a source whose ONLY occurrence of the comparison is a string literal reads as "
-         "NOT wired — a literal is a Constant, not a Compare",
-         _has_fingerprint_comparison(__import__("ast").parse(
-             'x = "want_fp.strip() != decl.strip()"\n')), False, drives_main=False)
-    case("...while the real expression reads as wired",
-         _has_fingerprint_comparison(__import__("ast").parse(
-             _fp_anchor + "\n    pass\n")), True, drives_main=False)
     case("a reference from the SELF-TEST is not wiring — measured: one audit case calling "
          "a probe directly kept it `wired` with its dispatch deleted",
          ("p_effect_is_transitive" in _load_references(__import__("ast").parse(
@@ -4650,7 +5647,7 @@ def self_test() -> int:
     if (ROOT / "target/release/pdc").is_file():
         with tempfile.TemporaryDirectory(dir=ROOT / "build_output") as d:
             probe = Path(d)
-            phrase = _C["N7-01"][2]
+            phrase = EXPECTED_THESIS_CONTRACT["N7-01"][2]   # the RULE PHRASE, not _C's pin
             (probe / "incidental.pd").write_text(
                 'fn main() {\n    let msg = "' + phrase + '";\n    @@@\n}\n')
             man = probe / "manifest.txt"
