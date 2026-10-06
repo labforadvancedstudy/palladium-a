@@ -21,6 +21,11 @@
 // ALIASES OF ARRAYS: `type KA = [K; 2]` and friends are declared as the array
 // they name; every one printed `long long[2] xs` (brackets before the name)
 // and gcc refused it, for `[i64; 2]` and `[S; 2]` on 2563001 too.
+//
+// Review round 2 added A PARAMETER IS NOT AN ALIAS: `struct Wide<Wd>` beside
+// `type Wd = bool;` is instantiated at `i64`, and f841b99 expanded the field's
+// `Wd` as the alias before monomorphising, so `Wide { v: 4294967297 }` printed
+// `1` with exit 0 — a silent wrong answer this transcript now pins.
 
 enum K {
     A,
@@ -110,6 +115,12 @@ fn last_of(xs: IA) -> i64 {
     return xs[1];
 }
 
+type Wd = bool;
+
+struct Wide<Wd> {
+    v: Wd,
+}
+
 fn main() {
     // Both literal forms against an annotation.
     let xs: [K; 4] = [K::B; 4];
@@ -182,4 +193,13 @@ fn main() {
     print_int(row.xs[1]);
     print_int(row.n);
     print_int(last_of(ia));
+
+    // A type parameter named like a global alias is the parameter.
+    let wide = Wide { v: 4294967297 };
+    let flag: Wd = true;
+    print("\nParameter, not alias:");
+    print_int(wide.v);
+    if flag {
+        print_int(1);
+    }
 }

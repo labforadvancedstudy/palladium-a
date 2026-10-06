@@ -7006,18 +7006,24 @@ impl CodeGenerator {
             }
         }
         aliases.extend(crate::ast::non_generic_aliases(program));
+        // A TEMPLATE'S OWN PARAMETERS ARE BOUND (round 2): a generic struct's
+        // fields carry its parameters as `Custom`, so `type T = bool;` beside
+        // `struct G<T> { v: T }` turned `G_i64.v` into an `int` and printed `1`
+        // for 4294967297 — silently. `bound` is what the expander never looks up.
         for (_, _, template) in &mut self.generic_instantiations {
+            let bound = template.type_params.clone();
             for (_, ty) in &mut template.params {
-                crate::ast::expand_aliases_in_type(ty, &aliases);
+                crate::ast::expand_aliases_in_type(ty, &aliases, &bound);
             }
             if let Some(ty) = &mut template.return_type {
-                crate::ast::expand_aliases_in_type(ty, &aliases);
+                crate::ast::expand_aliases_in_type(ty, &aliases, &bound);
             }
-            crate::ast::expand_aliases_in_block(&mut template.body, &aliases);
+            crate::ast::expand_aliases_in_block(&mut template.body, &aliases, &bound);
         }
         for (_, _, template) in &mut self.generic_struct_instantiations {
+            let bound = template.type_params.clone();
             for (_, ty) in &mut template.fields {
-                crate::ast::expand_aliases_in_type(ty, &aliases);
+                crate::ast::expand_aliases_in_type(ty, &aliases, &bound);
             }
         }
         crate::ast::expand_type_aliases(program, &aliases)

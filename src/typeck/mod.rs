@@ -3856,8 +3856,8 @@ impl TypeChecker {
                         )))
                     }
                 } else {
-                    // Not a type parameter, just a regular custom type
-                    Ok(self.with_enum_kinds(ty))
+                    // Not a parameter: a global name, so a global alias resolves
+                    Ok(self.ast_type_to_checker_type(ty))
                 }
             }
             // A composite: its parameters are substituted at every depth
@@ -6398,14 +6398,14 @@ impl TypeChecker {
         let mut param_types = Vec::new();
         for (_param_name, param_type) in &generic_func.params {
             let substituted_type = self.substitute_type(param_type, &subst_map)?;
-            param_types.push(self.with_enum_kinds(&substituted_type));
+            param_types.push(self.ast_type_to_checker_type(&substituted_type));
         }
 
         // Substitute return type
         let return_type = match &generic_func.return_type {
             Some(ret_type) => {
                 let substituted = self.substitute_type(ret_type, &subst_map)?;
-                self.with_enum_kinds(&substituted)
+                self.ast_type_to_checker_type(&substituted)
             }
             None => CheckerType::Unit,
         };

@@ -494,3 +494,132 @@ fn an_array_payload_is_refused_before_any_c_exists() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Review round 2 (f841b99): a type parameter is never expanded as a global
+// alias of the same name, and an alias that names nothing bound still is.
+// ---------------------------------------------------------------------------
+
+/// THE SILENT WRONG ANSWER. With `type T = bool;` beside `struct G<T>`, f841b99
+/// expanded the field's `T` as the alias before monomorphising, declared
+/// `G_i64.v` as an `int`, and this printed `1` — exit 0, no diagnostic. main
+/// (ad63231) prints 4294967297. Every row is a valid program that must run with
+/// the parameter's type, not the alias's.
+#[test]
+fn a_type_parameter_is_never_expanded_as_a_global_alias_of_its_name() {
+    let rows: [(&str, &str, &str); 6] = [
+        (
+            "struct field, alias = bool",
+            "type T = bool;\nstruct G<T> { v: T }\n\
+             fn main() { let g = G { v: 4294967297 }; print_int(g.v); }",
+            "4294967297\n",
+        ),
+        (
+            "struct field, alias = String",
+            "type T = String;\nstruct G<T> { v: T }\n\
+             fn main() { let g = G { v: 3 }; print_int(g.v); }",
+            "3\n",
+        ),
+        (
+            "struct field at String, alias = i64",
+            "type T = i64;\nstruct G<T> { v: T, n: i64 }\n\
+             fn main() { let g = G { v: \"hi\", n: 1 }; print(g.v); print_int(g.n); }",
+            "hi\n1\n",
+        ),
+        (
+            "array field, alias = bool",
+            "type T = bool;\nstruct G<T> { v: T, k: [T; 2] }\n\
+             fn main() { let g = G { v: 3, k: [4294967297, 2] }; print_int(g.k[0]); }",
+            "4294967297\n",
+        ),
+        (
+            "second of two parameters",
+            "type U = bool;\nstruct G<T, U> { a: T, b: U }\n\
+             fn main() { let g = G { a: 1, b: 4294967297 }; print_int(g.b); }",
+            "4294967297\n",
+        ),
+        (
+            "generic fn parameter and return",
+            "type T = bool;\nfn id<T>(x: T) -> T { return x; }\n\
+             fn main() { print_int(id(4294967297)); }",
+            "4294967297\n",
+        ),
+    ];
+    for (shape, source, want) in rows {
+        let out = run(source, "alias_vs_tparam");
+        assert_eq!(out, want, "{}", shape);
+    }
+}
+
+/// The same shadowing at `bool`, where the PRINTED value cannot tell: `true`
+/// stored in a `long long` and read back is still 1. So the receipt is the
+/// field's C type — `type T = i64;` must not make `G_bool.v` a `long long`.
+#[test]
+fn a_bool_instantiation_shadowing_an_i64_alias_declares_a_bool_field() {
+    let source = "type T = i64;\nstruct G<T> { v: T, n: i64 }\n\
+                  fn main() { let g = G { v: true, n: 1 }; \
+                  if g.v { print_int(1); } else { print_int(0); } }";
+    assert_eq!(run(source, "alias_vs_tparam_bool"), "1\n");
+    let name = unique_module_name("alias_vs_tparam_bool_c");
+    let dir = TempDir::new().unwrap();
+    let src = dir.path().join(format!("{}.pd", name));
+    fs::write(&src, source).unwrap();
+    let c = fs::read_to_string(Driver::new().compile_file(&src).unwrap()).unwrap();
+    assert!(
+        c.contains("typedef struct G_bool {\n    int v;\n"),
+        "G_bool.v is not declared as the bool it is:\n{}",
+        c
+    );
+}
+
+/// The reverse control: an alias that names nothing bound expands inside a
+/// generic item — and the type checker resolves it there too, through the
+/// GLOBAL scope its body was written in (main refused every row here, e.g.
+/// `expected A, found [Int; 2]`). The last row is the hygiene case: `type A =
+/// T;` means the global `struct T` even inside `struct G<T>`.
+#[test]
+fn an_alias_inside_a_generic_item_is_still_the_type_it_names() {
+    let rows: [(&str, &str, &str); 6] = [
+        (
+            "array alias field",
+            "type A = [i64; 2];\nstruct G<T> { v: T, a: A }\n\
+             fn main() { let g = G { v: 3, a: [1, 2] }; print_int(g.v); print_int(g.a[1]); }",
+            "3\n2\n",
+        ),
+        (
+            "scalar alias field",
+            "type N = i64;\nstruct G<T> { v: T, n: N }\n\
+             fn main() { let g = G { v: 3, n: 5 }; print_int(g.n); }",
+            "5\n",
+        ),
+        (
+            "alias of an alias",
+            "type N = i64;\ntype M = N;\nstruct G<T> { v: T, m: M }\n\
+             fn main() { let g = G { v: 3, m: 4294967297 }; print_int(g.m); }",
+            "4294967297\n",
+        ),
+        (
+            "enum array alias field",
+            "enum K { A, B }\ntype KA = [K; 2];\nstruct G<T> { v: T, ks: KA }\n\
+             fn kc(k: K) -> i64 { match k { K::A => { return 0; } K::B => { return 1; } } }\n\
+             fn main() { let g = G { v: 3, ks: [K::B, K::A] }; print_int(kc(g.ks[0])); }",
+            "1\n",
+        ),
+        (
+            "alias parameter of a generic fn",
+            "type A = [i64; 2];\nfn f<T>(x: T, a: A) -> i64 { return a[1]; }\n\
+             fn main() { let a: A = [5, 6]; print_int(f(1, a)); }",
+            "6\n",
+        ),
+        (
+            "an alias naming a global the item binds",
+            "struct T { n: i64 }\ntype A = T;\nstruct G<T> { v: T, a: A }\n\
+             fn main() { let g = G { v: 3, a: T { n: 7 } }; print_int(g.a.n); print_int(g.v); }",
+            "7\n3\n",
+        ),
+    ];
+    for (shape, source, want) in rows {
+        let out = run(source, "alias_in_generic");
+        assert_eq!(out, want, "{}", shape);
+    }
+}
