@@ -355,15 +355,12 @@ elif w == "cmd-artifact":      # a build artifact is not reproducible from a che
 elif w == "cmd-artifact-first":    # ...below the first component too
     t = t.replace('    hit, how = next((x for x in parts if x in CMD_UNREAD_DIRS), None), "resolves into"',
                   '    hit, how = next((x for x in parts[:1] if x in CMD_UNREAD_DIRS), None), "resolves into"', 1)
-elif w == "written-names":     # ...and AS WRITTEN, not only as resolved
-    t = t.replace('    written = [x.casefold() for x in rel.split("/") if x not in ("", ".", "..")]',
-                  "    written = []", 1)
 elif w == "unread-metadata":   # .git and .worktrees are not this checkout's tree
     t = t.replace("                   **CMD_NOT_THE_TREE}", "                   }", 1)
 elif w == "artifact-order":    # the path is judged before it is required to exist
-    t = t.replace("    real = p.resolve()\n",
+    t = t.replace("    real, hops, loop = _resolve_operand(rel)\n",
                   "    if not p.exists(): return None, f\"reads {rel!r}, which does not exist\"\n"
-                  "    real = p.resolve()\n", 1)
+                  "    real, hops, loop = _resolve_operand(rel)\n", 1)
 elif w == "cmd-operators":     # a shell operator is not a pipeline
     t = t.replace("        elif tok in CMD_OPERATORS:", "        elif False:", 1)
 elif w == "result-compare":    # the claimed exit status and line count are compared
@@ -378,7 +375,11 @@ elif w == "l1-pattern-opt":    # the pattern may not arrive through an option
 elif w == "l2-exists":         # a named path must exist
     t = t.replace("    if not p.exists():", "    if False:", 1)
 elif w == "l2-symlink":        # a named path may not resolve outside the repo
-    t = t.replace("    real = p.resolve()", "    real = p", 1)
+    t = t.replace('        if c != ".." and here.is_symlink():', "        if False:", 1)
+elif w == "hop-names":         # every hop of the resolution is judged, not two ends
+    t = t.replace("    for kind, where, link in hops:", "    for kind, where, link in []:", 1)
+elif w == "hop-loop":          # past the hop cap is a refusal, not a place to stop
+    t = t.replace("                return None, hops, True", "                return here, hops, False", 1)
 elif w == "l3-probe":          # an absence must be shown capable of producing output
     t = t.replace("elif want_n == 0 and (perr := probe_reads_something(segments)):",
                   "elif False and (perr := probe_reads_something(segments)):", 1)
@@ -571,9 +572,12 @@ elif w == "head-on-main":      # HEAD on main is never a branch under review
 elif w == "applies-first":     # applicability is decided BEFORE any base is validated
     t = t.replace('if [ "$APPLIES" = yes ]; then\n  if [ -n "${COVERAGE_BASE:-}" ]; then',
                   'if true; then\n  if [ -n "${COVERAGE_BASE:-}" ]; then', 1)
-elif w == "grep-deref":        # -R follows symlinks out of the checkout
-    t = t.replace("            if base in GREP_DEREF_RECURSIVE:", "            if False:", 1)
-    t = t.replace('                    if ch == "R":', "                    if False:", 1)
+elif w == "grep-deref":        # options that follow symlinks while descending
+    t = t.replace('            if base in GREP_DEREF_RECURSIVE or (head == "grep" and base in GREP_DEREF_GREP_ONLY):',
+                  "            if False:", 1)
+    t = t.replace('                    if ch == "R" or (head == "grep" and ch == "S"):',
+                  "                    if False:", 1)
+    t = t.replace('        if head == "find" and tok in FIND_DEREF:', "        if False:", 1)
 elif w == "artifact-ancestor": # a recursive root containing build output reads it
     t = t.replace("    if any(real in (ROOT / d).parents for d in CMD_UNREAD_DIRS) or _holds_unread(real):",
                   "    if False:", 1)
@@ -668,7 +672,6 @@ artifact-deep|scripts/check_doc_evidence.py
 unread-gitfile|scripts/check_doc_evidence.py
 artifact-order|scripts/check_doc_evidence.py
 cmd-artifact-first|scripts/check_doc_evidence.py
-written-names|scripts/check_doc_evidence.py
 unread-metadata|scripts/check_doc_evidence.py
 drain-valueerror|scripts/check_doc_evidence.py
 count-width|scripts/check_doc_evidence.py
@@ -691,6 +694,8 @@ l1-path|scripts/check_doc_evidence.py
 l1-pattern-opt|scripts/check_doc_evidence.py
 l2-exists|scripts/check_doc_evidence.py
 l2-symlink|scripts/check_doc_evidence.py
+hop-names|scripts/check_doc_evidence.py
+hop-loop|scripts/check_doc_evidence.py
 l3-probe|scripts/check_doc_evidence.py
 l3-find-probe|scripts/check_doc_evidence.py
 l3-probe-cap|scripts/check_doc_evidence.py

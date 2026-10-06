@@ -127,6 +127,12 @@ a FUTURE branch is not reconciled against a stale inventory	kill	branch-scope
 an explicit base cannot make an inapplicable inventory apply	kill	applies-first
 a recursive read from a root containing build output is refused	kill	artifact-ancestor
 -R is refused: it follows symlinks out of the checkout	kill	grep-deref
+--dereference-recursive is refused: it follows symlinks	kill	grep-deref
+grep -S is refused: under -r it follows every symlink	kill	grep-deref
+a clustered -S is refused too	kill	grep-deref
+find -L is refused: it follows symlinks while descending	kill	grep-deref
+find -follow is refused: it follows symlinks while descending	kill	grep-deref
+grep -s (no messages) is not -S and stays accepted	guard	exact case: a casefolded deref check would refuse an option that follows nothing
 a read inside .git is refused: it is the repository's metadata	kill	unread-metadata
 a read inside .worktrees is refused: it is another checkout	kill	unread-metadata
 a build_output/ BELOW the first component is still an artifact	kill	cmd-artifact-first
@@ -137,13 +143,23 @@ a source directory stays a valid scope where nothing has been built	guard	the pa
 a scope holding a .git FILE is refused: a count over it reads metadata	kill	unread-gitfile
 an absence over a scope whose only file is a gitfile is refused	kill	unread-gitfile
 a gitfile named directly is refused: it is repository metadata	kill	unread-metadata
-a symlink NAMED .git is refused by that name (a count through it)	kill	written-names
-an absence through a symlink named .git is refused by that name	kill	written-names
-a symlink named target is refused by that name, though it points at source	kill	written-names
-a symlink named build_output is refused by that name, though it points at source	kill	written-names
-a symlink named .worktrees is refused by that name, though it points at source	kill	written-names
-a `..` cannot step an operand out of an excluded name	kill	written-names
+a symlink NAMED .git is refused by that name (a count through it)	kill	hop-names
+an absence through a symlink named .git is refused by that name	kill	hop-names
+a symlink named target is refused by that name, though it points at source	kill	hop-names
+a symlink named build_output is refused by that name, though it points at source	kill	hop-names
+a symlink named .worktrees is refused by that name, though it points at source	kill	hop-names
+a `..` cannot step an operand out of an excluded name	kill	hop-names
 a symlink that LEADS INTO a nested build_output/ is refused where it resolves	kill	cmd-artifact-first
+a two-link chain is refused at the hop that names .git (a count)	kill	hop-names
+an absence through a two-link chain is refused at the .git hop	kill	hop-names
+a three-link chain is refused at the hop that names .git	kill	hop-names
+a directory link in a MIDDLE component that leads through .git is refused	kill	hop-names
+a link with an ABSOLUTE target is refused, naming the link	kill	hop-names
+a link whose target TEXT walks through ../.git is refused	kill	hop-names
+a symlink loop is refused by the hop cap, not by an accident	kill	hop-loop
+names that only RESEMBLE an excluded one stay accepted, and so do docs/../src and src//	guard	the hop rule must not refuse by resemblance or by spelling; a containment that refuses honest operands gets bypassed
+a tracked symlink to a live file stays a valid operand	guard	the repository's own links must stay usable under the hop rule
+a tracked symlink whose target is absent is refused as ABSENT, not by a path rule	guard	the dangling tracked link is the existence test's case, and must not be claimed by a path rule
 no workflow env, job env or run step supplies a base to the coverage runner	kill	ci-no-base
 a blank target supports no claim	guard	the six the enumeration knew must keep failing under either implementation
 a bare closing brace supports no claim	guard	the six the enumeration knew must keep failing under either implementation

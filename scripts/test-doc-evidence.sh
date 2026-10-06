@@ -305,6 +305,35 @@ index deref_recursive unimplemented \
 expect_red deref_recursive "-R is refused: it follows symlinks out of the checkout" \
   "follows symlinks while descending"
 
+# Every option of an allowed tool that makes a recursive read FOLLOW LINKS while it
+# descends, refused by name (see GREP_DEREF_RECURSIVE). -R was the only one, and BSD -S
+# read src/meta -> ../.git through an accepted `grep -rS ref src/`. No planted link is
+# needed: the refusal is of the option, before anything is read.
+index deref_long unimplemented \
+  "cmd: grep -r --dereference-recursive zzz_no_such_identifier_anywhere src/ -> exit 1, 0 lines"
+expect_red deref_long "--dereference-recursive is refused: it follows symlinks" \
+  "follows symlinks while descending"
+index deref_S unimplemented \
+  "cmd: grep -r -S zzz_no_such_identifier_anywhere src/ -> exit 1, 0 lines"
+expect_red deref_S "grep -S is refused: under -r it follows every symlink" \
+  "follows symlinks while descending"
+index deref_S_cluster unimplemented \
+  "cmd: grep -rS zzz_no_such_identifier_anywhere src/ -> exit 1, 0 lines"
+expect_red deref_S_cluster "a clustered -S is refused too" \
+  "follows symlinks while descending"
+index deref_find_L unimplemented \
+  "cmd: find -L src -name '*.zzz' -> exit 0, 0 lines"
+expect_red deref_find_L "find -L is refused: it follows symlinks while descending" \
+  "follows symlinks while descending"
+index deref_find_follow unimplemented \
+  "cmd: find src -follow -name '*.zzz' -> exit 0, 0 lines"
+expect_red deref_find_follow "find -follow is refused: it follows symlinks while descending" \
+  "follows symlinks while descending"
+# Exact case: grep -s is --no-messages, a different option that follows nothing.
+index lower_s unimplemented \
+  "cmd: grep -rns zzz_no_such_identifier_anywhere src/lexer/ --include='*.rs' -> exit 1, 0 lines"
+expect_green lower_s "grep -s (no messages) is not -S and stays accepted"
+
 # CASES 20h-n. CONTAINMENT IS DECIDED BY PATH, NOT BY WHAT HAPPENS TO EXIST. The root read
 # above went red on a built tree and was ACCEPTED on a fresh one, having read .git/: the
 # refusal asked whether target/ and build_output/ existed. These pin each part of the
@@ -455,19 +484,118 @@ symlink_case() {  # symlink_case <case> <the line the item must produce>
   fi
 }
 symlink_case "a symlink NAMED .git is refused by that name (a count through it)" \
-  "[grep -n gitdir linked/.git] REFUSED: symlink: \`cmd:\` reads 'linked/.git', which names .git/"
+  "[grep -n gitdir linked/.git] REFUSED: symlink: \`cmd:\` reads 'linked/.git', which passes through linked/.git, naming .git/"
 symlink_case "an absence through a symlink named .git is refused by that name" \
-  "[grep -n NEVER_PRESENT linked/.git] REFUSED: symlink: \`cmd:\` reads 'linked/.git', which names .git/"
+  "[grep -n NEVER_PRESENT linked/.git] REFUSED: symlink: \`cmd:\` reads 'linked/.git', which passes through linked/.git, naming .git/"
 symlink_case "a symlink named target is refused by that name, though it points at source" \
-  "[grep -rn NEVER_PRESENT aliases/target/] REFUSED: symlink: \`cmd:\` reads 'aliases/target/', which names target/"
+  "[grep -rn NEVER_PRESENT aliases/target/] REFUSED: symlink: \`cmd:\` reads 'aliases/target/', which passes through aliases/target, naming target/"
 symlink_case "a symlink named build_output is refused by that name, though it points at source" \
-  "[grep -rn NEVER_PRESENT aliases/build_output/] REFUSED: symlink: \`cmd:\` reads 'aliases/build_output/', which names build_output/"
+  "[grep -rn NEVER_PRESENT aliases/build_output/] REFUSED: symlink: \`cmd:\` reads 'aliases/build_output/', which passes through aliases/build_output, naming build_output/"
 symlink_case "a symlink named .worktrees is refused by that name, though it points at source" \
-  "[grep -rn NEVER_PRESENT aliases/.worktrees/] REFUSED: symlink: \`cmd:\` reads 'aliases/.worktrees/', which names .worktrees/"
+  "[grep -rn NEVER_PRESENT aliases/.worktrees/] REFUSED: symlink: \`cmd:\` reads 'aliases/.worktrees/', which passes through aliases/.worktrees, naming .worktrees/"
 symlink_case "a \`..\` cannot step an operand out of an excluded name" \
-  "[grep -rn NEVER_PRESENT target/../src/] REFUSED: symlink: \`cmd:\` reads 'target/../src/', which names target/"
+  "[grep -rn NEVER_PRESENT target/../src/] REFUSED: symlink: \`cmd:\` reads 'target/../src/', which passes through target, naming target/"
 symlink_case "a symlink that LEADS INTO a nested build_output/ is refused where it resolves" \
   "[grep -rn NEVER_PRESENT docs/gen/] REFUSED: symlink: \`cmd:\` reads 'docs/gen/', which resolves into build_output/"
+
+# CASES 20y-ah. EVERY HOP, NOT TWO ENDS. The checks above saw the operand as written and
+# where it landed; a chain hid its middle -- `alias -> linked/.git -> pointer` was judged as
+# `alias` and `linked/pointer` and read through repository metadata. Resolution is now one
+# component at a time and every hop is judged (_resolve_operand), so each shape below is
+# the same loop: a two- and a three-link chain, a directory link in a MIDDLE component, an
+# absolute target, a `..` inside a target's text, and a loop. Then the must-accepts: names
+# that only resemble an excluded one, and the spellings `docs/../src` and `src//`.
+SYMHOP_OUT=$(python3 - <<'PYEOF' 2>&1
+import os, pathlib, shutil, sys, tempfile
+sys.path.insert(0, "scripts")
+import check_doc_evidence as C
+root = pathlib.Path(tempfile.mkdtemp()).resolve()
+for d in ("linked", "meta", "docs", "src", "hop", ".git", "targets", ".github"):
+    (root / d).mkdir()
+(root / "linked" / "pointer").write_text("gitdir: pointer\n")
+os.symlink("pointer", root / "linked" / ".git")
+os.symlink("linked/.git", root / "alias")
+os.symlink("linked/.git", root / "c2")
+os.symlink("c2", root / "c3")
+(root / "docs" / "a.md").write_text("ordinary source\n")
+os.symlink("../docs", root / "meta" / ".git")
+os.symlink("meta/.git", root / "mid")
+os.symlink(str(root / "linked" / ".git"), root / "abs")
+os.symlink("../.git/../linked/pointer", root / "hop" / "peek")
+os.symlink("loop2", root / "loop1")
+os.symlink("loop1", root / "loop2")
+(root / "src" / "a.rs").write_text("fn a() {}\n")
+(root / "targets" / "a.txt").write_text("x\n")
+(root / "docs" / "target-notes.md").write_text("x\n")
+(root / "build_output_spec.md").write_text("x\n")
+(root / ".gitignore").write_text("x\n")
+(root / ".github" / "w.yml").write_text("x\n")
+C.ROOT = root
+for item in ("cmd: grep -n gitdir alias -> exit 0, 1 lines",
+             "cmd: grep -n NEVER_PRESENT alias -> exit 1, 0 lines",
+             "cmd: grep -n gitdir c3 -> exit 0, 1 lines",
+             "cmd: grep -n ordinary mid/a.md -> exit 0, 1 lines",
+             "cmd: grep -n gitdir abs -> exit 0, 1 lines",
+             "cmd: grep -n gitdir hop/peek -> exit 0, 1 lines",
+             "cmd: grep -n x loop1 -> exit 1, 0 lines"):
+    problems = C.check_cmd("hop", item, {})
+    line = (f"[{item[5:].split(' -> ')[0]}] "
+            + ("REFUSED: " + " ".join(problems) if problems else "accepted"))
+    print(line.replace(str(root), "<ROOT>"))
+ok = 0
+for rel in ("targets/", "docs/target-notes.md", "build_output_spec.md", ".gitignore",
+            ".github/", "docs/../src", "src//"):
+    _, err = C.contained(rel)
+    ok += err is None
+    print(f"[{rel}] " + (f"REFUSED: {err}" if err else "accepted"))
+print(f"lookalikes accepted: {ok}/7")
+shutil.rmtree(root)
+PYEOF
+)
+hop_case() {  # hop_case <case> <the line the item must produce>
+  if printf '%s\n' "$SYMHOP_OUT" | grep -qF -- "$2"; then
+    printf '  %sok%s   %s\n' "$GREEN" "$NC" "$1"; pass=$((pass+1))
+  else
+    printf '  %sFAIL%s %s\n' "$RED" "$NC" "$1"
+    printf '         (wanted %s)\n' "$2"
+    printf '%s\n' "$SYMHOP_OUT" | sed 's/^/         | /' | cut -c1-200
+    fail=$((fail+1))
+  fi
+}
+hop_case "a two-link chain is refused at the hop that names .git (a count)" \
+  "[grep -n gitdir alias] REFUSED: hop: \`cmd:\` reads 'alias', whose link alias -> 'linked/.git' names .git/"
+hop_case "an absence through a two-link chain is refused at the .git hop" \
+  "[grep -n NEVER_PRESENT alias] REFUSED: hop: \`cmd:\` reads 'alias', whose link alias -> 'linked/.git' names .git/"
+hop_case "a three-link chain is refused at the hop that names .git" \
+  "[grep -n gitdir c3] REFUSED: hop: \`cmd:\` reads 'c3', whose link c2 -> 'linked/.git' names .git/"
+hop_case "a directory link in a MIDDLE component that leads through .git is refused" \
+  "[grep -n ordinary mid/a.md] REFUSED: hop: \`cmd:\` reads 'mid/a.md', whose link mid -> 'meta/.git' names .git/"
+hop_case "a link with an ABSOLUTE target is refused, naming the link" \
+  "[grep -n gitdir abs] REFUSED: hop: \`cmd:\` reads 'abs', whose link abs -> '<ROOT>/linked/.git' is absolute"
+hop_case "a link whose target TEXT walks through ../.git is refused" \
+  "[grep -n gitdir hop/peek] REFUSED: hop: \`cmd:\` reads 'hop/peek', whose link hop/peek -> '../.git/../linked/pointer' names .git/"
+hop_case "a symlink loop is refused by the hop cap, not by an accident" \
+  "[grep -n x loop1] REFUSED: hop: \`cmd:\` reads 'loop1', whose symlinks do not resolve within 32 hops"
+hop_case "names that only RESEMBLE an excluded one stay accepted, and so do docs/../src and src//" \
+  "lookalikes accepted: 7/7"
+
+# The repository's own TRACKED links. tests/integration/test.pd is live and must stay a
+# valid operand; bootstrap/v3_incremental/test.pd points at a file that is not in the tree,
+# and is refused for being ABSENT -- never by a path rule.
+index tracked_link unimplemented \
+  "cmd: grep -c '' tests/integration/test.pd -> exit 0, 1 lines"
+expect_green tracked_link "a tracked symlink to a live file stays a valid operand"
+DANGLING_OUT=$(python3 -c "
+import sys; sys.path.insert(0, 'scripts'); import check_doc_evidence as C
+print(C.contained('bootstrap/v3_incremental/test.pd')[1])" 2>&1)
+if printf '%s\n' "$DANGLING_OUT" | grep -qF "reads 'bootstrap/v3_incremental/test.pd', which does not exist"; then
+  printf '  %sok%s   %s\n' "$GREEN" "$NC" "a tracked symlink whose target is absent is refused as ABSENT, not by a path rule"
+  pass=$((pass+1))
+else
+  printf '  %sFAIL%s %s\n' "$RED" "$NC" "a tracked symlink whose target is absent is refused as ABSENT, not by a path rule"
+  printf '         | %s\n' "$DANGLING_OUT"
+  fail=$((fail+1))
+fi
 
 index find_empty_scope unimplemented \
   "cmd: find $INREPO/empty -type f -> exit 0, 0 lines"

@@ -572,9 +572,24 @@ GREP_SHORTS_WITH_ARG = "mABCd"
 # must not inherit it. Handled as a whole token AND as a letter inside a short cluster:
 # stripping only the token `-v` left `-vn` inverted, so a legitimate item written that way
 # was falsely REJECTED. Fail-closed, but it made an honest observation unwritable.
-GREP_DEREF_RECURSIVE = {"-R", "--dereference-recursive"}
 GREP_INVERT = {"-v", "--invert-match"}
 GREP_INVERT_SHORT = "v"
+# Options that make a RECURSIVE read follow symbolic links while it descends, enumerated
+# from this machine's man pages (BSD grep 2.6.0, BSD find) plus GNU grep's spellings.
+# `-R` alone was refused, and BSD `-S` -- "all symbolic links are followed" under -r --
+# read src/meta -> ../.git through an ACCEPTED `grep -rS ref src/`. Exact case on purpose:
+# grep -s is --no-messages, and sort -S is a buffer size.
+#   grep -R, --dereference-recursive   GNU: follow every link. (BSD -R is -r; it stays
+#                                      refused so the claim holds under either grep.)
+#   grep -S                            BSD: follow every link during -r. grep only.
+#   find -L, -follow                   follow every link while descending.
+# NOT refused here, and why: grep -O and find -H follow only links NAMED ON THE COMMAND
+# LINE, and contained() resolves and judges every hop of every operand; grep -p and find
+# -P are the no-follow defaults. (find -H and -P precede the paths, which find's
+# positional rule refuses anyway.)
+GREP_DEREF_RECURSIVE = {"-R", "--dereference-recursive"}
+GREP_DEREF_GREP_ONLY = {"-S"}
+FIND_DEREF = {"-L", "-follow"}
 
 # find's expression, ENUMERATED. Everything a `cmd:` item needs in order to observe the
 # tree, and nothing else. Until this existed the expression was forwarded to find
@@ -626,10 +641,17 @@ def resolve_tool(name: str):
 def contained(rel: str):
     """Resolve a path operand and require it to stay inside the repository.
 
-    `Path.resolve()` follows symlinks, which a lexical check cannot: a link committed
-    inside the repo can point anywhere, and the gate would then be measuring unversioned
-    content while reporting on this tree. scripts/conformance.sh:600-612 refuses the same
-    thing for the same reason.
+    Resolution follows symlinks, which a lexical check cannot: a link committed inside the
+    repo can point anywhere, and the gate would then be measuring unversioned content while
+    reporting on this tree. scripts/conformance.sh:600-612 refuses the same thing for the
+    same reason. It is done one component at a time (_resolve_operand), so every path the
+    operand passes through is judged, and not only the two ends.
+
+    WHAT IT DOES NOT PROVE. Every test here is on a PATH. A hard link to a file under .git/
+    or build_output/ has no name and no hop that says so -- it IS the ordinary file it also
+    is -- so nothing path-based can see it. And it governs the operand only: below a
+    recursive operand grep -r does not follow symlinks (-R, which does, is refused), so
+    what a scope HOLDS is _holds_unread's question, not this one's.
     """
     if rel.startswith(("/", "~")):
         return None, f"names {rel!r}, which is absolute; a `cmd:` observes this tree only"
@@ -641,7 +663,10 @@ def contained(rel: str):
     # and ACCEPTED on a fresh one, having read .git/. Until 2026-10-07 the L3 control's
     # 4 MiB cap refused that root read by accident; once the control could read past the
     # cap, the accident was all that stood there, so the question is decided here instead.
-    real = p.resolve()
+    real, hops, loop = _resolve_operand(rel)
+    if loop:
+        return None, (f"reads {rel!r}, whose symlinks do not resolve within "
+                      f"{CMD_MAX_HOPS} hops — a loop, or a chain no observation needs")
     if real != ROOT and ROOT not in real.parents:
         return None, (f"names {rel!r}, which resolves to {real} — outside {ROOT}. The gate "
                       f"would be measuring unversioned content and reporting it as this "
@@ -657,19 +682,21 @@ def contained(rel: str):
     # checkout `TARGET` is the same directory as `target`.
     parts = [x.casefold() for x in real.relative_to(ROOT).parts]
     hit, how = next((x for x in parts if x in CMD_UNREAD_DIRS), None), "resolves into"
-    # ...AND AS WRITTEN. Resolution replaces a symlink's NAME with its target's, so
-    # `linked/.git -> pointer` resolved to `linked/pointer` and was read as an ordinary
-    # file. Every component the operand SPELLS is tested too, before any `..` is applied
-    # -- so `target/../src` cannot step a name out of view -- and a link named target,
-    # build_output, .git or .worktrees is refused by that name wherever it points.
-    written = [x.casefold() for x in rel.split("/") if x not in ("", ".", "..")]
-    if hit is None:
-        hit, how = next((x for x in written if x in CMD_UNREAD_DIRS), None), "names"
     if hit is not None:
         return None, (f"reads {rel!r}, which {how} {hit}/ — "
                       f"{CMD_UNREAD_DIRS[hit]}. A `cmd:` item must be reproducible from a "
                       f"clean checkout, so generated state is evidence only through the "
                       f"gate that generates it")
+    # ...AND AT EVERY HOP OFF THAT ROUTE. Judging the operand as written and where it
+    # landed saw neither the middle of a chain -- `alias -> linked/.git -> pointer` was
+    # `alias` and `linked/pointer`, read through repository metadata -- nor a link's own
+    # NAME, which resolution replaces with its target's. Every component the operand spells
+    # is one of these hops, before any `..` is applied, so `target/../src` and a link named
+    # target, build_output, .git or .worktrees are refused by that name wherever they lead.
+    for kind, where, link in hops:
+        problem = _hop_problem(rel, kind, where, link, real)
+        if problem:
+            return None, problem
     # A RECURSIVE ROOT THAT CONTAINS AN EXCLUDED DIRECTORY READS IT. The alias repair
     # fixed EXPLICIT operands: `target`, `docs/../target`. It did nothing about
     # `grep -r pattern .`, which resolves to the repository root, passes containment, and
@@ -692,6 +719,77 @@ def contained(rel: str):
                       f"exits 1 and prints nothing for a missing directory, which is "
                       f"exactly what a true absence proof looks like")
     return real, None
+
+
+# Symlinks followed while resolving ONE operand. macOS stops at 32 (MAXSYMLINKS); a chain
+# longer than that is a loop or something no observation needs, and is refused by name.
+CMD_MAX_HOPS = 32
+
+
+def _resolve_operand(rel: str):
+    """Resolve `rel` under ROOT one component at a time, as the kernel does. -> (real, hops, loop)
+
+    `hops` is every place the resolution went, in order: ("path", <absolute path>, None)
+    for each component reached -- the operand's own prefixes, and each step inside a link
+    target -- and ("link", <the link's literal target text>, <the link>) for each symlink
+    followed. A link's target is spliced in FRONT of the components still to walk, so a
+    link in a middle component, a chain, an absolute target and a `..` inside a target
+    all take the same path through this loop; `..` is the physical parent, because `here`
+    never holds an unresolved link. A component that does not exist is walked lexically,
+    which is what the existence test after this expects. `loop` is True when more than
+    CMD_MAX_HOPS links were followed.
+    """
+    hops, todo, here, followed = [], rel.split("/"), ROOT, 0
+    while todo:
+        c = todo.pop(0)
+        if c in ("", "."):
+            continue
+        here = here.parent if c == ".." else here / c
+        hops.append(("path", here, None))
+        if c != ".." and here.is_symlink():
+            followed += 1
+            if followed > CMD_MAX_HOPS:
+                return None, hops, True
+            text = os.readlink(here)
+            hops.append(("link", text, here))
+            todo = text.split("/") + todo
+            here = Path("/") if text.startswith("/") else here.parent
+    return here, hops, False
+
+
+def _shown(path) -> str:
+    """A hop as a reader should see it: checkout-relative inside the checkout."""
+    return str(path.relative_to(ROOT)) if (path == ROOT or ROOT in path.parents) else str(path)
+
+
+def _hop_problem(rel: str, kind: str, where, link, real):
+    """One recorded hop of an operand -> the refusal it earns, or None.
+
+    A hop ON the final route (`real` or one of its ancestors) is not judged here: where the
+    operand lands, and every directory it lands under, is the "resolves into" check's.
+    """
+    if kind == "link":
+        if where.startswith("/"):
+            return (f"reads {rel!r}, whose link {_shown(link)} -> {where!r} is absolute. A "
+                    f"`cmd:` observes this tree only, and an absolute target says where one "
+                    f"checkout lives, not what this one holds")
+        names = [x.casefold() for x in where.split("/") if x not in ("", ".", "..")]
+        how = f"whose link {_shown(link)} -> {where!r} names"
+    else:
+        if where == real or where in real.parents:
+            return None
+        if where != ROOT and ROOT not in where.parents:
+            return (f"reads {rel!r}, which passes through {where} — outside {ROOT}. The "
+                    f"gate would be measuring unversioned content and reporting it as this "
+                    f"repository's state")
+        names = [x.casefold() for x in where.relative_to(ROOT).parts]
+        how = f"which passes through {_shown(where)}, naming"
+    hit = next((x for x in names if x in CMD_UNREAD_DIRS), None)
+    if hit is None:
+        return None
+    return (f"reads {rel!r}, {how} {hit}/ — {CMD_UNREAD_DIRS[hit]}. A `cmd:` item must be "
+            f"reproducible from a clean checkout, so generated state is evidence only "
+            f"through the gate that generates it")
 
 
 # The one that can be a FILE: submodules and linked checkouts keep `.git` as a gitfile
@@ -735,6 +833,9 @@ def parse_segment(argv):
     # demand a file literally called `*.v`. Once the expression starts it never stops.
     in_find_expr = False
     for tok in rest:
+        if head == "find" and tok in FIND_DEREF:
+            return None, (f"uses {tok}, which follows symlinks while descending, so a link "
+                          f"inside the tree can lead the read outside it")
         if in_find_expr:
             opts.append(tok)
             continue
@@ -752,11 +853,11 @@ def parse_segment(argv):
                               f"`find <path>... <expression>`, and a `cmd:` item must name "
                               f"the scope it observes first")
             base = tok.split("=", 1)[0]
-            if base in GREP_DEREF_RECURSIVE:
-                return None, ("uses -R, which follows symlinks while descending, so a link "
-                              "inside the tree can lead the read outside it. Containment "
-                              "is checked on the operand, and only -r keeps that check "
-                              "meaning what it says")
+            if base in GREP_DEREF_RECURSIVE or (head == "grep" and base in GREP_DEREF_GREP_ONLY):
+                return None, (f"uses {base}, which follows symlinks while descending, so a "
+                              f"link inside the tree can lead the read outside it. "
+                              f"Containment is checked on the operand, and only -r keeps "
+                              f"that check meaning what it says")
             if base in GREP_PATTERN_OPTS:
                 return None, (f"supplies its pattern through {base!r}. That is refused: if "
                               f"the pattern can arrive through an option, the first operand "
@@ -769,9 +870,9 @@ def parse_segment(argv):
             # at the whole token let the `e` through with its argument counted as a path.
             if not tok.startswith("--"):
                 for ch in tok[1:]:
-                    if ch == "R":
-                        return None, (f"clusters -R inside {tok!r}, which follows symlinks "
-                                      f"while descending; use -r")
+                    if ch == "R" or (head == "grep" and ch == "S"):
+                        return None, (f"clusters -{ch} inside {tok!r}, which follows "
+                                      f"symlinks while descending; use -r")
                     if ch in GREP_PATTERN_SHORTS:
                         return None, (f"clusters -{ch} inside {tok!r}, which supplies the "
                                       f"pattern; see above. Write the pattern as the first "
