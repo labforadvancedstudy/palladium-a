@@ -14,7 +14,10 @@
 // `xs: &[Self; 2]` is the same defect, and is pinned in the borrow checker's own
 // tests rather than here: code generation refuses an array argument to any `impl`
 // method ("`impl` methods and imported callees cannot take arrays yet"), so no
-// program carrying it can run.
+// program carrying it can run. A const parameter, `fn a<const N: Self>()`, is
+// resolved too and also pinned elsewhere: no pass reads a const parameter's type,
+// so no program's output can show it. src/ast/mod.rs's own test checks every field
+// of `Function` by name, so a field the resolver skips fails there.
 
 struct D {
     pos: i64,
