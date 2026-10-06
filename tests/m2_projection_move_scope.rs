@@ -1171,3 +1171,78 @@ fn test_the_same_or_a_dynamic_index_overlaps() {
         result
     );
 }
+
+/// INSIDE A LOOP BODY, A WRITE TO A CONSTANT-INDEX ELEMENT DOES NOT REVIVE IT.
+///
+/// A loop body is walked once and the paths that skip the write — zero
+/// iterations, a `break` before it — are not seen (#51), so inside a loop an
+/// assignment does what it did on 2563001. There the target of `xs[0] = e;`
+/// was the `[dynamic]` key, which no read ever finds, so the write changed
+/// nothing a later `xs[0]` could see. Naming the element exactly (review round
+/// 2) handed the loop's write the real `xs[0]` key: measured on 33b519f by
+/// gpt-6-astra, `while c { xs[0] = e; }` and `loop { break; xs[0] = e; }`
+/// after `let a = xs[0];` COMPILED and printed 2, where 2563001 refused them.
+/// The nested-array, array-in-a-field and `for` spellings are the same write.
+#[test]
+fn test_a_constant_index_write_in_a_loop_does_not_revive_the_element() {
+    let programs = [
+        "struct In { v: i64 }
+         fn main() { let mut xs: [In; 2] = [In { v: 1 }, In { v: 2 }]; let a: In = xs[0];
+           let e: In = In { v: 3 }; let c: bool = false;
+           while c { xs[0] = e; } let b: In = xs[0]; print_int(a.v + b.v); }",
+        "struct In { v: i64 }
+         fn main() { let mut xs: [In; 2] = [In { v: 1 }, In { v: 2 }]; let a: In = xs[0];
+           let e: In = In { v: 3 };
+           loop { break; xs[0] = e; } let b: In = xs[0]; print_int(a.v + b.v); }",
+        "struct In { v: i64 }
+         fn main() { let mut m: [[In; 2]; 2] = [[In { v: 1 }, In { v: 2 }], [In { v: 3 }, In { v: 4 }]];
+           let a: In = m[0][1]; let e: In = In { v: 9 }; let c: bool = false;
+           while c { m[0][1] = e; } let b: In = m[0][1]; print_int(a.v + b.v); }",
+        "struct In { v: i64 } struct H { xs: [In; 2] }
+         fn main() { let mut h: H = H { xs: [In { v: 1 }, In { v: 2 }] }; let a: In = h.xs[0];
+           let e: In = In { v: 9 }; let c: bool = false;
+           while c { h.xs[0] = e; } let b: In = h.xs[0]; print_int(a.v + b.v); }",
+        "struct In { v: i64 }
+         fn main() { let mut xs: [In; 2] = [In { v: 1 }, In { v: 2 }]; let a: In = xs[0];
+           let e: In = In { v: 9 }; let ys: [i64; 1] = [1];
+           for y in ys { xs[0] = e; } let b: In = xs[0]; print_int(a.v + b.v); }",
+    ];
+    for program in programs {
+        let result = borrow_check(program);
+        assert!(
+            is_use_of_moved_value(&result),
+            "a constant-index write inside a loop revived the element: {:?}\n{}",
+            result,
+            program
+        );
+    }
+}
+
+/// ...WHICH LEAVES EVERY OTHER ELEMENT AS IT WAS: a loop that writes `xs[1]`
+/// does not touch `xs[0]`, moved or not, and `xs[1]` is still readable after
+/// it. Both compiled on 2563001 and on 33b519f. (Re-initialising `xs[0]`
+/// OUTSIDE a loop and reading it back is in
+/// `test_distinct_constant_indices_do_not_overlap`.)
+#[test]
+fn test_a_loop_writing_one_element_leaves_the_others() {
+    let programs = [
+        "struct In { v: i64 }
+         fn main() { let mut xs: [In; 2] = [In { v: 1 }, In { v: 2 }]; let mut k: i64 = 0;
+           while k < 1 { let y: In = In { v: 5 }; xs[1] = y; k = k + 1; }
+           let b: In = xs[0]; print_int(b.v); }",
+        "struct In { v: i64 }
+         fn main() { let mut xs: [In; 2] = [In { v: 1 }, In { v: 2 }]; let a: In = xs[0];
+           let mut k: i64 = 0;
+           while k < 1 { let y: In = In { v: 5 }; xs[1] = y; k = k + 1; }
+           let b: In = xs[1]; print_int(a.v + b.v); }",
+    ];
+    for program in programs {
+        let result = borrow_check(program);
+        assert!(
+            result.is_ok(),
+            "a loop's write to one element changed another: {:?}\n{}",
+            result,
+            program
+        );
+    }
+}

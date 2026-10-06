@@ -525,7 +525,10 @@ impl OwnershipContext {
     ///     while i < 0 { d = mk(2); } let b = d.inner;` COMPILED, as did the
     ///     `loop`/`break` and `continue` spellings. Inside a loop an assignment
     ///     therefore does exactly what it did on 2563001: a place on the right
-    ///     marks the target `Owned`, anything else records nothing.
+    ///     marks the target `Owned` — except a constant-index element, whose
+    ///     target there was the `[dynamic]` key no read finds (measured on
+    ///     33b519f: `while c { xs[0] = e; }` revived a moved `xs[0]`) — and
+    ///     anything else records nothing.
     fn write_new_value(&mut self, place: Place, from_place: bool) {
         if let Some(governing) = self.resolve_place(&place) {
             if governing != &place && self.ownership.get(governing) == Some(&Ownership::Moved) {
@@ -533,7 +536,7 @@ impl OwnershipContext {
             }
         }
         if self.loop_depth > 0 {
-            if from_place {
+            if from_place && !matches!(&place, Place::Index { index, .. } if index != "dynamic") {
                 self.ownership.insert(place, Ownership::Owned);
             }
             return;
