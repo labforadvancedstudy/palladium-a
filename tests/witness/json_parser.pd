@@ -33,12 +33,13 @@
 // cannot be printed. No row owns either direction, so re-tagging it UNOWNED
 // raised that count from three to four.
 //
-// The fifth and sixth moves are the ones where the missing construct ARRIVED
-// rather than a claim being re-measured. The fifth: M2 item 9 landed top-level
-// `const` and `static`, the two zero-arg constant functions became `const`
-// items, and the count fell fourteen -> thirteen. The sixth was the round
-// before this one, and it is the largest single move the file has taken: N5-06, N5-07, N5-12 and
-// N5-13 are all `satisfied`, and all four were measured to be so HERE, in this
+// The fifth and sixth moves were the first two where the missing construct
+// ARRIVED rather than a claim being re-measured. The fifth: M2 item 9 landed
+// top-level `const` and `static`, the two zero-arg constant functions became
+// `const` items, and the count fell fourteen -> thirteen. The sixth was the
+// round before the char patterns, and it is still the largest single move the
+// file has taken: N5-06, N5-07, N5-12 and N5-13 are all `satisfied`, and all
+// four were measured to be so HERE, in this
 // program, not in a fixture — so the workarounds were APPLIED AWAY rather than
 // re-labelled. Chained `else` replaced seven `else { if … }` staircases
 // carrying nineteen arms between them, the deepest nine branches and eight
@@ -56,9 +57,13 @@
 // literal patterns (N6-02), range patterns (N6-03) and or-patterns (N6-07) all
 // work over `i64` scrutinees, measured. This parser matches on `char`, and a
 // char literal was not a pattern: `'n' => …` was "Expected pattern, but found
-// char 'n'". One gap, three sites, no owner — the fifth UNOWNED finding.
+// char 'n'". One gap, three sites, no owner — item 4 of the census's five
+// UNOWNED findings. The fourth of those re-measurements went the other way and
+// closed nothing: method call syntax (N5-17) worked by then, so the cursor
+// marker was re-tagged to what actually blocked it at that round, a receiver
+// that could be written through and called more than once.
 //
-// THE SEVENTH MOVE CLOSED THAT GAP, and it is the second time a construct
+// THE SEVENTH MOVE CLOSED THAT GAP, and it is the third time a construct
 // ARRIVED for this file rather than a claim being re-measured. A char literal is
 // a pattern now, and a char range orders by code point, so all three sites were
 // APPLIED: `js_is_ws` is the or-pattern `' ' | '\t' | '\n' | '\r'`, `js_is_digit`
@@ -66,14 +71,11 @@
 // the deepest staircase in the file, nine branches with a mutable local and one
 // assignment per arm — is a `match` EXPRESSION whose value is the node. The
 // count fell nine -> six, the UNOWNED count seven -> four, and the transcript
-// did not change by one byte. The construct is still owned by NOTHING in the requirements manifest,
-// which is parked as issue #46: the gap closed, its ownership question did not.
-// The fourth re-measurement went the
-// other way and closed nothing: method call syntax (N5-17) works now, so the
-// cursor marker was re-tagged to what actually blocks it, a receiver that can
-// be written through and called more than once.
+// did not change by one byte. The construct is still owned by NOTHING in the
+// requirements manifest, which is parked as issue #46: the gap closed, its
+// ownership question did not.
 //
-// THE EIGHTH MOVE IS THE CURSOR, and it is the third time a construct ARRIVED
+// THE EIGHTH MOVE IS THE CURSOR, and it is the fourth time a construct ARRIVED
 // for this file. su2 (`b54502b`) gave `&self` and `&mut self` receivers a real
 // pointer and, through the same predicate, made a `&T` parameter forwardable;
 // what was left was the rewrite, and the rewrite is done. Every reader in the
@@ -82,10 +84,15 @@
 // discharged at the Cursor section below. Applying them found two borrow-checker
 // defects, fixed in their own units (W1c, W1d) on the `main` this compiles on.
 // The count fell six -> four, the UNOWNED count four -> three, and the
-// transcript did not change by one byte. One cost is measured, not hidden:
-// effect inference walks free functions only and adds nothing for a method
-// call, so the parser's methods are no longer in the compiler's effects report.
-// That is N7-07 (M5, `owed`), the compiler's gap rather than a workaround here.
+// transcript did not change by one byte. The same round applied the one
+// read-modify-write the sixth move missed: `literal` advanced the cursor with
+// `j.pos = j.pos + n;` (then `self.pos = self.pos + n;`), and now with
+// `self.pos += n;`. That makes eleven `+=`/`-=` statements, and no assignment
+// left in this file whose right side is its own place plus or minus something.
+// One cost is measured, not hidden: effect inference walks free functions only
+// and adds nothing for a method call, so the parser's methods are no longer in
+// the compiler's effects report. That is N7-07 (M5, `owed`), the compiler's gap
+// rather than a workaround here.
 //
 // The shape this file would have if nothing were missing is written out in
 // tests/witness/json_parser.no-workarounds.md, beside a per-workaround diff, so
@@ -520,7 +527,7 @@ impl Json {
             }
             i += 1;
         }
-        self.pos = self.pos + n;
+        self.pos += n;
         return self.alloc(kind);
     }
 
