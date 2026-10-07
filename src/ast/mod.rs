@@ -2104,14 +2104,15 @@ mod tests {
 //
 // THE OTHER SIDE: an alias's BODY is written at the top level, so its names
 // mean the GLOBAL types, and the body is expanded in that scope wherever the
-// alias is used, inside a generic item too. Inside a generic FUNCTION the
-// expanded `T` is a `Custom` while the function's own parameter is a
-// `TypeParam`, and code generation substitutes only `TypeParam` there, so the
-// global type is what it stays. Inside a generic struct, enum, impl or trait
-// the two spellings coincide, and the type checker refuses such a use by name
-// where a literal or a call reads the item's signature (`refuse_alias_capture`,
-// src/typeck/mod.rs). Round 2 left the alias's NAME in place instead, and
-// `type_to_c` printed an array alias there as `struct T[2] a` (review round 3).
+// alias is used, inside a generic item too. Where the expansion would put a
+// name the item binds — `type A = T;` used inside `fn f<T>` or `struct G<T>` —
+// the item's PARAMETER is renamed first (`rename_capturing_binders`, below),
+// before the type checker reads the program, so the expanded `T` can only mean
+// the global type and monomorphisation cannot substitute it. Round 2 left the
+// alias's NAME in place instead, and `type_to_c` printed an array alias there
+// as `struct T[2] a`; round 3 refused such a use by name, which also refused
+// programs main ran (a generic function returning the alias, its result
+// discarded or handed on — review round 4).
 //
 // GENERIC aliases (`type Pair<T> = (T, T)`) are not expanded at their uses —
 // code generation skips them everywhere already, and expanding one is
@@ -2146,7 +2147,7 @@ pub fn expand_type_aliases(
 ) -> Program {
     let mut out = program.clone();
     for item in &mut out.items {
-        expand_item(item, aliases);
+        walk_item(item, &mut Expand(aliases));
     }
     out
 }
@@ -2158,7 +2159,7 @@ pub fn expand_aliases_in_type(
     aliases: &std::collections::HashMap<String, Type>,
     bound: &[String],
 ) {
-    expand_type(ty, aliases, bound, 0)
+    Expand(aliases).visit(ty, bound)
 }
 
 /// Expand every alias in a block of statements, with `bound` the type
@@ -2168,12 +2169,31 @@ pub fn expand_aliases_in_block(
     aliases: &std::collections::HashMap<String, Type>,
     bound: &[String],
 ) {
-    for stmt in stmts {
-        expand_stmt(stmt, aliases, bound);
-    }
+    walk_block(stmts, bound, &mut Expand(aliases))
 }
 
 type Aliases = std::collections::HashMap<String, Type>;
+
+// ONE WALK, THREE VISITS. Every position a type can be written in an item —
+// signature, field, payload, `let`, cast, array length — is reached by ONE
+// walker (`walk_item` and the functions below it), which hands each type to a
+// visit together with the type parameters bound where it is written. Alias
+// expansion is one visit; finding a capture and renaming a parameter (review
+// round 4) are the other two. A position the walker misses is missed by all
+// three alike, never by one of them alone.
+trait TypeVisit {
+    /// One type position, with `bound` the type parameters in scope there.
+    fn visit(&mut self, ty: &mut Type, bound: &[String]);
+}
+
+/// The expansion visit: every alias in `.0`, at every depth.
+struct Expand<'a>(&'a Aliases);
+
+impl TypeVisit for Expand<'_> {
+    fn visit(&mut self, ty: &mut Type, bound: &[String]) {
+        expand_type(ty, self.0, bound, 0)
+    }
+}
 
 fn expand_type(ty: &mut Type, aliases: &Aliases, bound: &[String], depth: usize) {
     match ty {
@@ -2191,7 +2211,7 @@ fn expand_type(ty: &mut Type, aliases: &Aliases, bound: &[String], depth: usize)
         Type::Array(elem, size) => {
             expand_type(elem, aliases, bound, depth);
             if let ArraySize::Expr(e) = size {
-                expand_expr(e, aliases, bound);
+                walk_expr(e, bound, &mut Expand(aliases));
             }
         }
         Type::Generic { args, .. } => {
@@ -2221,83 +2241,377 @@ fn expand_type(ty: &mut Type, aliases: &Aliases, bound: &[String], depth: usize)
     }
 }
 
+// HYGIENE BY RENAMING THE PARAMETER (review round 4).
+//
+// `type A = T;` names the global `T`. Expanded inside `fn f<T>(x: T) -> A`
+// it would read `-> T`, and monomorphisation substitutes every `T` it finds in
+// the signature — so `f(1)` returned a `long long` where the program returns a
+// `struct T`. The name the alias brought in is the one that must keep its
+// meaning, so it is the PARAMETER that moves: `fn f<T#1>(x: T#1) -> A`. Every
+// type position the item spells `T` in is renamed with it; an expression is
+// not (`T { n: 7 }` builds the global struct, exactly as main's C does). The
+// rename is made only on such a collision, and before the type checker reads
+// the program, so the checker, the borrow checker and code generation see one
+// program. `#` cannot occur in a Palladium identifier, so no source can spell
+// the new name; `in_user_spelling` removes the `#n` from a diagnostic.
+
+/// The capture-finding visit: which of `binders` some alias written here
+/// brings back by name once it is expanded at the top level.
+struct Captures<'a> {
+    aliases: &'a Aliases,
+    binders: &'a [String],
+    found: Vec<String>,
+}
+
+impl TypeVisit for Captures<'_> {
+    fn visit(&mut self, ty: &mut Type, bound: &[String]) {
+        match ty {
+            Type::Custom(name) if !bound.contains(name) => {
+                if let Some(target) = self.aliases.get(name.as_str()) {
+                    let mut target = target.clone();
+                    expand_type(&mut target, self.aliases, &[], 1);
+                    let mut named = Vec::new();
+                    names_in(&target, &mut named);
+                    for b in self.binders {
+                        if named.contains(b) && !self.found.contains(b) {
+                            self.found.push(b.clone());
+                        }
+                    }
+                }
+            }
+            Type::Array(elem, size) => {
+                self.visit(elem, bound);
+                if let ArraySize::Expr(e) = size {
+                    walk_expr(e, bound, self);
+                }
+            }
+            Type::Generic { args, .. } => {
+                for arg in args {
+                    if let GenericArg::Type(t) = arg {
+                        self.visit(t, bound);
+                    }
+                }
+            }
+            Type::Reference { inner, .. } | Type::Future { output: inner } => {
+                self.visit(inner, bound)
+            }
+            Type::Tuple(types) => types.iter_mut().for_each(|t| self.visit(t, bound)),
+            _ => {}
+        }
+    }
+}
+
+/// Every name `ty` spells — a type, a type parameter, or a parameter the
+/// parser read as a const argument (`Box2<T>` parses `T` that way).
+fn names_in(ty: &Type, out: &mut Vec<String>) {
+    match ty {
+        Type::Custom(n) | Type::TypeParam(n) => out.push(n.clone()),
+        Type::Array(elem, _) => names_in(elem, out),
+        Type::Generic { args, .. } => {
+            for arg in args {
+                match arg {
+                    GenericArg::Type(t) => names_in(t, out),
+                    GenericArg::Const(ConstValue::ConstParam(n)) => out.push(n.clone()),
+                    GenericArg::Const(ConstValue::Integer(_)) => {}
+                }
+            }
+        }
+        Type::Reference { inner, .. } | Type::Future { output: inner } => names_in(inner, out),
+        Type::Tuple(types) => types.iter().for_each(|t| names_in(t, out)),
+        _ => {}
+    }
+}
+
+/// The renaming visit: the parameter `from` becomes `to` at every depth.
+struct Rename<'a> {
+    from: &'a str,
+    to: &'a str,
+}
+
+impl TypeVisit for Rename<'_> {
+    fn visit(&mut self, ty: &mut Type, bound: &[String]) {
+        match ty {
+            Type::Custom(n) | Type::TypeParam(n) if n == self.from => *n = self.to.to_string(),
+            Type::Array(elem, size) => {
+                self.visit(elem, bound);
+                if let ArraySize::Expr(e) = size {
+                    walk_expr(e, bound, self);
+                }
+            }
+            Type::Generic { args, .. } => {
+                for arg in args {
+                    match arg {
+                        GenericArg::Type(t) => self.visit(t, bound),
+                        GenericArg::Const(ConstValue::ConstParam(n)) if n == self.from => {
+                            *n = self.to.to_string()
+                        }
+                        GenericArg::Const(_) => {}
+                    }
+                }
+            }
+            Type::Reference { inner, .. } | Type::Future { output: inner } => {
+                self.visit(inner, bound)
+            }
+            Type::Tuple(types) => types.iter_mut().for_each(|t| self.visit(t, bound)),
+            _ => {}
+        }
+    }
+}
+
+/// Rename every parameter in `binders` that an alias written in its scope
+/// would capture, in `binders` and in that scope. `walk(v, name)` visits every
+/// type position where `name` means that parameter — not a method that binds
+/// the same name again.
+fn rename_captured(
+    binders: &mut [String],
+    aliases: &Aliases,
+    fresh: &mut usize,
+    mut walk: impl FnMut(&mut dyn TypeVisit, &str),
+) {
+    for binder in binders.iter_mut() {
+        let from = binder.clone();
+        let one = [from.clone()];
+        let mut captures = Captures {
+            aliases,
+            binders: &one,
+            found: Vec::new(),
+        };
+        walk(&mut captures, &from);
+        if captures.found.is_empty() {
+            continue;
+        }
+        *fresh += 1;
+        let to = format!("{}#{}", from, fresh);
+        walk(
+            &mut Rename {
+                from: &from,
+                to: &to,
+            },
+            &from,
+        );
+        *binder = to;
+    }
+}
+
+/// `program` with every type parameter an alias would capture renamed, where
+/// `aliases` is every non-generic alias its uses can name.
+pub fn rename_capturing_binders(program: &mut Program, aliases: &Aliases) {
+    let mut fresh = 0;
+    for item in &mut program.items {
+        rename_in_item(item, aliases, &mut fresh);
+    }
+}
+
+/// The program and every imported module, each renamed against the aliases
+/// code generation expands in it (`CodeGenerator::with_aliases_expanded` and
+/// `own_aliases_expanded`): a module's own; the program's own and every
+/// imported PUBLIC one no local declaration shadows.
+pub fn with_captures_renamed(
+    program: &mut Program,
+    mut modules: std::collections::HashMap<String, crate::resolver::ModuleInfo>,
+) -> std::collections::HashMap<String, crate::resolver::ModuleInfo> {
+    let mut aliases = Aliases::new();
+    let mut infos: Vec<_> = modules.values().collect();
+    infos.sort_by(|a, b| a.path.cmp(&b.path));
+    for info in infos {
+        for item in &info.ast.items {
+            if let Item::TypeAlias(a) = item {
+                if matches!(a.visibility, Visibility::Public)
+                    && a.type_params.is_empty()
+                    && !local_type_shadows_import(program, &a.name)
+                {
+                    aliases.insert(a.name.clone(), a.ty.clone());
+                }
+            }
+        }
+    }
+    aliases.extend(non_generic_aliases(program));
+    rename_capturing_binders(program, &aliases);
+    for info in modules.values_mut() {
+        let own = non_generic_aliases(&info.ast);
+        rename_capturing_binders(&mut info.ast, &own);
+    }
+    modules
+}
+
+/// `text` with every renamed parameter spelled as the source spelled it:
+/// `T#1` back to `T`. A diagnostic names the parameter the user wrote.
+pub fn in_user_spelling(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let after_name = i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_');
+        if chars[i] == '#' && after_name && chars.get(i + 1).is_some_and(|c| c.is_ascii_digit()) {
+            i += 1;
+            while chars.get(i).is_some_and(|c| c.is_ascii_digit()) {
+                i += 1;
+            }
+            continue;
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
+fn rename_in_item(item: &mut Item, aliases: &Aliases, fresh: &mut usize) {
+    match item {
+        Item::Function(f) => rename_in_function(f, &[], aliases, fresh),
+        Item::Struct(s) => {
+            let mut binders = s.type_params.clone();
+            rename_captured(&mut binders, aliases, fresh, |v, _| walk_item_struct(s, v));
+            s.type_params = binders;
+        }
+        Item::Enum(e) => {
+            let mut binders = e.type_params.clone();
+            rename_captured(&mut binders, aliases, fresh, |v, _| walk_item_enum(e, v));
+            e.type_params = binders;
+        }
+        Item::TypeAlias(a) => {
+            let mut binders = a.type_params.clone();
+            let bound = a.type_params.clone();
+            rename_captured(&mut binders, aliases, fresh, |v, _| {
+                v.visit(&mut a.ty, &bound)
+            });
+            a.type_params = binders;
+        }
+        Item::Trait(t) => {
+            // The block's parameters, in every method that does not bind the
+            // same name again; then each method's own.
+            let mut binders = t.type_params.clone();
+            let block = t.type_params.clone();
+            rename_captured(&mut binders, aliases, fresh, |v, name| {
+                for m in &mut t.methods {
+                    if !m.type_params.iter().any(|p| p == name) {
+                        let bound = bound_with(&block, &m.type_params);
+                        walk_trait_method(m, &bound, v);
+                    }
+                }
+            });
+            t.type_params = binders;
+            for m in &mut t.methods {
+                let mut own = m.type_params.clone();
+                let bound = bound_with(&t.type_params, &m.type_params);
+                rename_captured(&mut own, aliases, fresh, |v, _| {
+                    walk_trait_method(m, &bound, v)
+                });
+                m.type_params = own;
+            }
+        }
+        Item::Impl(b) => {
+            let mut binders = b.type_params.clone();
+            let bound = b.type_params.clone();
+            rename_captured(&mut binders, aliases, fresh, |v, name| {
+                if let Some(ty) = &mut b.trait_type {
+                    v.visit(ty, &bound);
+                }
+                v.visit(&mut b.for_type, &bound);
+                for m in &mut b.methods {
+                    if !m.type_params.iter().any(|p| p == name) {
+                        walk_function(m, &bound, v);
+                    }
+                }
+            });
+            b.type_params = binders;
+            let outer = b.type_params.clone();
+            for m in &mut b.methods {
+                rename_in_function(m, &outer, aliases, fresh);
+            }
+        }
+        Item::Global(_) | Item::Macro(_) => {}
+    }
+}
+
+/// A function's own parameters, with `outer` those bound around it.
+fn rename_in_function(f: &mut Function, outer: &[String], aliases: &Aliases, fresh: &mut usize) {
+    let mut own = f.type_params.clone();
+    rename_captured(&mut own, aliases, fresh, |v, _| walk_function(f, outer, v));
+    f.type_params = own;
+}
+
 /// `outer` and `own`: the names bound inside an item nested in another binder
 /// (a method inside a generic impl or trait).
 fn bound_with(outer: &[String], own: &[String]) -> Vec<String> {
     outer.iter().chain(own).cloned().collect()
 }
 
-fn expand_params(params: &mut [Param], aliases: &Aliases, bound: &[String]) {
-    for p in params {
-        expand_aliases_in_type(&mut p.ty, aliases, bound);
-    }
-}
-
 /// A function, with `outer` the parameters bound around it (an impl's, a
 /// trait's) and its own added.
-fn expand_function(f: &mut Function, aliases: &Aliases, outer: &[String]) {
+fn walk_function(f: &mut Function, outer: &[String], v: &mut dyn TypeVisit) {
     let bound = bound_with(outer, &f.type_params);
-    expand_params(&mut f.params, aliases, &bound);
+    for p in &mut f.params {
+        v.visit(&mut p.ty, &bound);
+    }
     if let Some(ty) = &mut f.return_type {
-        expand_aliases_in_type(ty, aliases, &bound);
+        v.visit(ty, &bound);
     }
     for (_, ty) in &mut f.const_params {
-        expand_aliases_in_type(ty, aliases, &bound);
+        v.visit(ty, &bound);
     }
-    expand_aliases_in_block(&mut f.body, aliases, &bound);
+    walk_block(&mut f.body, &bound, v);
 }
 
-fn expand_item(item: &mut Item, aliases: &Aliases) {
-    match item {
-        Item::Function(f) => expand_function(f, aliases, &[]),
-        Item::Struct(s) => {
-            let bound = s.type_params.clone();
-            for (_, ty) in &mut s.fields {
-                expand_aliases_in_type(ty, aliases, &bound);
-            }
-            for (_, ty) in &mut s.const_params {
-                expand_aliases_in_type(ty, aliases, &bound);
-            }
-        }
-        Item::Enum(e) => {
-            let bound = e.type_params.clone();
-            for variant in &mut e.variants {
-                match &mut variant.data {
-                    EnumVariantData::Unit => {}
-                    EnumVariantData::Tuple(types) => types
-                        .iter_mut()
-                        .for_each(|t| expand_aliases_in_type(t, aliases, &bound)),
-                    EnumVariantData::Struct(fields) => {
-                        for (_, ty) in fields {
-                            expand_aliases_in_type(ty, aliases, &bound);
-                        }
-                    }
+fn walk_item_struct(s: &mut StructDef, v: &mut dyn TypeVisit) {
+    let bound = s.type_params.clone();
+    for (_, ty) in &mut s.fields {
+        v.visit(ty, &bound);
+    }
+    for (_, ty) in &mut s.const_params {
+        v.visit(ty, &bound);
+    }
+}
+
+fn walk_item_enum(e: &mut EnumDef, v: &mut dyn TypeVisit) {
+    let bound = e.type_params.clone();
+    for variant in &mut e.variants {
+        match &mut variant.data {
+            EnumVariantData::Unit => {}
+            EnumVariantData::Tuple(types) => types.iter_mut().for_each(|t| v.visit(t, &bound)),
+            EnumVariantData::Struct(fields) => {
+                for (_, ty) in fields {
+                    v.visit(ty, &bound);
                 }
             }
-            for (_, ty) in &mut e.const_params {
-                expand_aliases_in_type(ty, aliases, &bound);
-            }
         }
+    }
+    for (_, ty) in &mut e.const_params {
+        v.visit(ty, &bound);
+    }
+}
+
+/// A trait method's types.
+fn walk_trait_method(m: &mut TraitMethod, bound: &[String], v: &mut dyn TypeVisit) {
+    for p in &mut m.params {
+        v.visit(&mut p.ty, bound);
+    }
+    if let Some(ty) = &mut m.return_type {
+        v.visit(ty, bound);
+    }
+    if let Some(body) = &mut m.body {
+        walk_block(body, bound, v);
+    }
+}
+
+fn walk_item(item: &mut Item, v: &mut dyn TypeVisit) {
+    match item {
+        Item::Function(f) => walk_function(f, &[], v),
+        Item::Struct(s) => walk_item_struct(s, v),
+        Item::Enum(e) => walk_item_enum(e, v),
         Item::Trait(t) => {
             for m in &mut t.methods {
                 let bound = bound_with(&t.type_params, &m.type_params);
-                expand_params(&mut m.params, aliases, &bound);
-                if let Some(ty) = &mut m.return_type {
-                    expand_aliases_in_type(ty, aliases, &bound);
-                }
-                if let Some(body) = &mut m.body {
-                    expand_aliases_in_block(body, aliases, &bound);
-                }
+                walk_trait_method(m, &bound, v);
             }
         }
         Item::Impl(b) => {
             let bound = b.type_params.clone();
             if let Some(ty) = &mut b.trait_type {
-                expand_aliases_in_type(ty, aliases, &bound);
+                v.visit(ty, &bound);
             }
-            expand_aliases_in_type(&mut b.for_type, aliases, &bound);
+            v.visit(&mut b.for_type, &bound);
             for m in &mut b.methods {
-                expand_function(m, aliases, &bound);
+                walk_function(m, &bound, v);
             }
         }
         // The alias's own body is expanded too, so a chain `type KB = KA`
@@ -2305,34 +2619,40 @@ fn expand_item(item: &mut Item, aliases: &Aliases) {
         // alias's OWN parameters, for a generic one.
         Item::TypeAlias(a) => {
             let bound = a.type_params.clone();
-            expand_aliases_in_type(&mut a.ty, aliases, &bound)
+            v.visit(&mut a.ty, &bound)
         }
         Item::Global(g) => {
-            expand_aliases_in_type(&mut g.ty, aliases, &[]);
-            expand_expr(&mut g.value, aliases, &[]);
+            v.visit(&mut g.ty, &[]);
+            walk_expr(&mut g.value, &[], v);
         }
         // Expanded before code generation.
         Item::Macro(_) => {}
     }
 }
 
-fn expand_stmt(stmt: &mut Stmt, aliases: &Aliases, bound: &[String]) {
+fn walk_block(stmts: &mut [Stmt], bound: &[String], v: &mut dyn TypeVisit) {
+    for stmt in stmts {
+        walk_stmt(stmt, bound, v);
+    }
+}
+
+fn walk_stmt(stmt: &mut Stmt, bound: &[String], v: &mut dyn TypeVisit) {
     match stmt {
-        Stmt::Expr(e) => expand_expr(e, aliases, bound),
+        Stmt::Expr(e) => walk_expr(e, bound, v),
         Stmt::Return(e) => {
             if let Some(e) = e {
-                expand_expr(e, aliases, bound);
+                walk_expr(e, bound, v);
             }
         }
         Stmt::Let { ty, value, .. } => {
             if let Some(ty) = ty {
-                expand_aliases_in_type(ty, aliases, bound);
+                v.visit(ty, bound);
             }
-            expand_expr(value, aliases, bound);
+            walk_expr(value, bound, v);
         }
         Stmt::Assign { target, value, .. } => {
-            expand_assign_target(target, aliases, bound);
-            expand_expr(value, aliases, bound);
+            walk_assign_target(target, bound, v);
+            walk_expr(value, bound, v);
         }
         Stmt::If {
             condition,
@@ -2340,78 +2660,76 @@ fn expand_stmt(stmt: &mut Stmt, aliases: &Aliases, bound: &[String]) {
             else_branch,
             ..
         } => {
-            expand_expr(condition, aliases, bound);
-            expand_aliases_in_block(then_branch, aliases, bound);
+            walk_expr(condition, bound, v);
+            walk_block(then_branch, bound, v);
             if let Some(eb) = else_branch {
-                expand_aliases_in_block(eb, aliases, bound);
+                walk_block(eb, bound, v);
             }
         }
         Stmt::While {
             condition, body, ..
         } => {
-            expand_expr(condition, aliases, bound);
-            expand_aliases_in_block(body, aliases, bound);
+            walk_expr(condition, bound, v);
+            walk_block(body, bound, v);
         }
-        Stmt::Loop { body, .. } | Stmt::Unsafe { body, .. } => {
-            expand_aliases_in_block(body, aliases, bound)
-        }
+        Stmt::Loop { body, .. } | Stmt::Unsafe { body, .. } => walk_block(body, bound, v),
         Stmt::For { iter, body, .. } => {
-            expand_expr(iter, aliases, bound);
-            expand_aliases_in_block(body, aliases, bound);
+            walk_expr(iter, bound, v);
+            walk_block(body, bound, v);
         }
         Stmt::Match { expr, arms, .. } => {
-            expand_expr(expr, aliases, bound);
+            walk_expr(expr, bound, v);
             for arm in arms {
                 if let Some(g) = &mut arm.guard {
-                    expand_expr(g, aliases, bound);
+                    walk_expr(g, bound, v);
                 }
-                expand_aliases_in_block(&mut arm.body, aliases, bound);
+                walk_block(&mut arm.body, bound, v);
             }
         }
         Stmt::Break { value, .. } => {
-            if let Some(v) = value {
-                expand_expr(v, aliases, bound);
+            if let Some(value) = value {
+                walk_expr(value, bound, v);
             }
         }
         Stmt::Continue { .. } => {}
     }
 }
 
-fn expand_assign_target(target: &mut AssignTarget, aliases: &Aliases, bound: &[String]) {
+fn walk_assign_target(target: &mut AssignTarget, bound: &[String], v: &mut dyn TypeVisit) {
     match target {
         AssignTarget::Ident(_) => {}
         AssignTarget::Index { array, index } => {
-            expand_expr(array, aliases, bound);
-            expand_expr(index, aliases, bound);
+            walk_expr(array, bound, v);
+            walk_expr(index, bound, v);
         }
-        AssignTarget::FieldAccess { object, .. } => expand_expr(object, aliases, bound),
-        AssignTarget::Deref { expr } => expand_expr(expr, aliases, bound),
+        AssignTarget::FieldAccess { object, .. } => walk_expr(object, bound, v),
+        AssignTarget::Deref { expr } => walk_expr(expr, bound, v),
     }
 }
 
-fn expand_expr(expr: &mut Expr, aliases: &Aliases, bound: &[String]) {
+fn walk_expr(expr: &mut Expr, bound: &[String], v: &mut dyn TypeVisit) {
     match expr {
-        Expr::ArrayLiteral { elements, .. } | Expr::Tuple { elements, .. } => elements
-            .iter_mut()
-            .for_each(|e| expand_expr(e, aliases, bound)),
+        Expr::ArrayLiteral { elements, .. } | Expr::Tuple { elements, .. } => {
+            elements.iter_mut().for_each(|e| walk_expr(e, bound, v))
+        }
         Expr::TupleIndex { expr, .. }
         | Expr::Unary { operand: expr, .. }
         | Expr::Reference { expr, .. }
         | Expr::Deref { expr, .. }
         | Expr::Question { expr, .. }
         | Expr::Await { expr, .. }
-        | Expr::FieldAccess { object: expr, .. } => expand_expr(expr, aliases, bound),
+        | Expr::FieldAccess { object: expr, .. } => walk_expr(expr, bound, v),
         Expr::ArrayRepeat { value, count, .. } => {
-            expand_expr(value, aliases, bound);
-            expand_expr(count, aliases, bound);
+            walk_expr(value, bound, v);
+            walk_expr(count, bound, v);
         }
         Expr::Index { array, index, .. } => {
-            expand_expr(array, aliases, bound);
-            expand_expr(index, aliases, bound);
+            walk_expr(array, bound, v);
+            walk_expr(index, bound, v);
         }
         Expr::Call { func, args, .. } => {
-            expand_expr(func, aliases, bound);
-            args.iter_mut().for_each(|a| expand_expr(a, aliases, bound));
+            walk_expr(func, bound, v);
+            args.iter_mut().for_each(|a| walk_expr(a, bound, v));
         }
         Expr::Binary { left, right, .. }
         | Expr::Range {
@@ -2419,20 +2737,20 @@ fn expand_expr(expr: &mut Expr, aliases: &Aliases, bound: &[String]) {
             end: right,
             ..
         } => {
-            expand_expr(left, aliases, bound);
-            expand_expr(right, aliases, bound);
+            walk_expr(left, bound, v);
+            walk_expr(right, bound, v);
         }
         Expr::StructLiteral { fields, .. } => fields
             .iter_mut()
-            .for_each(|(_, v)| expand_expr(v, aliases, bound)),
+            .for_each(|(_, value)| walk_expr(value, bound, v)),
         Expr::EnumConstructor { data, .. } => match data {
             None => {}
             Some(EnumConstructorData::Tuple(es)) => {
-                es.iter_mut().for_each(|e| expand_expr(e, aliases, bound))
+                es.iter_mut().for_each(|e| walk_expr(e, bound, v))
             }
             Some(EnumConstructorData::Struct(fields)) => fields
                 .iter_mut()
-                .for_each(|(_, v)| expand_expr(v, aliases, bound)),
+                .for_each(|(_, value)| walk_expr(value, bound, v)),
         },
         Expr::If {
             condition,
@@ -2442,38 +2760,38 @@ fn expand_expr(expr: &mut Expr, aliases: &Aliases, bound: &[String]) {
             else_value,
             ..
         } => {
-            expand_expr(condition, aliases, bound);
-            expand_aliases_in_block(then_branch, aliases, bound);
-            if let Some(v) = then_value {
-                expand_expr(v, aliases, bound);
+            walk_expr(condition, bound, v);
+            walk_block(then_branch, bound, v);
+            if let Some(value) = then_value {
+                walk_expr(value, bound, v);
             }
             if let Some(eb) = else_branch {
-                expand_aliases_in_block(eb, aliases, bound);
+                walk_block(eb, bound, v);
             }
-            if let Some(v) = else_value {
-                expand_expr(v, aliases, bound);
+            if let Some(value) = else_value {
+                walk_expr(value, bound, v);
             }
         }
         Expr::Block { stmts, value, .. } => {
-            expand_aliases_in_block(stmts, aliases, bound);
-            if let Some(v) = value {
-                expand_expr(v, aliases, bound);
+            walk_block(stmts, bound, v);
+            if let Some(value) = value {
+                walk_expr(value, bound, v);
             }
         }
         Expr::Cast { expr, ty, .. } => {
-            expand_expr(expr, aliases, bound);
-            expand_aliases_in_type(ty, aliases, bound);
+            walk_expr(expr, bound, v);
+            v.visit(ty, bound);
         }
-        Expr::Loop { body, .. } => expand_aliases_in_block(body, aliases, bound),
+        Expr::Loop { body, .. } => walk_block(body, bound, v),
         Expr::Match { expr, arms, .. } => {
-            expand_expr(expr, aliases, bound);
+            walk_expr(expr, bound, v);
             for arm in arms {
                 if let Some(g) = &mut arm.guard {
-                    expand_expr(g, aliases, bound);
+                    walk_expr(g, bound, v);
                 }
-                expand_aliases_in_block(&mut arm.body, aliases, bound);
-                if let Some(v) = &mut arm.value {
-                    expand_expr(v, aliases, bound);
+                walk_block(&mut arm.body, bound, v);
+                if let Some(value) = &mut arm.value {
+                    walk_expr(value, bound, v);
                 }
             }
         }
@@ -2635,6 +2953,56 @@ mod alias_expansion_tests {
     /// `struct T`. Inside a generic STRUCT the two spellings coincide — the
     /// parser binds no parameter there — and the type checker refuses such a
     /// use by name before code generation runs.
+    /// THE RENAME (review round 4): a parameter an alias would capture is
+    /// renamed in every type position of its item, and nowhere else — the
+    /// expanded `T` and the expression `T { n: 7 }` keep meaning the global.
+    /// A parameter nothing captures keeps its name.
+    #[test]
+    fn a_parameter_an_alias_would_capture_is_renamed_and_nothing_else_is() {
+        let tokens = Lexer::new(
+            "struct T { n: i64 }\ntype A = T;\n\
+             fn f<T, U>(x: T, u: U) -> A { let y: T = x; return T { n: 7 }; }\n\
+             struct G<T> { v: T, a: A, k: [T; 2] }\nfn main() {}",
+        )
+        .collect_tokens()
+        .unwrap();
+        let mut p = Parser::new(tokens).parse().unwrap();
+        let aliases = non_generic_aliases(&p);
+        rename_capturing_binders(&mut p, &aliases);
+        let p = expand_type_aliases(&p, &non_generic_aliases(&p));
+        let f = p
+            .items
+            .iter()
+            .find_map(|i| match i {
+                Item::Function(f) if f.name == "f" => Some(f),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(f.type_params, vec!["T#1".to_string(), "U".to_string()]);
+        assert_eq!(f.params[0].ty, Type::TypeParam("T#1".to_string()));
+        assert_eq!(f.params[1].ty, Type::TypeParam("U".to_string()));
+        assert_eq!(f.return_type, Some(custom("T")));
+        assert!(
+            matches!(&f.body[0], Stmt::Let { ty: Some(Type::TypeParam(n)), .. } if n == "T#1"),
+            "{:?}",
+            f.body[0]
+        );
+        assert!(
+            matches!(&f.body[1], Stmt::Return(Some(Expr::StructLiteral { name, .. })) if name == "T"),
+            "{:?}",
+            f.body[1]
+        );
+        let arr = |t: Type| Type::Array(Box::new(t), ArraySize::Literal(2));
+        assert_eq!(
+            struct_fields(&p, "G"),
+            vec![custom("T#2"), custom("T"), arr(custom("T#2"))]
+        );
+        assert_eq!(
+            in_user_spelling("expected T#1, found [T#2; 2] in `G<T#2>` (#63)"),
+            "expected T, found [T; 2] in `G<T>` (#63)"
+        );
+    }
+
     #[test]
     fn an_alias_whose_body_names_a_bound_parameter_expands_to_the_global_type() {
         let p = expanded(

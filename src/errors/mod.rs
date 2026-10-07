@@ -1152,6 +1152,19 @@ impl Diagnostic {
         self
     }
 
+    /// Every renamed type parameter back in the spelling the source gave it
+    /// (`crate::ast::in_user_spelling`): the diagnostic names what was written.
+    pub fn in_user_spelling(mut self) -> Self {
+        self.message = crate::ast::in_user_spelling(&self.message);
+        for note in &mut self.notes {
+            *note = crate::ast::in_user_spelling(note);
+        }
+        for suggestion in &mut self.suggestions {
+            suggestion.message = crate::ast::in_user_spelling(&suggestion.message);
+        }
+        self
+    }
+
     pub fn with_span(mut self, span: Span) -> Self {
         self.span = Some(span);
         self

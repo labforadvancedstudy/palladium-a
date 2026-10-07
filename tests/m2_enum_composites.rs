@@ -612,105 +612,144 @@ fn an_alias_inside_a_generic_item_is_still_the_type_it_names() {
 }
 
 // ---------------------------------------------------------------------------
-// Review round 3 (12042e0): an alias that names a parameter its item binds.
+// Review rounds 3 and 4: an alias that names a parameter its item binds.
 // ---------------------------------------------------------------------------
 
 /// `type A = [T; 2];` written at the top level names the global `T`; inside
-/// `struct G<T>` that name is G's parameter. 12042e0 left such a use for code
-/// generation to resolve globally, which lost an array's size suffix
-/// (`struct T[2] a;`, refused by gcc) and silently worked for a scalar. Every
-/// shape is refused by name now — scalar, array, tuple, nested, through an
-/// alias chain, in a struct field, a generic function's parameter and its
-/// return type. main (ad63231) refused every program here as well, naming
-/// neither the alias's body nor the parameter: the ten field and parameter
-/// rows with a mismatch (`expected A, found [T; 2]`), the two return-type rows
-/// with `Cannot index into non-array type: A` and `Unknown struct type: A`.
+/// `struct G<T>` or `fn f<T>` the name `T` is the item's parameter. The alias
+/// means the GLOBAL type there too: the colliding parameter is renamed before
+/// type checking (`rename_capturing_binders`, src/ast/mod.rs), so the
+/// expanded `T` cannot be captured by it. Round 3 refused every such use by
+/// name, which lost programs main ran — a generic function returning the
+/// alias, its result discarded or handed to another generic (review round 4).
+/// Every row reads the aliased value back, through each consumer of a result:
+/// a discarded call, a forward to another generic, an annotated binding and a
+/// field read.
 #[test]
-fn an_alias_that_names_a_parameter_its_item_binds_is_refused_by_name() {
+fn an_alias_that_names_a_parameter_its_item_binds_means_the_global_type() {
     let rows: [(&str, &str, &str); 12] = [
         (
             "scalar body, struct field",
             "struct T { n: i64 }\ntype A = T;\nstruct G<T> { v: T, a: A }\n\
-             fn main() { let g = G { v: 3, a: T { n: 7 } }; print_int(g.a.n); }",
-            "alias `A` names `T`, which `G<T>` binds",
+             fn main() { let g = G { v: 3, a: T { n: 7 } }; print_int(g.a.n); print_int(g.v); }",
+            "7\n3\n",
         ),
         (
             "array body, struct field",
             "struct T { n: i64 }\ntype A = [T; 2];\nstruct G<T> { v: T, a: A }\n\
-             fn main() { let g = G { v: 3, a: [T { n: 7 }, T { n: 8 }] }; print_int(g.v); }",
-            "alias `A` names `T`, which `G<T>` binds",
+             fn main() { let g = G { v: 3, a: [T { n: 7 }, T { n: 8 }] }; \
+             print_int(g.a[1].n); print_int(g.v); }",
+            "8\n3\n",
         ),
         (
             "array of an enum, struct field",
             "enum T { A, B }\ntype X = [T; 2];\nstruct G<T> { v: T, a: X }\n\
-             fn main() { let g = G { v: 3, a: [T::A, T::B] }; print_int(g.v); }",
-            "alias `X` names `T`, which `G<T>` binds",
-        ),
-        (
-            "tuple body, struct field",
-            "struct T { n: i64 }\ntype A = (T, i64);\nstruct G<T> { v: T, a: A }\n\
-             fn main() { let g = G { v: 3, a: (T { n: 7 }, 8) }; print_int(g.v); }",
-            "alias `A` names `T`, which `G<T>` binds",
+             fn tc(t: T) -> i64 { match t { T::A => { return 0; } T::B => { return 1; } } }\n\
+             fn main() { let g = G { v: 3, a: [T::A, T::B] }; print_int(tc(g.a[1])); print_int(g.v); }",
+            "1\n3\n",
         ),
         (
             "alias inside an array field",
             "struct T { n: i64 }\ntype A = T;\nstruct G<T> { v: T, a: [A; 2] }\n\
-             fn main() { let g = G { v: 3, a: [T { n: 7 }, T { n: 8 }] }; print_int(g.v); }",
-            "alias `A` names `T`, which `G<T>` binds",
+             fn main() { let g = G { v: 3, a: [T { n: 7 }, T { n: 8 }] }; \
+             print_int(g.a[1].n); print_int(g.v); }",
+            "8\n3\n",
         ),
         (
             "the middle of a chain is the parameter",
             "type B = bool;\ntype A = B;\nstruct G<B> { v: B, a: A }\n\
-             fn main() { let g = G { v: 4294967297, a: true }; print_int(g.v); }",
-            "alias `A` names `B`, which `G<B>` binds",
+             fn main() { let g = G { v: 4294967297, a: true }; print_int(g.v); \
+             if g.a { print_int(1); } }",
+            "4294967297\n1\n",
         ),
         (
             "through a chain of aliases",
             "struct T { n: i64 }\ntype A = T;\ntype B = A;\nstruct G<T> { v: T, a: B }\n\
-             fn main() { let g = G { v: 3, a: T { n: 7 } }; print_int(g.a.n); }",
-            "alias `B` names `T` through `A`, which `G<T>` binds",
-        ),
-        (
-            "array body, generic fn parameter, literal argument",
-            "struct T { n: i64 }\ntype A = [T; 2];\nfn f<T>(x: T, a: A) -> i64 { return a[1].n; }\n\
-             fn main() { print_int(f(1, [T { n: 7 }, T { n: 8 }])); }",
-            "alias `A` names `T`, which `f<T>` binds",
+             fn main() { let g = G { v: 3, a: T { n: 7 } }; print_int(g.a.n); print_int(g.v); }",
+            "7\n3\n",
         ),
         (
             "array body, generic fn parameter, variable argument",
             "struct T { n: i64 }\ntype A = [T; 2];\nfn f<T>(x: T, a: A) -> i64 { return a[1].n; }\n\
              fn main() { let a: A = [T { n: 7 }, T { n: 8 }]; print_int(f(1, a)); }",
-            "alias `A` names `T`, which `f<T>` binds",
+            "8\n",
         ),
         (
             "scalar body, generic fn parameter",
             "struct T { n: i64 }\ntype A = T;\nfn f<T>(x: T, a: A) -> i64 { return a.n; }\n\
              fn main() { print_int(f(1, T { n: 9 })); }",
-            "alias `A` names `T`, which `f<T>` binds",
+            "9\n",
         ),
         (
-            "array body, generic fn return type",
-            "struct T { n: i64 }\ntype A = [T; 2];\n\
-             fn f<T>(x: T) -> A { return [T { n: 7 }, T { n: 8 }]; }\n\
-             fn main() { let a = f(1); print_int(a[1].n); }",
-            "alias `A` names `T`, which `f<T>` binds",
+            "scalar return, result discarded",
+            "struct T { n: i64 }\ntype A = T;\n\
+             fn f<T>(x: T) -> A { print_int(7); return T { n: 7 }; }\n\
+             fn main() { f(1); }",
+            "7\n",
         ),
         (
-            "scalar body, generic fn return type",
+            "scalar return, result forwarded to another generic",
+            "struct T { n: i64 }\ntype A = T;\nfn f<T>(x: T) -> A { return T { n: 7 }; }\n\
+             fn read<X>(x: X) -> i64 { return x.n; }\n\
+             fn main() { let a = f(1); print_int(read(a)); }",
+            "7\n",
+        ),
+        (
+            "scalar return, annotated binding",
+            "struct T { n: i64 }\ntype A = T;\nfn f<T>(x: T) -> A { return T { n: 7 }; }\n\
+             fn main() { let a: A = f(1); print_int(a.n); }",
+            "7\n",
+        ),
+        (
+            "scalar return, field read",
             "struct T { n: i64 }\ntype A = T;\nfn f<T>(x: T) -> A { return T { n: 7 }; }\n\
              fn main() { let a = f(1); print_int(a.n); }",
-            "alias `A` names `T`, which `f<T>` binds",
+            "7\n",
         ),
     ];
     for (shape, source, want) in rows {
-        let text = refused(source, "alias_capture");
+        let out = run(source, "alias_global");
+        assert_eq!(out, want, "{}", shape);
+    }
+}
+
+/// The three capture shapes that stay refused, each by the refusal its
+/// capture-free twin gets: a function cannot return an array at all; a struct
+/// field cannot be a tuple (`struct G { a: (i64, i64) }` is refused the same
+/// way on main); and an array literal cannot be passed directly as an argument
+/// (#62 — bind it to a `let` first, as the row above does).
+#[test]
+fn an_alias_capture_that_meets_an_existing_refusal_is_refused_by_it() {
+    let rows: [(&str, &str, &str); 3] = [
+        (
+            "array return",
+            "struct T { n: i64 }\ntype A = [T; 2];\n\
+             fn f<T>(x: T) -> A { return [T { n: 7 }, T { n: 8 }]; }\n\
+             fn main() { let a = f(1); print_int(a[1].n); }",
+            "Returning arrays from functions is not yet supported",
+        ),
+        (
+            "tuple body, struct field",
+            "struct T { n: i64 }\ntype A = (T, i64);\nstruct G<T> { v: T, a: A }\n\
+             fn main() { let g = G { v: 3, a: (T { n: 7 }, 8) }; print_int(g.a.1); print_int(g.v); }",
+            "Tuple types in structs not yet supported",
+        ),
+        (
+            "array literal argument",
+            "struct T { n: i64 }\ntype A = [T; 2];\nfn f<T>(x: T, a: A) -> i64 { return a[1].n; }\n\
+             fn main() { print_int(f(1, [T { n: 7 }, T { n: 8 }])); }",
+            "is passed directly as an argument",
+        ),
+    ];
+    for (shape, source, want) in rows {
+        let text = refused(source, "alias_capture_refused");
+        assert!(text.contains(want), "{}: {}", shape, text);
         assert!(
-            text.contains(want) && text.contains("rename the parameter"),
+            !text.contains("rename the parameter"),
             "{}: {}",
             shape,
             text
         );
-        assert!(!text.contains("Unknown"), "{}: {}", shape, text);
     }
 }
 
@@ -904,5 +943,69 @@ fn a_generic_struct_literal_at_i64_bool_or_string_still_runs() {
     ];
     for (shape, source, want) in rows {
         assert_eq!(run(source, "generic_literal_runs"), want, "{}", shape);
+    }
+}
+
+/// A user type may be NAMED `Unknown`. The instantiation record's placeholder
+/// for an argument it cannot name is not a type name (review round 4), so a
+/// struct called `Unknown` is a struct argument like any other (#63), never an
+/// argument with no name.
+#[test]
+fn a_struct_named_unknown_is_a_struct_argument() {
+    let text = refused(
+        "struct Unknown { n: i64 }\nstruct G<T> { v: T }\n\
+         fn main() { let g = G { v: Unknown { n: 3 } }; print_int(g.v.n); }",
+        "struct_named_unknown",
+    );
+    assert!(
+        text.contains("The instantiations the type checker recorded for `G` are `G<Unknown>`."),
+        "{}",
+        text
+    );
+    assert!(!text.contains("has no name"), "{}", text);
+}
+
+/// A tuple reached through an alias is carried to another generic by the
+/// alias's NAME (review round 4). main typed the result of `fn f<U>(x: U) ->
+/// A` with `type A = (T, i64)` as the opaque `A`, so handing it to `fwd<X>`
+/// instantiated `fwd` at `A`, which code generation resolved to the tuple's C
+/// struct: the first row printed 5 on main. Since round 2 the result is the
+/// tuple itself, and a tuple has no name to carry, so the call was refused as
+/// an instantiation at `(T, i64)`. Found by handing the result of every
+/// alias-capture shape to each consumer — discard, forward, annotated binding
+/// and field read — not only to a field read.
+#[test]
+fn a_tuple_alias_result_is_carried_to_another_generic_by_its_name() {
+    let rows: [(&str, &str, &str); 4] = [
+        (
+            "a generic's tuple-alias result, forwarded",
+            "struct T { n: i64 }\ntype A = (T, i64);\nfn fwd<X>(x: X) -> i64 { return 5; }\n\
+             fn f<U>(x: U) -> A { return (T { n: 7 }, 8); }\n\
+             fn main() { let r = f(1); print_int(fwd(r)); }",
+            "5\n",
+        ),
+        (
+            "the same, the parameter named like the alias's global",
+            "struct T { n: i64 }\ntype A = (T, i64);\nfn fwd<X>(x: X) -> i64 { return 5; }\n\
+             fn f<T>(x: T) -> A { return (T { n: 7 }, 8); }\n\
+             fn main() { let r = f(1); print_int(fwd(r)); }",
+            "5\n",
+        ),
+        (
+            "forwarded and handed back",
+            "type A = (i64, i64);\nfn id<X>(x: X) -> X { return x; }\n\
+             fn f<U>(x: U) -> A { return (1, 2); }\n\
+             fn main() { let r = f(1); let s = id(r); print_int(s.1); }",
+            "2\n",
+        ),
+        (
+            "an annotated local",
+            "type A = (i64, i64);\nfn fwd<X>(x: X) -> i64 { return 5; }\n\
+             fn main() { let r: A = (1, 2); print_int(fwd(r)); }",
+            "5\n",
+        ),
+    ];
+    for (shape, source, want) in rows {
+        assert_eq!(run(source, "tuple_alias_forward"), want, "{}", shape);
     }
 }

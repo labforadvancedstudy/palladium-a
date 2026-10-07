@@ -95,7 +95,7 @@ impl Driver {
         } else {
             HashMap::new()
         };
-
+        let resolved_modules = crate::ast::with_captures_renamed(&mut ast, resolved_modules);
         // Phase 3: Type checking
         println!("🔍 Type checking...");
         let type_start = Instant::now();
@@ -287,7 +287,7 @@ impl Driver {
             Ok(output) => Ok(output),
             Err(e) => {
                 // Convert error to diagnostic and report it
-                let diagnostic = e.to_diagnostic();
+                let diagnostic = e.to_diagnostic().in_user_spelling();
                 reporter.report(&diagnostic);
                 Err(e)
             }

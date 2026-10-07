@@ -4068,7 +4068,7 @@ impl TypeChecker {
                 }
 
                 // First check if it's a generic function that needs instantiation
-                if let Some(generic_func) = self.capture_free_generic_function(func_name)? {
+                if let Some(generic_func) = self.generic_functions.get(func_name).cloned() {
                     // Infer type arguments from the call
                     let type_args = self.infer_type_args(&generic_func, args)?;
 
@@ -4358,7 +4358,7 @@ impl TypeChecker {
             }
             Expr::StructLiteral { name, fields, .. } => {
                 // First check if this is a generic struct
-                if let Some(generic_struct) = self.capture_free_generic_struct(name)? {
+                if let Some(generic_struct) = self.generic_structs.get(name).cloned() {
                     // For generic structs, we need to infer type parameters from field values
                     let mut type_substitutions: HashMap<String, CheckerType> = HashMap::new();
 
@@ -4491,7 +4491,7 @@ impl TypeChecker {
                                                 CheckerType::Struct(n) => n.clone(),
                                                 // An enum was "Unknown" here too.
                                                 CheckerType::Enum(n) => n.clone(),
-                                                _ => "Unknown".to_string(),
+                                                _ => UNNAMED_TYPE_ARGUMENT.to_string(),
                                             },
                                             GenericArgValue::Const(c) => match c {
                                                 ConstValueResolved::Integer(n) => n.to_string(),
@@ -4501,7 +4501,7 @@ impl TypeChecker {
                                         .collect();
                                     format!("{}<{}>", name, arg_strs.join(", "))
                                 }
-                                _ => "Unknown".to_string(),
+                                _ => UNNAMED_TYPE_ARGUMENT.to_string(),
                             }
                         })
                         .collect();
@@ -6220,7 +6220,7 @@ impl TypeChecker {
         match expected_type {
             crate::ast::Type::TypeParam(param_name) => {
                 // This is a type parameter - infer its type from the expression
-                let expr_type = self.infer_expr_type(expr)?;
+                let expr_type = self.carried_by_alias_name(self.infer_expr_type(expr)?);
 
                 // Check if we already have a mapping for this type parameter
                 if let Some(existing_type) = type_map.get(param_name) {
@@ -7017,129 +7017,42 @@ impl TypeChecker {
         }
     }
 
-    // AN ALIAS NEVER MEANS A PARAMETER (WT-01 W2a review round 3).
-    //
-    // `type A = [T; 2];` is written at the top level, so its `T` is the global
-    // `T`. Inside `struct G<T>` the name `T` is G's parameter, and `A` used
-    // there names a type the item's own text cannot spell. 12042e0 left such a
-    // use unexpanded for code generation, whose `type_to_c` resolved the name
-    // globally: right for a scalar body, wrong for an array, whose size suffix
-    // was lost from the declarator (`struct T[2] a;`, refused by gcc). main
-    // refused every such program, naming neither the alias's body nor the
-    // parameter: `expected A, found [T; 2]`, or for a return type `Cannot index
-    // into non-array type: A` / `Unknown struct type: A`. It is refused here, by
-    // name, where a generic struct literal or a generic call reads the item's
-    // signature. A use inside a generic function's BODY is not reached — those
-    // bodies are not type-checked here (`let a: i64 = true;` in one runs on
-    // main) — and main ran the scalar case, so it is left to code generation,
-    // which expands the alias to its global type there (`expand_type`,
-    // src/ast/mod.rs) and substitutes only the function's own `TypeParam`.
-
-    /// `name`'s generic struct, refused when a field names a capturing alias.
-    fn capture_free_generic_struct(&self, name: &str) -> Result<Option<GenericStruct>> {
-        let Some(generic_struct) = self.generic_structs.get(name).cloned() else {
-            return Ok(None);
-        };
-        for (_, field_type) in &generic_struct.fields {
-            self.refuse_alias_capture(name, &generic_struct.type_params, field_type)?;
+    /// A generic call's type argument, carried by the NAME of a non-generic
+    /// alias when the argument is a tuple that alias names (review round 4).
+    ///
+    /// A type argument is carried by name (`type_argument_as_named_type`),
+    /// and a tuple has none of its own. main never saw the tuple: it typed
+    /// `let r = f(1)` over `fn f<U>(x: U) -> A` with `type A = (T, i64)` as
+    /// the opaque `A`, so `fwd(r)` was instantiated at `A`, and code
+    /// generation's `type_to_c` resolved that name to the tuple's C struct —
+    /// compiled and ran. Since round 2 the result is the tuple itself, so the
+    /// same call was refused as an instantiation at `(T, i64)`. The alias's
+    /// name carries it again. An ARRAY is not carried this way: its C type is
+    /// not a type a parameter can be declared with by name, and main sent that
+    /// program to gcc.
+    fn carried_by_alias_name(&self, type_argument: String) -> String {
+        if !type_argument.starts_with('(') {
+            return type_argument;
         }
-        Ok(Some(generic_struct))
-    }
-
-    /// `name`'s generic function, refused when a parameter or the return
-    /// type names a capturing alias.
-    fn capture_free_generic_function(&self, name: &str) -> Result<Option<GenericFunction>> {
-        let Some(generic_func) = self.generic_functions.get(name).cloned() else {
-            return Ok(None);
-        };
-        let params = generic_func.params.iter().map(|(_, ty)| ty);
-        for ty in params.chain(&generic_func.return_type) {
-            self.refuse_alias_capture(name, &generic_func.type_params, ty)?;
-        }
-        Ok(Some(generic_func))
-    }
-
-    /// Refuse `ty`, written inside `item<type_params>`, when it uses a
-    /// non-generic alias whose body names one of `type_params` — directly or
-    /// through another alias.
-    fn refuse_alias_capture(
-        &self,
-        item: &str,
-        type_params: &[String],
-        ty: &crate::ast::Type,
-    ) -> Result<()> {
-        let mut used = Vec::new();
-        Self::type_names(ty, &mut used);
-        for alias in used.iter().filter(|n| !type_params.contains(n)) {
-            let mut via = Vec::new();
-            if let Some(param) = self.alias_names_one_of(alias, type_params, &mut via) {
-                let through = match via.len() {
-                    0 | 1 => String::new(),
-                    _ => format!(" through `{}`", via[1..].join("` and `")),
-                };
-                return Err(CompileError::Generic(format!(
-                    "alias `{}` names `{}`{}, which `{}<{}>` binds — rename the parameter: \
-                     inside `{}` that name is the parameter, not the type the alias was \
-                     written for",
-                    alias,
-                    param,
-                    through,
-                    item,
-                    type_params.join(", "),
-                    item
-                )));
+        let mut names: Vec<&String> = self.type_aliases.keys().collect();
+        names.sort();
+        for name in names {
+            let body = self.ast_type_to_checker_type(&self.type_aliases[name]);
+            if self.checker_type_to_string(&body) == type_argument {
+                return name.clone();
             }
         }
-        Ok(())
-    }
-
-    /// The first of `params` that alias `alias` names, reading its body and
-    /// the body of every alias it names in turn; `via` collects the chain.
-    fn alias_names_one_of(
-        &self,
-        alias: &str,
-        params: &[String],
-        via: &mut Vec<String>,
-    ) -> Option<String> {
-        if via.iter().any(|seen| seen == alias) {
-            return None;
-        }
-        let body = self.type_aliases.get(alias)?;
-        via.push(alias.to_string());
-        let mut named = Vec::new();
-        Self::type_names(body, &mut named);
-        if let Some(param) = named.iter().find(|n| params.contains(n)) {
-            return Some(param.clone());
-        }
-        for next in &named {
-            let depth = via.len();
-            if let Some(param) = self.alias_names_one_of(next, params, via) {
-                return Some(param);
-            }
-            via.truncate(depth);
-        }
-        None
-    }
-
-    /// Every type NAME `ty` spells, at every depth.
-    fn type_names(ty: &crate::ast::Type, out: &mut Vec<String>) {
-        match ty {
-            crate::ast::Type::Custom(n) | crate::ast::Type::TypeParam(n) => out.push(n.clone()),
-            crate::ast::Type::Array(elem, _) => Self::type_names(elem, out),
-            crate::ast::Type::Generic { args, .. } => {
-                for arg in args {
-                    if let GenericArg::Type(t) = arg {
-                        Self::type_names(t, out);
-                    }
-                }
-            }
-            crate::ast::Type::Reference { inner, .. }
-            | crate::ast::Type::Future { output: inner } => Self::type_names(inner, out),
-            crate::ast::Type::Tuple(types) => types.iter().for_each(|t| Self::type_names(t, out)),
-            _ => {}
-        }
+        type_argument
     }
 }
+
+/// The type argument a generic struct instantiation records when the argument
+/// has no name to record — an array, a tuple, a char or a float (measured).
+/// It was the string `Unknown`, which a user type may also be called
+/// (`struct Unknown { n: i64 }`), so code generation could not tell the two
+/// apart. `?` cannot occur in any type the record spells, so a test for it
+/// is a test for the placeholder and for nothing else (review round 4).
+pub const UNNAMED_TYPE_ARGUMENT: &str = "?";
 
 #[cfg(test)]
 mod tests {

@@ -6197,7 +6197,7 @@ impl CodeGenerator {
                             self.generate_expression(arg)?;
                         }
                     } else {
-                        self.generate_expression(arg)?;
+                        self.generate_expression(Self::not_an_array_literal(arg, i, &callee)?)?;
                     }
                 }
                 self.output.push(')');
@@ -6956,7 +6956,7 @@ impl CodeGenerator {
     /// an `i64` first field — fell back to the uninstantiated `struct G`,
     /// which no generic struct ever defines, and gcc refused the program:
     /// `incomplete type 'struct G'`, or, for an argument the type checker
-    /// records as `Unknown` (an array, a tuple, a char, a float), `incomplete
+    /// records with no name (an array, a tuple, a char, a float), `incomplete
     /// type 'struct Unknown'` one definition earlier. That is #63, measured as
     /// 42 of the 50 programs main refused and the round-2 build sent to gcc.
     /// Refused here, before any C exists.
@@ -6974,15 +6974,17 @@ impl CodeGenerator {
             // What the type checker RECORDED for the struct, which is not what
             // the program wrote: an integer of any width is recorded as `i64`
             // (measured: i32, u32, u64), and an argument it cannot name as the
-            // placeholder `Unknown` (measured: an array, a tuple, a char, a
-            // float). The placeholder is never printed; both are said instead.
+            // placeholder `crate::typeck::UNNAMED_TYPE_ARGUMENT` (measured: an
+            // array, a tuple, a char, a float), which no type name can spell.
+            // The placeholder is never printed; both are said instead.
             let is_word = |arg: &String, w: &str| {
                 arg.split(|c: char| !(c.is_alphanumeric() || c == '_'))
                     .any(|word| word == w)
             };
+            let unnamed = |arg: &String| arg.contains(crate::typeck::UNNAMED_TYPE_ARGUMENT);
             let named: Vec<String> = instantiations
                 .iter()
-                .filter(|(args, _)| !args.iter().any(|a| is_word(a, "Unknown")))
+                .filter(|(args, _)| !args.iter().any(unnamed))
                 .map(|(args, _)| format!("`{}<{}>`", name, args.join(", ")))
                 .collect();
             let any_arg = |w: &str| {
@@ -7003,7 +7005,10 @@ impl CodeGenerator {
                     " The record keeps no integer width: i32, u32 and u64 all appear as `i64`.",
                 );
             }
-            if any_arg("Unknown") {
+            if instantiations
+                .iter()
+                .any(|(args, _)| args.iter().any(unnamed))
+            {
                 record.push_str(
                     " An argument that is an array, a tuple, a char or a float has no name in \
                      the instantiation record, so no literal holding one can be matched.",
@@ -7019,6 +7024,30 @@ impl CodeGenerator {
                 ),
             }
         })
+    }
+
+    /// An argument emitted in place may not be an array LITERAL (#62). C has
+    /// no array value: `[1, 2]` is emitted as the brace list `{1, 2}`, which
+    /// is an initialiser and not an expression, so `f([1, 2])` became
+    /// `f({1, 2})` and gcc refused it ("expected expression") on main, for
+    /// every element type. A `let` gives the array storage to pass, and that
+    /// spelling links and runs. Refused here, by name, before any C exists
+    /// (WT-01 W2a review round 4: an alias-typed parameter, `f(1, [T { n: 7 },
+    /// T { n: 8 }])`, reaches this through the same emitter). An argument the
+    /// call hoists into a temporary first never reaches this line.
+    fn not_an_array_literal<'e>(arg: &'e Expr, i: usize, callee: &str) -> Result<&'e Expr> {
+        if matches!(arg, Expr::ArrayLiteral { .. } | Expr::ArrayRepeat { .. }) {
+            return Err(CompileError::CodegenError {
+                message: format!(
+                    "argument {} of `{}` is an array literal, which is passed directly as an \
+                     argument only as a C brace list `{{..}}` — an initialiser, not an \
+                     expression (#62). Bind it to a `let` first and pass that",
+                    i + 1,
+                    callee
+                ),
+            });
+        }
+        Ok(arg)
     }
 
     /// An enum payload may not be an ARRAY: the payload is a union member and a
