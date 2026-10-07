@@ -19,7 +19,7 @@ bootstrap/v2_full_compiler/ast.pd	83-83	docs/contributing/MILESTONES.md	f7f1ef90
 bootstrap/v2_full_compiler/ast.pd	83-83	src/lexer/token.rs	f7f1ef90bc4b	else_branch: Option<Vec<Stmt>>,
 bootstrap/v2_full_compiler/parser.pd	178-178	docs/specification/bootstrap-subset.md	0f84a753b824	let op = if matches!(op_token.token_type, TokenType::Star) {
 docs/contributing/MILESTONES.md	1025-1025	tests/m3_imported_calls.rs	8f08dd52206a	## M3 — Traits and generics (v0.5.0)
-docs/contributing/MILESTONES.md	1085-1092	tests/m3_imported_calls.rs	b5702134e956	## M4 — Modules (v0.6.0) **Waits on**: C0. Split out of the old combined mile ...  are su3's type-alias rows, owned by M3) and the vacuous `12_modules_imports`.
+docs/contributing/MILESTONES.md	1085-1092	tests/m3_imported_calls.rs	3fba8ee4bf6a	## M4 — Modules (v0.6.0) **Waits on**: C0. Split out of the old combined mile ...  are su3's type-alias rows, owned by M3) and the vacuous `12_modules_imports`.
 docs/marketing/Turing.md	67-67	docs/reference/features/advanced/totality-checking.md	1825edf6bd0c	By outlawing `unsafe` blocks inside `#![total(strict)]` crates, the language
 docs/marketing/avp_marketing.md	17-20	docs/reference/features/advanced/totality-checking.md	3bc1a629dd9b	#![total(strict)] // Turing's vision realized: Provable termination fn fibonacci(n: nat) -> nat { #[decreases(n)] // Compiler PROVES this terminates
 docs/specification/bootstrap-subset.md	132-132	src/typeck/mod.rs	22b89ce977e8	**Generics**: excluded from PBS-1. They monomorphize in limited cases, but generic-argument
@@ -56,8 +56,8 @@ grammar.ebnf	388-388	tests/advanced_e2e_test.rs	899444284395	# There are no clos
 grammar.ebnf	388-388	tests/advanced_features_test.rs	899444284395	# There are no closures. TUPLE EXPRESSIONS AND `.0` INDEXING EXIST (N4-12) —
 grammar.ebnf	92-93	docs/reference/features/core-language/implicit-lifetimes.md	8191cd9d5f2e	# `mod`, `use`, `where`, `dyn`, `move`, `ref`, `crate`, # `super` and `extern` are NOT keywords — they lex as ordinary identifiers.
 runtime/palladium_runtime.c	470-470	src/builtins.rs	28f6c8c7868d	buf = (char *)malloc(cap);
-scripts/check_doc_evidence.py	1462-1500	docs/contributing/MILESTONES.md	022003063875	def check_conformance_counts(manifest=None, root=None): """-> (problems, chec ... as {want} " f"(recounted from {MANIFEST.name})") return (problems, checked, c)
-scripts/check_doc_evidence.py	331-333	docs/contributing/claude-md-coverage.md	a4f02106e0cf	for doc in (sorted(ROOT.glob("*.md")) + sorted(ROOT.glob("docs/**/*.md")) + s ... l")) + sorted(ROOT.glob("src/**/*.rs")) + sorted(ROOT.glob("tests/**/*.rs"))):
+scripts/check_doc_evidence.py	1648-1686	docs/contributing/MILESTONES.md	022003063875	def check_conformance_counts(manifest=None, root=None): """-> (problems, chec ... as {want} " f"(recounted from {MANIFEST.name})") return (problems, checked, c)
+scripts/check_doc_evidence.py	338-340	docs/contributing/claude-md-coverage.md	a4f02106e0cf	for doc in (sorted(ROOT.glob("*.md")) + sorted(ROOT.glob("docs/**/*.md")) + s ... l")) + sorted(ROOT.glob("src/**/*.rs")) + sorted(ROOT.glob("tests/**/*.rs"))):
 scripts/conformance.sh	1042-1047	docs/contributing/MILESTONES.md	6b22abcfbdf0	elif [ "$class" = "xfail" ] && [ "$stage_act" != "run" ] && [ "$fp_match" -gt ... not with the declared diagnostic; expected fingerprint '$fp', actual: $detail"
 scripts/conformance.sh	1052-1075	docs/contributing/MILESTONES.md	cd8f5fa0172c	elif [ "$pin_verdict" != "MATCH" ] && [ "$stage_act" != "run" ]; then # A rej ... ched no comparator ('$pin_verdict'); refusing rather than counting it" ;; esac
 scripts/conformance.sh	217-224	docs/contributing/MILESTONES.md	e383a707f766	grep_status() { local mode=$1 pat=$2 file=$3 case "$mode" in E) grep -qE -- " ... " 2>/dev/null ;; F) grep -qF -- "$pat" "$file" 2>/dev/null ;; esac return $? }
@@ -258,42 +258,42 @@ src/main.rs	194-196	tests/d10_llvm_refuses.rs	d4347d793f49	if llvm { driver = dr
 src/optimizer/constant_folding.rs	154-154	src/parser/mod.rs	a47431fb26aa	BinOp::Eq => {
 src/optimizer/constant_folding.rs	154-154	tests/d3b_tail_if.rs	a47431fb26aa	BinOp::Eq => {
 src/optimizer/dead_code.rs	35-70	src/optimizer/dead_code_test.rs	8b72f3893594	// A constant condition tells us exactly which arm runs, so the // other arm  ... ation: saying // "can continue" when it cannot only leaves dead code in place,
+src/ownership/borrow_checker.rs	1015-1015	docs/reference/features/core-language/implicit-lifetimes.md	b101e79789ce	let call_lifetime = self.context.new_lifetime();
+src/ownership/borrow_checker.rs	1015-1015	docs/reference/features/feature-index.toml	b101e79789ce	let call_lifetime = self.context.new_lifetime();
+src/ownership/borrow_checker.rs	1015-1015	docs/specification/language-spec.md	b101e79789ce	let call_lifetime = self.context.new_lifetime();
+src/ownership/borrow_checker.rs	1015-1022	CLAUDE.md	40f5ae3836be	let call_lifetime = self.context.new_lifetime(); let outer_lifetime = self.ca ... _lifetime = outer_lifetime; self.context.end_borrows(&call_lifetime); result?;
+src/ownership/borrow_checker.rs	1015-1022	docs/contributing/claude-md-coverage.md	40f5ae3836be	let call_lifetime = self.context.new_lifetime(); let outer_lifetime = self.ca ... _lifetime = outer_lifetime; self.context.end_borrows(&call_lifetime); result?;
+src/ownership/borrow_checker.rs	1021-1021	docs/reference/features/core-language/implicit-lifetimes.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
+src/ownership/borrow_checker.rs	1021-1021	docs/reference/features/feature-index.toml	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
+src/ownership/borrow_checker.rs	1021-1021	docs/specification/language-spec.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
 src/ownership/borrow_checker.rs	127-127	docs/contributing/MILESTONES.md	fa082a7e040b	let returns = match b.ret_mode {
 src/ownership/borrow_checker.rs	127-127	src/builtins.rs	fa082a7e040b	let returns = match b.ret_mode {
 src/ownership/borrow_checker.rs	127-127	src/codegen/mod.rs	fa082a7e040b	let returns = match b.ret_mode {
+src/ownership/borrow_checker.rs	1401-1406	docs/specification/language-spec.md	bdba387015c4	fn check_mutable_borrow_allowed(&self, place: &Place, span: crate::errors::Sp ...  { Place::Local(name) => { if self.mutable_bindings.get(name) != Some(&true) {
 src/ownership/borrow_checker.rs	157-160	tests/d3b_tail_if.rs	0cfaebfd62b1	let functions = crate::builtins::BUILTINS .iter() .map(|b| (b.name.to_string(), FunctionSig::from_builtin(b))) .collect();
 src/ownership/borrow_checker.rs	157-160	tests/m3_imported_calls.rs	0cfaebfd62b1	let functions = crate::builtins::BUILTINS .iter() .map(|b| (b.name.to_string(), FunctionSig::from_builtin(b))) .collect();
-src/ownership/borrow_checker.rs	1579-1581	tests/m3_imported_calls.rs	55ccf3b4f0d6	fn place_type(&self, expr: &Expr) -> Option<Type> { match expr { Expr::Ident(name) => self.local_types.get(name).cloned(),
+src/ownership/borrow_checker.rs	1638-1640	tests/m3_imported_calls.rs	55ccf3b4f0d6	fn place_type(&self, expr: &Expr) -> Option<Type> { match expr { Expr::Ident(name) => self.local_types.get(name).cloned(),
 src/ownership/borrow_checker.rs	359-368	tests/d3b_tail_if.rs	aa896335d3f2	// First pass: collect function signatures and struct layouts for item in &pr ... ields.clone()); } Item::Function(func) => { self.collect_function_sig(func); }
-src/ownership/borrow_checker.rs	408-414	docs/specification/language-spec.md	4f479bc9111b	Item::Impl(impl_block) => { // Check method bodies from impl blocks for method in &impl_block.methods { self.check_function(method)?; } } _ => {}
 src/ownership/borrow_checker.rs	563-565	docs/specification/language-spec.md	928a2535411c	if param.mutable { params.push(ParamOwnership::BorrowMut); continue;
 src/ownership/borrow_checker.rs	568-577	docs/specification/bootstrap-subset.md	f27c8fc81be9	Type::Array(_, _) => { // An array parameter is a *reference*, not a move. Th ... d // only the mutability of the binding picks the kind. ParamOwnership::Borrow
 src/ownership/borrow_checker.rs	583-584	docs/specification/bootstrap-subset.md	74e443ccb752	// Non-copy types Type::Custom(_) => ParamOwnership::Move,
 src/ownership/borrow_checker.rs	599-599	docs/specification/language-spec.md	3975922a5a94	ReturnOwnership::Borrowed(Lifetime::Named("fn".to_string()))
 src/ownership/borrow_checker.rs	641-643	src/codegen/mod.rs	412332b30331	for param in &func.params { let place = Place::Local(param.name.clone()); self.context.declare(&place);
 src/ownership/borrow_checker.rs	69-70	docs/specification/language-spec.md	52913fa77a92	/// Return value ownership #[allow(dead_code)]
-src/ownership/borrow_checker.rs	793-796	docs/reference/features/feature-index.toml	70e994f90146	Stmt::Return(Some(expr)) => { self.check_expr(expr)?; // TODO: Check return value ownership matches function signature }
+src/ownership/borrow_checker.rs	800-803	docs/reference/features/feature-index.toml	70e994f90146	Stmt::Return(Some(expr)) => { self.check_expr(expr)?; // TODO: Check return value ownership matches function signature }
 src/ownership/borrow_checker.rs	83-83	docs/specification/language-spec.md	d6fcadd1772d	/// How a callee takes each parameter.
 src/ownership/borrow_checker.rs	84-86	docs/specification/language-spec.md	3f7c8868ce02	/// /// The borrowing modes carry no lifetime: the caller-side borrow always  ...  exactly for the call expression, so `check_call_args` supplies that lifetime.
-src/ownership/borrow_checker.rs	904-904	tests/m3_imported_calls.rs	3ca7efc9179c	Expr::Ident(name) => {
-src/ownership/borrow_checker.rs	957-957	tests/m3_imported_calls.rs	e4a8f92b213a	return Err(CompileError::UseOfUninitializedValue {
-src/ownership/borrow_checker.rs	965-965	tests/d3b_tail_if.rs	4379d6381a6b	Expr::Call { func, args, span } => {
-src/ownership/borrow_checker.rs	982-982	docs/reference/features/core-language/implicit-lifetimes.md	b101e79789ce	let call_lifetime = self.context.new_lifetime();
-src/ownership/borrow_checker.rs	982-982	docs/reference/features/feature-index.toml	b101e79789ce	let call_lifetime = self.context.new_lifetime();
-src/ownership/borrow_checker.rs	982-982	docs/specification/language-spec.md	b101e79789ce	let call_lifetime = self.context.new_lifetime();
-src/ownership/borrow_checker.rs	982-989	CLAUDE.md	40f5ae3836be	let call_lifetime = self.context.new_lifetime(); let outer_lifetime = self.ca ... _lifetime = outer_lifetime; self.context.end_borrows(&call_lifetime); result?;
-src/ownership/borrow_checker.rs	982-989	docs/contributing/claude-md-coverage.md	40f5ae3836be	let call_lifetime = self.context.new_lifetime(); let outer_lifetime = self.ca ... _lifetime = outer_lifetime; self.context.end_borrows(&call_lifetime); result?;
-src/ownership/borrow_checker.rs	988-988	docs/reference/features/core-language/implicit-lifetimes.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
-src/ownership/borrow_checker.rs	988-988	docs/reference/features/feature-index.toml	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
-src/ownership/borrow_checker.rs	988-988	docs/specification/language-spec.md	6cb1cd37c4d0	self.context.end_borrows(&call_lifetime);
-src/ownership/mod.rs	101-126	docs/reference/features/feature-index.toml	087766658e2c	constraints: Vec<LifetimeConstraint>, /// Places *declared* by each open scop ... ] pub struct LifetimeConstraint { pub longer: Lifetime, pub shorter: Lifetime,
-src/ownership/mod.rs	141-178	docs/specification/bootstrap-subset.md	670019bc9327	pub fn exit_scope(&mut self) { // End every borrow this scope (or anything ne ...  } None => { self.ownership.remove(&place); } } } } self.current_scope -= 1; }
-src/ownership/mod.rs	147-148	docs/reference/features/feature-index.toml	6bb90e116f0c	let closing = self.current_scope; self.release_borrows(|borrow| borrow.scope >= closing);
-src/ownership/mod.rs	148-148	docs/reference/features/core-language/implicit-lifetimes.md	c79f31f371ca	self.release_borrows(|borrow| borrow.scope >= closing);
-src/ownership/mod.rs	205-207	docs/reference/features/feature-index.toml	c9585753caf3	pub fn end_borrows(&mut self, lifetime: &Lifetime) { self.release_borrows(|borrow| &borrow.lifetime == lifetime); }
+src/ownership/borrow_checker.rs	937-937	tests/m3_imported_calls.rs	3ca7efc9179c	Expr::Ident(name) => {
+src/ownership/borrow_checker.rs	990-990	tests/m3_imported_calls.rs	e4a8f92b213a	return Err(CompileError::UseOfUninitializedValue {
+src/ownership/borrow_checker.rs	998-998	tests/d3b_tail_if.rs	4379d6381a6b	Expr::Call { func, args, span } => {
+src/ownership/mod.rs	101-133	docs/reference/features/feature-index.toml	a0bf00097abb	constraints: Vec<LifetimeConstraint>, /// How many loop bodies enclose the st ... ] pub struct LifetimeConstraint { pub longer: Lifetime, pub shorter: Lifetime,
+src/ownership/mod.rs	178-228	docs/specification/bootstrap-subset.md	bbba92332589	pub fn exit_scope(&mut self) { // End every borrow this scope (or anything ne ... .release_borrows(|borrow| borrow.scope >= closing); self.current_scope -= 1; }
+src/ownership/mod.rs	184-185	docs/reference/features/feature-index.toml	6bb90e116f0c	let closing = self.current_scope; self.release_borrows(|borrow| borrow.scope >= closing);
+src/ownership/mod.rs	185-185	docs/reference/features/core-language/implicit-lifetimes.md	c79f31f371ca	self.release_borrows(|borrow| borrow.scope >= closing);
 src/ownership/mod.rs	25-33	docs/reference/features/feature-index.toml	75384ea2397d	/// Lifetime representation #[derive(Debug, Clone, PartialEq, Eq, Hash)] pub  ...  lifetime ('a, 'b, etc.) Named(String), /// Anonymous lifetime Anonymous(u32),
 src/ownership/mod.rs	27-27	docs/reference/features/core-language/implicit-lifetimes.md	e06a29f1a329	pub enum Lifetime {
-src/ownership/mod.rs	450-454	docs/reference/features/feature-index.toml	5d7e60bc0988	/// Add a lifetime constraint pub fn add_constraint(&mut self, longer: Lifeti ...  Lifetime) { self.constraints .push(LifetimeConstraint { longer, shorter }); }
+src/ownership/mod.rs	283-285	docs/reference/features/feature-index.toml	c9585753caf3	pub fn end_borrows(&mut self, lifetime: &Lifetime) { self.release_borrows(|borrow| &borrow.lifetime == lifetime); }
+src/ownership/mod.rs	709-713	docs/reference/features/feature-index.toml	5d7e60bc0988	/// Add a lifetime constraint pub fn add_constraint(&mut self, longer: Lifeti ...  Lifetime) { self.constraints .push(LifetimeConstraint { longer, shorter }); }
 src/ownership/mod.rs	71-71	docs/reference/features/core-language/implicit-lifetimes.md	58cffd430bf7	pub scope: u32,
 src/ownership/mod.rs	95-95	docs/reference/features/core-language/implicit-lifetimes.md	a067fdd308d7	current_scope: u32,
 src/package/lockfile.rs	341-341	docs/reference/features/feature-index.toml	6646f3d1b5b4	url: "https://packages.palladium-lang.org".to_string(),
@@ -424,7 +424,7 @@ src/typeck/mod.rs	744-748	docs/specification/language-spec.md	d9166315602a	crate
 stdlib/MANIFEST.tsv	1-1	docs/reference/features/feature-index.toml	a9011a68453c	# Pinned compile verdict for every .pd under stdlib/.
 tests/advanced_features_test.rs	340-340	docs/contributing/MILESTONES.md	9efc88caac80	#[ignore = "XFAIL: `macro_rules!` — grammar.ebnf:181 defines only `macro name ... ests/reject/macro_rules.pd. Retiring it is the owner's call, not this test's"]
 tests/compiler_comprehensive_test.rs	633-633	docs/contributing/MILESTONES.md	33e1b803ccb2	fn test_missing_return_is_an_error() {
-tests/conformance-manifest.txt	127-127	docs/contributing/MILESTONES.md	be3ef13e1247	tests/projects/hello_pdm/tests/test_math.pd xfail compile Undefined function: ... enerics. This is a correction against the ownership roster, not a reassignment
+tests/conformance-manifest.txt	129-129	docs/contributing/MILESTONES.md	be3ef13e1247	tests/projects/hello_pdm/tests/test_math.pd xfail compile Undefined function: ... enerics. This is a correction against the ownership roster, not a reassignment
 tests/e2e_test.rs	277-277	docs/contributing/MILESTONES.md	da9d5556e31e	fn test_c_keyword_identifier_still_links() {
 tests/e2e_test.rs	322-322	docs/contributing/MILESTONES.md	42427853e62c	fn test_tail_if_function_emits_a_return() {
 tests/m3_imported_calls.rs	1245-1249	docs/contributing/citation-and-predicate-debt.md	c6a8f8acac08	/// filter (`src/resolver/mod.rs:113` is the only hit in `src/`). Every consu ... / `register_imported_functions`. So `import lib2::{helper};` imports the whole

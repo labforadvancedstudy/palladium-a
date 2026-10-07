@@ -1,7 +1,7 @@
 // Borrow checker for Palladium
 // "Ensuring memory safety through static analysis"
 
-use crate::ast::{AssignTarget, Expr, Function, Item, Pattern, Program, Stmt, Type};
+use crate::ast::{AssignTarget, BinOp, Expr, Function, Item, Pattern, Program, Stmt, Type};
 use crate::errors::{CompileError, DiagnosticCode, Result};
 use crate::ownership::{expr_to_place, Lifetime, OwnershipContext, Place, RefKind};
 use std::collections::HashMap;
@@ -377,22 +377,16 @@ impl BorrowChecker {
                     ));
                 }
                 Item::Impl(impl_block) => {
-                    // Collect method signatures from impl blocks
-                    for method in &impl_block.methods {
+                    // Collect method signatures from impl blocks. `fn dup(self)
+                    // -> Self` returns the impl's type, and `Self` is a name no
+                    // `impl` block is registered under, so the signature is read
+                    // off the one substitution point the type checker and code
+                    // generation also call — see the second pass below for why
+                    // the bodies must come from the same list.
+                    for method in &impl_block.methods_with_self_resolved() {
                         // Create qualified method name
                         let qualified_name = format!("{}::{}", impl_block.for_type, method.name);
                         self.collect_function_sig_with_name(method, &qualified_name);
-                        // `fn dup(self) -> Self` returns the impl's type, and
-                        // `Self` is a name no `impl` block is registered under.
-                        // Resolved through the one substitution point the type
-                        // checker and code generation also call, so a third
-                        // reading of `Self` does not appear here.
-                        if let Some(sig) = self.functions.get_mut(&qualified_name) {
-                            sig.ret_ty = sig
-                                .ret_ty
-                                .as_ref()
-                                .map(|ty| crate::ast::substitute_self(ty, &impl_block.for_type));
-                        }
                     }
                 }
                 _ => {}
@@ -406,8 +400,14 @@ impl BorrowChecker {
                     self.check_function(func)?;
                 }
                 Item::Impl(impl_block) => {
-                    // Check method bodies from impl blocks
-                    for method in &impl_block.methods {
+                    // Method bodies WITH `Self` RESOLVED: every Copy decision
+                    // reads a parameter's declared type back. Raw, `self` was
+                    // `&Self`, no layout is called `Self`, and the first read of
+                    // `self.pos: i64` MOVED it — the same body through `d: &D`
+                    // was accepted. The same name keyed a by-value `self`'s calls
+                    // as `Self::take`, which nothing is registered under, so
+                    // their parameters went unenforced.
+                    for method in &impl_block.methods_with_self_resolved() {
                         self.check_function(method)?;
                     }
                 }
@@ -737,9 +737,16 @@ impl BorrowChecker {
                         self.check_expr(array)?;
                         self.check_expr(index)?;
                         if let Some(base) = expr_to_place(array) {
+                            // A constant index names that element, as it does
+                            // in `expr_to_place`; only a computed one is the
+                            // `dynamic` wildcard that may be any element.
+                            let index = match index.as_ref() {
+                                Expr::Integer(i) => i.to_string(),
+                                _ => "dynamic".to_string(),
+                            };
                             Place::Index {
                                 base: Box::new(base),
-                                index: "dynamic".to_string(),
+                                index,
                             }
                         } else {
                             return Err(CompileError::BorrowChecker {
@@ -777,12 +784,12 @@ impl BorrowChecker {
                     }
                 };
 
-                // Check if assignment is allowed
-                if let Some(from_place) = expr_to_place(value) {
-                    if !self.is_expr_copy(value) {
-                        // Move ownership
+                // Every assignment gives its target a new value; a non-Copy place is also moved.
+                match expr_to_place(value) {
+                    Some(from_place) if !self.is_expr_copy(value) => {
                         self.context.move_value(from_place, target_place, *span)?;
                     }
+                    _ => self.context.reinitialize(target_place, *span)?,
                 }
             }
 
@@ -805,15 +812,28 @@ impl BorrowChecker {
             } => {
                 self.check_expr(condition)?;
 
+                // Each arm starts from the state before the `if`, and the
+                // state after it is their join (`OwnershipContext::join`); a
+                // missing `else` is a path that changes nothing. EVERY arm
+                // joins, also one that ends in `return`: this pass has no
+                // divergence analysis, and an arm judged by its last statement
+                // was measured leaving by `break` (review round 2).
+                let entry = self.context.snapshot();
                 self.context.enter_scope();
                 self.check_block_stmts(then_branch)?;
                 self.context.exit_scope();
+                let mut paths = vec![self.context.snapshot()];
+                self.context.restore(&entry);
 
                 if let Some(else_stmts) = else_branch {
                     self.context.enter_scope();
                     self.check_block_stmts(else_stmts)?;
                     self.context.exit_scope();
+                    paths.push(self.context.snapshot());
+                } else {
+                    paths.push(entry);
                 }
+                self.context.join(paths);
             }
 
             Stmt::While {
@@ -821,15 +841,19 @@ impl BorrowChecker {
             } => {
                 self.check_expr(condition)?;
 
+                self.context.enter_loop();
                 self.context.enter_scope();
                 self.check_block_stmts(body)?;
                 self.context.exit_scope();
+                self.context.exit_loop();
             }
 
             Stmt::Loop { body, .. } => {
+                self.context.enter_loop();
                 self.context.enter_scope();
                 self.check_block_stmts(body)?;
                 self.context.exit_scope();
+                self.context.exit_loop();
             }
 
             Stmt::For {
@@ -850,7 +874,9 @@ impl BorrowChecker {
                 self.context.init_owned(place);
                 self.mutable_bindings.insert(var.clone(), false);
 
+                self.context.enter_loop();
                 self.check_block_stmts(body)?;
+                self.context.exit_loop();
                 self.context.exit_scope();
                 self.close_mutability_scope(loop_scope);
             }
@@ -858,7 +884,12 @@ impl BorrowChecker {
             Stmt::Match { expr, arms, .. } => {
                 self.check_expr(expr)?;
 
+                // Every arm starts from the state before the `match`; the
+                // state after it is their join, as for `if`.
+                let entry = self.context.snapshot();
+                let mut paths = Vec::new();
                 for arm in arms {
+                    self.context.restore(&entry);
                     // Opened before the pattern binds anything, so the arm's
                     // bindings do not survive the arm.
                     let arm_scope = self.open_mutability_scope();
@@ -871,7 +902,9 @@ impl BorrowChecker {
 
                     self.context.exit_scope();
                     self.close_mutability_scope(arm_scope);
+                    paths.push(self.context.snapshot());
                 }
+                self.context.join(paths);
             }
 
             // The value a `break` carries is an ordinary expression and can
@@ -989,9 +1022,20 @@ impl BorrowChecker {
                 result?;
             }
 
-            Expr::Binary { left, right, .. } => {
+            Expr::Binary {
+                left, op, right, ..
+            } => {
                 self.check_expr(left)?;
-                self.check_expr(right)?;
+                if matches!(op, BinOp::And | BinOp::Or) {
+                    // The right operand of `&&`/`||` runs on one outcome of the
+                    // left only, so skipping it is a path too.
+                    let entry = self.context.snapshot();
+                    self.check_expr(right)?;
+                    let after = self.context.snapshot();
+                    self.context.join(vec![entry, after]);
+                } else {
+                    self.check_expr(right)?;
+                }
             }
 
             Expr::Unary { operand, .. } => {
@@ -1167,10 +1211,17 @@ impl BorrowChecker {
                 ..
             } => {
                 self.check_expr(condition)?;
+                let entry = self.context.snapshot();
                 self.check_value_block(then_branch, then_value.as_deref())?;
+                let mut paths = vec![self.context.snapshot()];
+                self.context.restore(&entry);
                 if let Some(stmts) = else_branch {
                     self.check_value_block(stmts, else_value.as_deref())?;
+                    paths.push(self.context.snapshot());
+                } else {
+                    paths.push(entry);
                 }
+                self.context.join(paths);
             }
             Expr::Block { stmts, value, .. } => {
                 self.check_value_block(stmts, value.as_deref())?;
@@ -1179,11 +1230,17 @@ impl BorrowChecker {
                 self.check_expr(expr)?;
             }
             Expr::Loop { body, .. } => {
-                self.check_value_block(body, None)?;
+                self.context.enter_loop();
+                let checked = self.check_value_block(body, None);
+                self.context.exit_loop();
+                checked?;
             }
             Expr::Match { expr, arms, .. } => {
                 self.check_expr(expr)?;
+                let entry = self.context.snapshot();
+                let mut paths = Vec::new();
                 for arm in arms {
+                    self.context.restore(&entry);
                     // Same shape as `Stmt::Match` above, including
                     // `bind_pattern`: without it a payload binding is a name
                     // this pass has never seen, and `Payload::Num(n) => n * 10`
@@ -1203,7 +1260,9 @@ impl BorrowChecker {
                     self.context.exit_scope();
                     self.close_mutability_scope(arm_scope);
                     checked?;
+                    paths.push(self.context.snapshot());
                 }
+                self.context.join(paths);
             }
         }
 
@@ -2755,6 +2814,163 @@ mod tests {
         assert!(
             is_borrow_checker_refusal(&result),
             "a write through an immutable binding's element was accepted: {:?}",
+            result
+        );
+    }
+
+    /// `self` IS THE IMPL'S TYPE HERE TOO, not a struct called `Self`.
+    ///
+    /// Measured before the walk read `ImplBlock::methods_with_self_resolved`: every
+    /// program below was refused with "Use of moved value: self.pos" (or
+    /// `other.pos`, `xs[0].pos`, `c.pos`). The receiver kept its parsed type
+    /// `&Custom("Self")`, `place_type` looked up a struct named `Self`, found no
+    /// layout, and `is_expr_copy` fell back to "not Copy" — so the first read of an
+    /// `i64` field MOVED it. The control is the same body through a parameter
+    /// spelled `&D`, which was accepted the whole time; the type checker and code
+    /// generation already resolved `Self` and this pass was the odd one out.
+    ///
+    /// The last case is a `Self` written in the BODY, which the resolved list did
+    /// not reach at all.
+    #[test]
+    fn test_a_scalar_field_read_through_self_is_a_copy() {
+        for (shape, program) in [
+            (
+                "`&mut self`, the same field read twice",
+                r#"
+            struct D { pos: i64, err_pos: i64 }
+            impl D {
+                fn a(&mut self) -> i64 {
+                    let x: i64 = self.pos;
+                    let y: i64 = self.pos;
+                    return x + y;
+                }
+            }
+            fn main() { let mut d: D = D { pos: 3, err_pos: 0 }; print_int(d.a()); }
+            "#,
+            ),
+            (
+                "`&self`, a field read twice",
+                r#"
+            struct D { pos: i64 }
+            impl D {
+                fn b(&self) -> i64 {
+                    let x: i64 = self.pos;
+                    let y: i64 = self.pos;
+                    return x + y;
+                }
+            }
+            fn main() { let d: D = D { pos: 3 }; print_int(d.b()); }
+            "#,
+            ),
+            (
+                "by-value `self`, a field read twice",
+                r#"
+            struct D { pos: i64 }
+            impl D {
+                fn b(self) -> i64 {
+                    let x: i64 = self.pos;
+                    let y: i64 = self.pos;
+                    return x + y;
+                }
+            }
+            fn main() { let d: D = D { pos: 3 }; print_int(d.b()); }
+            "#,
+            ),
+            (
+                "`self.f = self.g` then a read of `self.g`",
+                r#"
+            struct D { pos: i64, err_pos: i64 }
+            impl D {
+                fn a(&mut self) -> i64 {
+                    self.err_pos = self.pos;
+                    let start: i64 = self.pos;
+                    return start;
+                }
+            }
+            fn main() { let mut d: D = D { pos: 3, err_pos: 0 }; print_int(d.a()); }
+            "#,
+            ),
+            (
+                "a non-receiver parameter `other: &Self`",
+                r#"
+            struct D { pos: i64 }
+            impl D {
+                fn sum(&self, other: &Self) -> i64 {
+                    let a: i64 = other.pos;
+                    let b: i64 = other.pos;
+                    return a + b + self.pos;
+                }
+            }
+            fn main() { let d: D = D { pos: 3 }; let e: D = D { pos: 4 }; print_int(d.sum(&e)); }
+            "#,
+            ),
+            (
+                "`Self` nested in an array parameter `&[Self; 2]`",
+                r#"
+            struct D { pos: i64 }
+            impl D {
+                fn sum(&self, xs: &[Self; 2]) -> i64 {
+                    let a: i64 = xs[0].pos;
+                    let b: i64 = xs[0].pos;
+                    return a + b + self.pos;
+                }
+            }
+            fn main() { let d: D = D { pos: 3 }; let xs: [D; 2] = [D { pos: 1 }, D { pos: 2 }]; print_int(d.sum(&xs)); }
+            "#,
+            ),
+            (
+                "`let c: Self` in the body",
+                r#"
+            struct D { pos: i64 }
+            impl D {
+                fn dup(&self) -> i64 {
+                    let c: Self = D { pos: self.pos };
+                    let a: i64 = c.pos;
+                    let b: i64 = c.pos;
+                    return a + b;
+                }
+            }
+            fn main() { let d: D = D { pos: 3 }; print_int(d.dup()); }
+            "#,
+            ),
+        ] {
+            let result = borrow_check(program);
+            assert!(
+                result.is_ok(),
+                "{}: a Copy field read through a `Self`-typed place was refused: {:?}",
+                shape,
+                result
+            );
+        }
+    }
+
+    /// THE SAME RESOLUTION CLOSES A FAIL-OPEN, and this is its pin.
+    ///
+    /// A method call looks its signature up under `<receiver type>::<method>`.
+    /// With `self` typed `Self` that key was `Self::take`, which nothing is
+    /// registered under, so the call's parameters went unenforced: measured, the
+    /// program below compiled, ran and printed 6 — `self` moved into `take` twice —
+    /// while the identical body in a free function over `d: D` was refused as a use
+    /// after move.
+    #[test]
+    fn test_a_by_value_self_receiver_cannot_be_moved_twice() {
+        let result = borrow_check(
+            r#"
+            struct D { pos: i64 }
+            impl D {
+                fn take(self) -> i64 { return self.pos; }
+                fn twice(self) -> i64 {
+                    let a: i64 = self.take();
+                    let b: i64 = self.take();
+                    return a + b;
+                }
+            }
+            fn main() { let d: D = D { pos: 3 }; print_int(d.twice()); }
+            "#,
+        );
+        assert!(
+            matches!(result, Err(CompileError::UseOfMovedValue { .. })),
+            "`self` moved into a by-value method twice was accepted: {:?}",
             result
         );
     }

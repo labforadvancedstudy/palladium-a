@@ -1,0 +1,63 @@
+// Test 04: `Self` means the impl's type in EVERY position a method can spell it.
+//
+// `ImplBlock::methods_with_self_resolved` is the one place `Self` is resolved,
+// and two things bypassed it. The borrow checker and one code-generation walk
+// read the raw methods, and the resolution itself stopped at the signature. Each
+// line below was a measured failure before both were closed:
+//
+//   other: &Self                   "Use of moved value: other.pos"
+//   -> (i64, Self)                 gcc: field has incomplete type 'struct Self'
+//   let c: Self = ...; (read once) gcc: variable has incomplete type 'struct Self'
+//   let c: Self = ...; (read twice) "Use of moved value: c.pos"
+//   let t: (i64, Self) = ...       "Type mismatch: expected (Int, Self), found (Int, D)"
+//
+// `xs: &[Self; 2]` is the same defect, and is pinned in the borrow checker's own
+// tests rather than here: code generation refuses an array argument to any `impl`
+// method ("`impl` methods and imported callees cannot take arrays yet"), so no
+// program carrying it can run. A const parameter, `fn a<const N: Self>()`, is
+// resolved too and also pinned elsewhere: no pass reads a const parameter's type,
+// so no program's output can show it. src/ast/mod.rs's own test checks every field
+// of `Function` by name, so a field the resolver skips fails there.
+
+struct D {
+    pos: i64,
+}
+
+impl D {
+    // A non-receiver parameter of type `&Self`, its field read twice.
+    fn sum(&self, other: &Self) -> i64 {
+        let a: i64 = other.pos;
+        let b: i64 = other.pos;
+        return a + b + self.pos;
+    }
+
+    // `Self` nested in a tuple return type.
+    fn pair(&self) -> (i64, Self) {
+        return (self.pos * 10, D { pos: self.pos + 1 });
+    }
+
+    // `Self` as a `let` annotation in the body, and nested in one.
+    fn rebuilt(&self) -> i64 {
+        let c: Self = D { pos: self.pos + 100 };
+        let a: i64 = c.pos;
+        let b: i64 = c.pos;
+        let t: (i64, Self) = (a, D { pos: b });
+        return t.0 + t.1.pos;
+    }
+}
+
+fn main() {
+    let d: D = D { pos: 3 };
+    let e: D = D { pos: 4 };
+
+    print("`other: &Self` read twice:");
+    print_int(d.sum(&e));
+
+    print("`-> (i64, Self)`:");
+    let p: (i64, D) = d.pair();
+    print_int(p.0);
+    print_int(p.1.pos);
+
+    print("`let c: Self` and `let t: (i64, Self)` in the body:");
+    print_int(d.rebuilt());
+}

@@ -1656,7 +1656,7 @@ fn a_user_written_return_zero_in_a_unit_function_is_refused() {
 ///                               `Import` variant, so nothing in the local AST
 ///                               could have carried the imported signatures
 ///                               either.
-///   src/ownership/borrow_checker.rs:965 -> :502 -> :527
+///   src/ownership/borrow_checker.rs:998 -> :502 -> :527
 ///                               `Expr::Call` checks its callee expression;
 ///                               `Expr::Ident` misses `functions`, falls
 ///                               through to the ownership table, finds no

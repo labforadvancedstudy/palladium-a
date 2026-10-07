@@ -19,8 +19,8 @@
 //! `program.items` only — `Program.imports` (`src/ast/mod.rs:9`) is never read, and
 //! `Item` (`src/ast/mod.rs:24-40`) has no `Import` variant, so no walk over items could
 //! have reached one. `helper()` therefore fell out of the function table at
-//! `Expr::Ident` (`src/ownership/borrow_checker.rs:904`), was looked up as a *value*,
-//! was not found, and died at `src/ownership/borrow_checker.rs:957` as
+//! `Expr::Ident` (`src/ownership/borrow_checker.rs:937`), was looked up as a *value*,
+//! was not found, and died at `src/ownership/borrow_checker.rs:990` as
 //! `UseOfUninitializedValue`.
 //!
 //! The pass was not wrong; it was structurally single-file. These tests drive the real
@@ -927,7 +927,7 @@ fn test_local_twin_of_the_unchecked_import_is_rejected() {
 /// Walking imported bodies is only half of the job; the walk has to be handed the
 /// same ENVIRONMENT the local walk gets. It was not. `register_imported_functions`
 /// registered signatures and nothing else, so `struct_fields` — the map that
-/// `place_type` (`src/ownership/borrow_checker.rs:1579-1581`) consults to decide
+/// `place_type` (`src/ownership/borrow_checker.rs:1638-1640`) consults to decide
 /// whether `p.x` is Copy — held local struct layouts only. An imported struct's
 /// `i64` field therefore had no resolvable type, `is_expr_copy` fell into its
 /// conservative `false` default, and the FIRST read of the field MOVED it:

@@ -1,0 +1,130 @@
+// A MOVE OUT OF A FIELD BELONGS TO THE BINDING IT WAS MOVED FROM.
+//
+// The borrow checker keys state by NAME: moving `d.inner` writes an entry for
+// the place `d.inner`, and that entry is found before `d` itself. It used to be
+// retired with nothing, so `a` below moving its own parameter's field refused
+// `b`'s freshly owned parameter of the same name: "Use of moved value: d.inner".
+// Every function and block here moves a field of a binding that is NOT the one
+// an earlier move touched, so every one of them must compile and run.
+struct In {
+    v: i64,
+}
+
+struct D {
+    inner: In,
+}
+
+// The reported program: two sibling functions, one parameter name.
+fn a(d: D) -> i64 {
+    let x: In = d.inner;
+    return x.v;
+}
+
+fn b(d: D) -> i64 {
+    let y: In = d.inner;
+    return y.v;
+}
+
+// The same leak through a by-value call argument.
+fn take(i: In) -> i64 {
+    return i.v;
+}
+
+fn c(d: D) -> i64 {
+    return take(d.inner);
+}
+
+fn e(d: D) -> i64 {
+    return take(d.inner);
+}
+
+// ...and through an array element.
+fn f(xs: [In; 2]) -> i64 {
+    let x: In = xs[0];
+    return x.v;
+}
+
+fn g(xs: [In; 2]) -> i64 {
+    let y: In = xs[1];
+    let z: In = xs[0];
+    return y.v + z.v;
+}
+
+fn c_make(n: i64) -> D {
+    return D { inner: In { v: n } };
+}
+
+fn main() {
+    let d1: D = D { inner: In { v: 4 } };
+    let d2: D = D { inner: In { v: 5 } };
+    print_int(a(d1));
+    print_int(b(d2));
+
+    print_int(c(D { inner: In { v: 6 } }));
+    print_int(e(D { inner: In { v: 7 } }));
+
+    let p: [In; 2] = [In { v: 1 }, In { v: 2 }];
+    let q: [In; 2] = [In { v: 30 }, In { v: 40 }];
+    print_int(f(p));
+    print_int(g(q));
+
+    // A block that shadows `d` moves ITS field; the outer `d` keeps its own.
+    let d: D = D { inner: In { v: 8 } };
+    let on: bool = true;
+    if on {
+        let d: D = D { inner: In { v: 9 } };
+        let t: In = d.inner;
+        print_int(t.v);
+    }
+    let u: In = d.inner;
+    print_int(u.v);
+
+    // Re-assigning the whole value gives it a field that has not been moved.
+    let mut r: D = D { inner: In { v: 10 } };
+    let fresh: D = D { inner: In { v: 11 } };
+    let old: In = r.inner;
+    r = fresh;
+    let new: In = r.inner;
+    print_int(old.v);
+    print_int(new.v);
+
+    // ...and so does re-assigning it from a value that is not a place: a struct
+    // literal after a field move, a call after a whole move.
+    let mut s: D = D { inner: In { v: 12 } };
+    let first: In = s.inner;
+    s = D { inner: In { v: 13 } };
+    let second: In = s.inner;
+    print_int(first.v);
+    print_int(second.v);
+    let gone: D = s;
+    s = c_make(14);
+    print_int(gone.inner.v);
+    print_int(s.inner.v);
+
+    // A branch: re-assigned on EVERY path counts after it, and each arm moves
+    // the field out of the value as it was before the branch.
+    let mut t: D = D { inner: In { v: 15 } };
+    let early: In = t.inner;
+    if on {
+        t = D { inner: In { v: 16 } };
+    } else {
+        t = c_make(17);
+    }
+    let late: In = t.inner;
+    print_int(early.v);
+    print_int(late.v);
+    let w: D = D { inner: In { v: 18 } };
+    let pick: i64 = 1;
+    match pick {
+        0 => {
+            let x0: In = w.inner;
+            print_int(x0.v);
+        }
+        _ => {
+            let x1: In = w.inner;
+            print_int(x1.v + 2);
+        }
+    }
+
+    print("projection_move_scope_ok");
+}

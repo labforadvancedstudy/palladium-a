@@ -7,7 +7,7 @@ pub use borrow_checker::BorrowChecker;
 
 use crate::ast::Expr;
 use crate::errors::{CompileError, Result, Span};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Ownership state of a value
 #[derive(Debug, Clone, PartialEq)]
@@ -99,8 +99,11 @@ pub struct OwnershipContext {
     next_temp: u32,
     /// Lifetime constraints (outlives relationships)
     constraints: Vec<LifetimeConstraint>,
+    /// How many loop bodies enclose the statement being checked. See
+    /// `write_new_value` for the one decision that reads it.
+    loop_depth: u32,
     /// Places *declared* by each open scope, innermost frame last, each paired
-    /// with whatever entry it shadowed.
+    /// with whatever it shadowed (`Shadowed`).
     ///
     /// `ownership` above is a flat map with no notion of which scope put an
     /// entry there, and `exit_scope` used to drop borrows only. So an entry
@@ -116,7 +119,11 @@ pub struct OwnershipContext {
     ///
     /// Existence in this map is therefore made to mean *in scope*, by recording
     /// each binder and undoing it at scope exit.
-    scope_decls: Vec<Vec<(Place, Option<Ownership>)>>,
+    ///
+    /// A binder owns its whole SUBTREE, not just its own key: `d.inner` and
+    /// `d.inner.w` get entries of their own when they are moved, assigned or
+    /// borrowed, and they are retired with `d`.
+    scope_decls: Vec<Vec<Shadowed>>,
 }
 
 /// Lifetime constraint (e.g., 'a: 'b means 'a outlives 'b)
@@ -124,6 +131,36 @@ pub struct OwnershipContext {
 pub struct LifetimeConstraint {
     pub longer: Lifetime,
     pub shorter: Lifetime,
+}
+
+/// What `declare` took out of view when a binder came into scope, so that
+/// `exit_scope` can put it back.
+///
+/// IT IS A SUBTREE, because state is keyed by a `Place` and a `Place` is a
+/// NAME. Recording only the binder's own key retired `d` and left `d.inner`
+/// behind: measured, `fn a(d: D) { let x: In = d.inner; … }` followed by
+/// `fn b(d: D) { let y: In = d.inner; … }` refused `b` with "Use of moved
+/// value: d.inner" — `a`'s field move outlived `a` and was found by
+/// `resolve_place` before `b`'s freshly owned `d`. The borrows are part of the
+/// same subtree for the same reason: an inner `let d` matched an outer `&d` by
+/// name and was refused as a conflicting borrow of a variable nothing borrows.
+struct Shadowed {
+    /// The binder.
+    place: Place,
+    /// Every entry at or below `place` when the binder was declared.
+    states: Vec<(Place, Ownership)>,
+    /// Every borrow at or below `place` when the binder was declared.
+    borrows: Vec<Borrow>,
+}
+
+/// The flow-dependent half of an `OwnershipContext` — what each place holds and
+/// which borrows are live — taken at one program point so that the paths of a
+/// branch can each start from it and be joined after (`snapshot`, `restore`,
+/// `join`). Scopes and counters are not in it: every arm opens and closes its
+/// own scope, and lifetimes and temporaries must stay distinct across arms.
+pub struct FlowState {
+    ownership: HashMap<Place, Ownership>,
+    borrows: Vec<Borrow>,
 }
 
 impl OwnershipContext {
@@ -160,34 +197,75 @@ impl OwnershipContext {
         //     if c { let t: S = s; }   // moves the OUTER s
         //     print_int(s.v);          // must stay refused
         //
-        // so the undo is per-binder, not per-map.
+        // so the undo is per-binder, not per-map. It is per-SUBTREE within the
+        // binder: everything at or below a retiring binder goes, including the
+        // projection keys its moves and borrows created, and what that binder
+        // shadowed comes back. Every borrow this scope took has already been
+        // released above, so nothing live is lost with the subtree.
         if let Some(declared) = self.scope_decls.pop() {
-            for (place, shadowed) in declared.into_iter().rev() {
-                match shadowed {
-                    Some(previous) => {
-                        self.ownership.insert(place, previous);
-                    }
-                    None => {
-                        self.ownership.remove(&place);
-                    }
-                }
+            for shadowed in declared.into_iter().rev() {
+                let Shadowed {
+                    place,
+                    states,
+                    borrows,
+                } = shadowed;
+                self.ownership.retain(|key, _| !key.is_within(&place));
+                self.ownership.extend(states);
+                self.borrows.extend(borrows);
             }
         }
+
+        // ...and what came back is subject to the same expiry. A borrow THIS
+        // scope took of an outer binding that a later shadow then hid was not
+        // in `borrows` when the release above ran, so it would otherwise come
+        // back alive after its own `}`. Measured on 6a3d028: `if c { let r: &In
+        // = &d; let d: In = …; } bump(&mut d);` was refused as a conflicting
+        // borrow; 2563001 compiled it (review round 1, fable c36 / gpt-6-astra
+        // shadow_restores_dead_borrow).
+        self.release_borrows(|borrow| borrow.scope >= closing);
 
         self.current_scope -= 1;
     }
 
     /// Record that `place` is bound by the innermost open scope, so that
-    /// `exit_scope` can retire it.
+    /// `exit_scope` can retire it, and take what the name already carried out
+    /// of view until then.
     ///
-    /// Deliberately does NOT touch the current ownership state: the binder's
-    /// own state is set by `init_owned` or `move_value` right after, and
-    /// pre-setting `Owned` here would make `let s: S = s;` accept a use of an
-    /// already-moved `s`.
+    /// The new binding is a different variable: no field has been moved out of
+    /// it and nothing borrows it. So the entries strictly below `place` and
+    /// every borrow at or below it are set aside — not dropped — and
+    /// `exit_scope` gives them back to the binding they belong to.
+    ///
+    /// Deliberately does NOT touch the binder's OWN state: it is set by
+    /// `init_owned` right after, and pre-setting `Owned` here would make
+    /// `let s: S = s;` accept a use of an already-moved `s`.
     pub fn declare(&mut self, place: &Place) {
-        let shadowed = self.ownership.get(place).cloned();
+        if self.scope_decls.is_empty() {
+            return;
+        }
+        let states: Vec<(Place, Ownership)> = self
+            .ownership
+            .iter()
+            .filter(|(key, _)| key.is_within(place))
+            .map(|(key, state)| (key.clone(), state.clone()))
+            .collect();
+        self.ownership
+            .retain(|key, _| key == place || !key.is_within(place));
+        let mut borrows = Vec::new();
+        self.borrows.retain(|borrow| {
+            if borrow.place.is_within(place) {
+                borrows.push(borrow.clone());
+                false
+            } else {
+                true
+            }
+        });
         if let Some(frame) = self.scope_decls.last_mut() {
-            frame.push((place.clone(), shadowed));
+            frame.push(Shadowed {
+                place: place.clone(),
+                states,
+                borrows,
+            });
         }
     }
 
@@ -283,17 +361,15 @@ impl OwnershipContext {
     ///
     /// Returns `None` only when nothing on the projection chain is known, which
     /// is the genuine uninitialized case.
+    ///
+    /// A projection DOES get an entry of its own when it is moved out of,
+    /// assigned to or borrowed, and that entry is found here BEFORE its
+    /// ancestors. So an entry below a place must never outlive what happens to
+    /// the place: it is retired with its binder (`declare` / `exit_scope`),
+    /// erased when an ancestor is moved (`mark_moved`), and erased when an
+    /// ancestor is given a new value (`reinitialize`).
     fn resolve_place<'p>(&self, place: &'p Place) -> Option<&'p Place> {
-        let mut current = place;
-        loop {
-            if self.ownership.contains_key(current) {
-                return Some(current);
-            }
-            match current {
-                Place::Field { base, .. } | Place::Index { base, .. } => current = base.as_ref(),
-                _ => return None,
-            }
-        }
+        resolve_in(&self.ownership, place)
     }
 
     /// Ownership state governing `place`, following projections to their base.
@@ -319,7 +395,8 @@ impl OwnershipContext {
     pub fn move_out_of(&mut self, from: Place, span: Span) -> Result<()> {
         match self.effective_ownership(&from) {
             Some(Ownership::Owned) => {
-                self.ownership.insert(from, Ownership::Moved);
+                self.refuse_move_under_a_borrow(&from, span)?;
+                self.mark_moved(from);
                 Ok(())
             }
             Some(Ownership::Borrowed { .. }) => {
@@ -344,9 +421,12 @@ impl OwnershipContext {
         // Check if the source can be moved
         match self.effective_ownership(&from) {
             Some(Ownership::Owned) => {
-                // Move is allowed
-                self.ownership.insert(from.clone(), Ownership::Moved);
-                self.ownership.insert(to, Ownership::Owned);
+                // Move is allowed — out of a place nothing borrows, into one
+                // nothing borrows.
+                self.refuse_move_under_a_borrow(&from, span)?;
+                self.refuse_write_under_a_borrow(&to, span)?;
+                self.mark_moved(from);
+                self.write_new_value(to, true);
                 Ok(())
             }
             Some(Ownership::Borrowed { .. }) => {
@@ -364,6 +444,185 @@ impl OwnershipContext {
                 span: Some(span),
             }),
         }
+    }
+
+    /// A move out of `place` while a live borrow reaches into it — at it, above
+    /// it or BELOW it — is a move out of borrowed content.
+    ///
+    /// The state lookup above only sees the place and its ancestors, so a
+    /// borrow of a CHILD was invisible to it, and `mark_moved` then erased the
+    /// child's `Borrowed` entry while the borrow stayed live. Measured on
+    /// 6a3d028 (review round 1): `let r = &d.inner.w; let a = d.inner;
+    /// d.inner = …; let z = d.inner.w;` compiled and printed 3. 2563001 had the
+    /// same blind spot for a whole move (`let r = &d.inner; let e = d;`, #52).
+    fn refuse_move_under_a_borrow(&self, place: &Place, span: Span) -> Result<()> {
+        if self
+            .borrows
+            .iter()
+            .any(|borrow| borrow.place.may_alias(place))
+        {
+            return Err(CompileError::CannotMoveOutOfBorrowedContent { span: Some(span) });
+        }
+        Ok(())
+    }
+
+    /// An assignment to `place` while a live borrow overlaps it is refused AT
+    /// THE ASSIGNMENT (#53). It is reported as a `ConflictingBorrows` because
+    /// that is what it is — a write conflicting with a borrow — and the message
+    /// names the assignment. Measured on 2563001: `let r = &d; d = e;
+    /// print_int(r.v);` passed the borrow checker.
+    fn refuse_write_under_a_borrow(&self, place: &Place, span: Span) -> Result<()> {
+        if let Some(borrow) = self.borrows.iter().find(|b| b.place.may_alias(place)) {
+            return Err(CompileError::ConflictingBorrows {
+                message: format!(
+                    "cannot assign to `{}` because `{}` is borrowed",
+                    place, borrow.place
+                ),
+                span: Some(span),
+            });
+        }
+        Ok(())
+    }
+
+    /// Record that the value at `place` has been moved out — ALL of it.
+    ///
+    /// Nothing below a moved place keeps a state of its own: an entry left
+    /// there is found by `resolve_place` before the `Moved` above it. Measured
+    /// before: `peek(&d.inner.w)` left `d.inner.w: Owned` once its borrow
+    /// ended, `let a: In = d.inner;` then moved the parent, and
+    /// `let z: W = d.inner.w;` COMPILED. No entry below is borrowed: a move
+    /// under a live borrow is refused first (`refuse_move_under_a_borrow`).
+    fn mark_moved(&mut self, place: Place) {
+        self.ownership
+            .retain(|key, _| key == &place || !key.is_within(&place));
+        self.ownership.insert(place, Ownership::Moved);
+    }
+
+    /// Record that `place` has been given a new value by an assignment whose
+    /// right-hand side is not a place to move out of (a literal, a call, a Copy
+    /// value). Refused while a live borrow overlaps `place`.
+    pub fn reinitialize(&mut self, place: Place, span: Span) -> Result<()> {
+        self.refuse_write_under_a_borrow(&place, span)?;
+        self.write_new_value(place, false);
+        Ok(())
+    }
+
+    /// The state an assignment leaves behind, once it is known to be allowed.
+    ///
+    /// The new value is whole, so a move out of the OLD one says nothing about
+    /// it: every entry below `place` goes and `place` is `Owned`. Measured
+    /// before: `let a: In = d.inner; d = e; let b: In = d.inner;` was refused,
+    /// the stale `d.inner: Moved` found before the re-initialised `d`.
+    ///
+    /// Two exceptions leave the state as it was:
+    ///   * a STRICT ancestor is MOVED — writing `d.inner.w` after `d.inner` was
+    ///     moved out does not make `d.inner` whole again. Measured before: with
+    ///     a place on the right it COMPILED and read `w` through the moved parent.
+    ///   * the assignment is inside a LOOP BODY. The body is walked once (#51)
+    ///     and nothing records the state at a `break` or a `continue`, or the
+    ///     state when the body runs zero times, so a revival here would count on
+    ///     paths that never ran it. Measured on 6a3d028: `let a = d.inner;
+    ///     while i < 0 { d = mk(2); } let b = d.inner;` COMPILED, as did the
+    ///     `loop`/`break` and `continue` spellings. Inside a loop an assignment
+    ///     therefore does exactly what it did on 2563001: a place on the right
+    ///     marks the target `Owned` — except a constant-index element, whose
+    ///     target there was the `[dynamic]` key no read finds (measured on
+    ///     33b519f: `while c { xs[0] = e; }` revived a moved `xs[0]`) — and
+    ///     anything else records nothing.
+    fn write_new_value(&mut self, place: Place, from_place: bool) {
+        if let Some(governing) = self.resolve_place(&place) {
+            if governing != &place && self.ownership.get(governing) == Some(&Ownership::Moved) {
+                return;
+            }
+        }
+        if self.loop_depth > 0 {
+            if from_place && !matches!(&place, Place::Index { index, .. } if index != "dynamic") {
+                self.ownership.insert(place, Ownership::Owned);
+            }
+            return;
+        }
+        self.ownership
+            .retain(|key, _| key == &place || !key.is_within(&place));
+        self.ownership.insert(place, Ownership::Owned);
+    }
+
+    /// Enter a loop body (`while`, `loop`, `for`). See `write_new_value`.
+    pub fn enter_loop(&mut self) {
+        self.loop_depth += 1;
+    }
+
+    /// Leave a loop body.
+    pub fn exit_loop(&mut self) {
+        self.loop_depth -= 1;
+    }
+
+    /// The flow state at this point, for a branch to start each path from.
+    pub fn snapshot(&self) -> FlowState {
+        FlowState {
+            ownership: self.ownership.clone(),
+            borrows: self.borrows.clone(),
+        }
+    }
+
+    /// Put the flow state back to `state` — the start of the next path.
+    pub fn restore(&mut self, state: &FlowState) {
+        self.ownership = state.ownership.clone();
+        self.borrows = state.borrows.clone();
+    }
+
+    /// Merge the end states of the paths that reach the same point.
+    ///
+    /// A place is `Moved` if it is moved on ANY path, and only otherwise what
+    /// the paths recorded for it — `Owned` only when it is owned on ALL of them.
+    /// Borrows are the union of what survives each path. Each path's state is
+    /// read through `resolve_in`, so a path that moved `d.inner` and a path that
+    /// re-assigned the whole `d` (which erased the `d.inner` entry) disagree
+    /// about `d.inner` and the join keeps it moved.
+    ///
+    /// The checker used to walk the paths of a branch one after the other, so
+    /// the LAST write won: measured on 6a3d028 (review round 1), `let a =
+    /// d.inner; if c { d = D { … }; } let b = d.inner;` COMPILED; and the second
+    /// arm saw the first arm's moves, so `if c { let a = d.inner; } else { let
+    /// b = d.inner; }` was refused on 2563001 and 6a3d028 alike.
+    pub fn join(&mut self, paths: Vec<FlowState>) {
+        if paths.is_empty() {
+            return;
+        }
+        let keys: HashSet<&Place> = paths.iter().flat_map(|p| p.ownership.keys()).collect();
+        let mut ownership = HashMap::new();
+        for key in keys {
+            let moved = paths.iter().any(|path| {
+                resolve_in(&path.ownership, key).and_then(|k| path.ownership.get(k))
+                    == Some(&Ownership::Moved)
+            });
+            let state = if moved {
+                Ownership::Moved
+            } else {
+                paths
+                    .iter()
+                    .filter_map(|path| path.ownership.get(key))
+                    .find(|state| !matches!(state, Ownership::Owned))
+                    .cloned()
+                    .unwrap_or(Ownership::Owned)
+            };
+            ownership.insert(key.clone(), state);
+        }
+        let mut borrows: Vec<Borrow> = Vec::new();
+        for path in &paths {
+            for borrow in &path.borrows {
+                let seen = borrows.iter().any(|b| {
+                    b.place == borrow.place
+                        && b.kind == borrow.kind
+                        && b.lifetime == borrow.lifetime
+                        && b.scope == borrow.scope
+                });
+                if !seen {
+                    borrows.push(borrow.clone());
+                }
+            }
+        }
+        self.ownership = ownership;
+        self.borrows = borrows;
     }
 
     /// Borrow a value
@@ -484,6 +743,63 @@ pub fn expr_to_place(expr: &Expr) -> Option<Place> {
             expr_to_place(expr)
         }
         _ => None,
+    }
+}
+
+/// `resolve_place` over any map — a `FlowState`'s as well as the live one.
+fn resolve_in<'p>(ownership: &HashMap<Place, Ownership>, place: &'p Place) -> Option<&'p Place> {
+    let mut current = place;
+    loop {
+        if ownership.contains_key(current) {
+            return Some(current);
+        }
+        match current {
+            Place::Field { base, .. } | Place::Index { base, .. } => current = base.as_ref(),
+            _ => return None,
+        }
+    }
+}
+
+impl Place {
+    /// Whether `self` is `root` or a projection reached from it (`root.a`,
+    /// `root[0].b`, …) — the subtree a binding owns.
+    pub fn is_within(&self, root: &Place) -> bool {
+        let mut current = self;
+        loop {
+            if current == root {
+                return true;
+            }
+            match current {
+                Place::Field { base, .. } | Place::Index { base, .. } => current = base.as_ref(),
+                _ => return false,
+            }
+        }
+    }
+
+    /// Whether `self` and `other` can name overlapping memory: one is the other
+    /// or a projection of it. An index written as an expression is recorded as
+    /// `[dynamic]` and may be ANY element, so it overlaps every index at the
+    /// same position.
+    pub fn may_alias(&self, other: &Place) -> bool {
+        fn chain(place: &Place) -> Vec<&Place> {
+            let mut nodes = vec![place];
+            let mut current = place;
+            while let Place::Field { base, .. } | Place::Index { base, .. } = current {
+                current = base.as_ref();
+                nodes.push(current);
+            }
+            nodes.reverse();
+            nodes
+        }
+        let (a, b) = (chain(self), chain(other));
+        a[0] == b[0]
+            && a.iter().zip(b.iter()).skip(1).all(|pair| match pair {
+                (Place::Field { field: x, .. }, Place::Field { field: y, .. }) => x == y,
+                (Place::Index { index: x, .. }, Place::Index { index: y, .. }) => {
+                    x == y || x == "dynamic" || y == "dynamic"
+                }
+                _ => false,
+            })
     }
 }
 
@@ -658,5 +974,46 @@ mod tests {
         // A stale lifetime must not resurrect it.
         ctx.end_borrows(&lifetime);
         assert_eq!(ctx.get_ownership(&x), Some(&Ownership::Moved));
+    }
+
+    /// `reinitialize` driven directly, below the checker: re-assigning the
+    /// whole value makes a moved field usable again, and is refused while a
+    /// field is borrowed — the borrow ends (here, by its lifetime) before the
+    /// write is allowed. The source-level shapes are in
+    /// tests/m2_projection_move_scope.rs.
+    #[test]
+    fn test_reinitialize_revives_moved_fields_and_waits_for_borrows() {
+        let mut ctx = OwnershipContext::new();
+        ctx.enter_scope();
+        let d = Place::Local("d".to_string());
+        let field = |name: &str| Place::Field {
+            base: Box::new(d.clone()),
+            field: name.to_string(),
+        };
+        ctx.declare(&d);
+        ctx.init_owned(d.clone());
+
+        ctx.move_out_of(field("inner"), Span::dummy()).unwrap();
+        let lifetime = ctx.new_lifetime();
+        ctx.borrow(
+            field("other"),
+            RefKind::Shared,
+            lifetime.clone(),
+            Span::dummy(),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            ctx.reinitialize(d.clone(), Span::dummy()),
+            Err(CompileError::ConflictingBorrows { .. })
+        ));
+        ctx.end_borrows(&lifetime);
+        ctx.reinitialize(d.clone(), Span::dummy())
+            .expect("nothing borrows `d` any more");
+
+        ctx.move_out_of(field("inner"), Span::dummy())
+            .expect("a field of a re-initialised value must be usable again");
+        ctx.exit_scope();
+        assert_eq!(ctx.get_ownership(&field("other")), None);
     }
 }
