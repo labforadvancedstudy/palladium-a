@@ -289,24 +289,21 @@ fn main() {
 /// with how the type was SPELLED (no annotation here at all): the kind was lost
 /// at the last conversion before code generation.
 ///
-/// ASSERTED ON THE C TEXT, NOT BY RUNNING IT, and that is a measured limit
+/// ASSERTED ON THE REFUSAL, NOT BY RUNNING IT, and that is a measured limit
 /// rather than a preference: code generation picks a generic struct
 /// literal's instantiation by matching the first field's C type against
 /// `i64`, `bool` and `String` only, so `Box2 { v: Qq { n: 6 } }` with a
-/// STRUCT argument falls back to `(struct Box2){...}` and fails at gcc on
-/// 2563001 exactly as this one does. An enum argument now fails at the same
-/// place a struct argument does, and no earlier. The same reason, and the same
-/// form of receipt, as `a_keyword_named_generic_struct_field_is_escaped`.
+/// STRUCT argument fell back to `(struct Box2){...}` and failed at gcc (#63).
+/// That literal is refused by name now (review round 3), and the refusal
+/// lists the instantiations code generation was handed — so `Box2<Kk>` in
+/// it, and no `Unknown`, is the receipt that the enum argument survived to
+/// code generation.
 ///
 /// Spelled `Kk`, not `K`: a type argument written in all capitals is parsed as
 /// a const parameter, which is a different refusal.
 #[test]
 fn a_generic_struct_instantiated_at_an_enum_names_the_enum() {
-    let name = unique_module_name("enum_generic_struct_arg");
-    let dir = TempDir::new().unwrap();
-    let src = dir.path().join(format!("{}.pd", name));
-    fs::write(
-        &src,
+    let text = refused(
         r#"
 enum Kk { A, B }
 struct Box2<T> { v: T }
@@ -315,21 +312,17 @@ fn main() {
     match b.v { Kk::A => { print_int(0); } Kk::B => { print_int(1); } }
 }
 "#,
-    )
-    .unwrap();
-    let c_file = Driver::new()
-        .compile_file(&src)
-        .unwrap_or_else(|e| panic!("the front end refused a legal program: {}", e));
-    let c = fs::read_to_string(&c_file).unwrap();
-    assert!(
-        !c.contains("Unknown"),
-        "an enum type argument was lost on the way to code generation:\n{}",
-        c
+        "enum_generic_struct_arg",
     );
     assert!(
-        c.contains("typedef struct Box2_Kk {\n    struct Kk v;\n} Box2_Kk;"),
-        "the instantiation at `Kk` was not emitted as `Box2_Kk` holding a `Kk`:\n{}",
-        c
+        !text.contains("Unknown"),
+        "an enum type argument was lost on the way to code generation: {}",
+        text
+    );
+    assert!(
+        text.contains("is a literal of the generic struct `Box2`") && text.contains("`Box2<Kk>`"),
+        "the literal was not refused as an instantiation at `Kk`: {}",
+        text
     );
 }
 
@@ -575,11 +568,11 @@ fn a_bool_instantiation_shadowing_an_i64_alias_declares_a_bool_field() {
 /// The reverse control: an alias that names nothing bound expands inside a
 /// generic item — and the type checker resolves it there too, through the
 /// GLOBAL scope its body was written in (main refused every row here, e.g.
-/// `expected A, found [Int; 2]`). The last row is the hygiene case: `type A =
-/// T;` means the global `struct T` even inside `struct G<T>`.
+/// `expected A, found [Int; 2]`). An alias whose body names a parameter the
+/// item binds is no longer in this list: it is refused by name below.
 #[test]
 fn an_alias_inside_a_generic_item_is_still_the_type_it_names() {
-    let rows: [(&str, &str, &str); 6] = [
+    let rows: [(&str, &str, &str); 5] = [
         (
             "array alias field",
             "type A = [i64; 2];\nstruct G<T> { v: T, a: A }\n\
@@ -611,15 +604,305 @@ fn an_alias_inside_a_generic_item_is_still_the_type_it_names() {
              fn main() { let a: A = [5, 6]; print_int(f(1, a)); }",
             "6\n",
         ),
-        (
-            "an alias naming a global the item binds",
-            "struct T { n: i64 }\ntype A = T;\nstruct G<T> { v: T, a: A }\n\
-             fn main() { let g = G { v: 3, a: T { n: 7 } }; print_int(g.a.n); print_int(g.v); }",
-            "7\n3\n",
-        ),
     ];
     for (shape, source, want) in rows {
         let out = run(source, "alias_in_generic");
         assert_eq!(out, want, "{}", shape);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Review round 3 (12042e0): an alias that names a parameter its item binds.
+// ---------------------------------------------------------------------------
+
+/// `type A = [T; 2];` written at the top level names the global `T`; inside
+/// `struct G<T>` that name is G's parameter. 12042e0 left such a use for code
+/// generation to resolve globally, which lost an array's size suffix
+/// (`struct T[2] a;`, refused by gcc) and silently worked for a scalar. Every
+/// shape is refused by name now — scalar, array, tuple, nested, through an
+/// alias chain, in a struct field, a generic function's parameter and its
+/// return type. main (ad63231) refused every program here as well, naming
+/// neither the alias's body nor the parameter: the ten field and parameter
+/// rows with a mismatch (`expected A, found [T; 2]`), the two return-type rows
+/// with `Cannot index into non-array type: A` and `Unknown struct type: A`.
+#[test]
+fn an_alias_that_names_a_parameter_its_item_binds_is_refused_by_name() {
+    let rows: [(&str, &str, &str); 12] = [
+        (
+            "scalar body, struct field",
+            "struct T { n: i64 }\ntype A = T;\nstruct G<T> { v: T, a: A }\n\
+             fn main() { let g = G { v: 3, a: T { n: 7 } }; print_int(g.a.n); }",
+            "alias `A` names `T`, which `G<T>` binds",
+        ),
+        (
+            "array body, struct field",
+            "struct T { n: i64 }\ntype A = [T; 2];\nstruct G<T> { v: T, a: A }\n\
+             fn main() { let g = G { v: 3, a: [T { n: 7 }, T { n: 8 }] }; print_int(g.v); }",
+            "alias `A` names `T`, which `G<T>` binds",
+        ),
+        (
+            "array of an enum, struct field",
+            "enum T { A, B }\ntype X = [T; 2];\nstruct G<T> { v: T, a: X }\n\
+             fn main() { let g = G { v: 3, a: [T::A, T::B] }; print_int(g.v); }",
+            "alias `X` names `T`, which `G<T>` binds",
+        ),
+        (
+            "tuple body, struct field",
+            "struct T { n: i64 }\ntype A = (T, i64);\nstruct G<T> { v: T, a: A }\n\
+             fn main() { let g = G { v: 3, a: (T { n: 7 }, 8) }; print_int(g.v); }",
+            "alias `A` names `T`, which `G<T>` binds",
+        ),
+        (
+            "alias inside an array field",
+            "struct T { n: i64 }\ntype A = T;\nstruct G<T> { v: T, a: [A; 2] }\n\
+             fn main() { let g = G { v: 3, a: [T { n: 7 }, T { n: 8 }] }; print_int(g.v); }",
+            "alias `A` names `T`, which `G<T>` binds",
+        ),
+        (
+            "the middle of a chain is the parameter",
+            "type B = bool;\ntype A = B;\nstruct G<B> { v: B, a: A }\n\
+             fn main() { let g = G { v: 4294967297, a: true }; print_int(g.v); }",
+            "alias `A` names `B`, which `G<B>` binds",
+        ),
+        (
+            "through a chain of aliases",
+            "struct T { n: i64 }\ntype A = T;\ntype B = A;\nstruct G<T> { v: T, a: B }\n\
+             fn main() { let g = G { v: 3, a: T { n: 7 } }; print_int(g.a.n); }",
+            "alias `B` names `T` through `A`, which `G<T>` binds",
+        ),
+        (
+            "array body, generic fn parameter, literal argument",
+            "struct T { n: i64 }\ntype A = [T; 2];\nfn f<T>(x: T, a: A) -> i64 { return a[1].n; }\n\
+             fn main() { print_int(f(1, [T { n: 7 }, T { n: 8 }])); }",
+            "alias `A` names `T`, which `f<T>` binds",
+        ),
+        (
+            "array body, generic fn parameter, variable argument",
+            "struct T { n: i64 }\ntype A = [T; 2];\nfn f<T>(x: T, a: A) -> i64 { return a[1].n; }\n\
+             fn main() { let a: A = [T { n: 7 }, T { n: 8 }]; print_int(f(1, a)); }",
+            "alias `A` names `T`, which `f<T>` binds",
+        ),
+        (
+            "scalar body, generic fn parameter",
+            "struct T { n: i64 }\ntype A = T;\nfn f<T>(x: T, a: A) -> i64 { return a.n; }\n\
+             fn main() { print_int(f(1, T { n: 9 })); }",
+            "alias `A` names `T`, which `f<T>` binds",
+        ),
+        (
+            "array body, generic fn return type",
+            "struct T { n: i64 }\ntype A = [T; 2];\n\
+             fn f<T>(x: T) -> A { return [T { n: 7 }, T { n: 8 }]; }\n\
+             fn main() { let a = f(1); print_int(a[1].n); }",
+            "alias `A` names `T`, which `f<T>` binds",
+        ),
+        (
+            "scalar body, generic fn return type",
+            "struct T { n: i64 }\ntype A = T;\nfn f<T>(x: T) -> A { return T { n: 7 }; }\n\
+             fn main() { let a = f(1); print_int(a.n); }",
+            "alias `A` names `T`, which `f<T>` binds",
+        ),
+    ];
+    for (shape, source, want) in rows {
+        let text = refused(source, "alias_capture");
+        assert!(
+            text.contains(want) && text.contains("rename the parameter"),
+            "{}: {}",
+            shape,
+            text
+        );
+        assert!(!text.contains("Unknown"), "{}: {}", shape, text);
+    }
+}
+
+/// The twins that must keep running: the same alias beside a parameter of
+/// ANOTHER name, in a non-generic item, a parameter that merely shares an
+/// alias's name, and a capture in a generic function's BODY, which the type
+/// checker does not reach. There the alias is expanded, and its `T` is the
+/// global type: code generation substitutes only the function's own
+/// `TypeParam`. main ran the scalar body; the array body reached gcc on main
+/// and on 12042e0, where the alias kept its name and lost its size suffix.
+#[test]
+fn an_alias_beside_a_parameter_of_another_name_still_runs() {
+    let rows: [(&str, &str, &str); 6] = [
+        (
+            "struct G<U>",
+            "struct T { n: i64 }\ntype A = [T; 2];\nstruct G<U> { v: U, a: A }\n\
+             fn main() { let g = G { v: 3, a: [T { n: 7 }, T { n: 8 }] }; \
+             print_int(g.a[1].n); print_int(g.v); }",
+            "8\n3\n",
+        ),
+        (
+            "fn f<U>",
+            "struct T { n: i64 }\ntype A = [T; 2];\nfn f<U>(v: U, a: A) -> i64 { return a[1].n; }\n\
+             fn main() { let s: A = [T { n: 7 }, T { n: 8 }]; print_int(f(3, s)); }",
+            "8\n",
+        ),
+        (
+            "non-generic struct",
+            "struct T { n: i64 }\ntype A = [T; 2];\nstruct G { a: A }\n\
+             fn main() { let g: G = G { a: [T { n: 7 }, T { n: 8 }] }; print_int(g.a[1].n); }",
+            "8\n",
+        ),
+        (
+            "the parameter's own name, not an alias of it",
+            "type T = bool;\nstruct G<T> { v: T }\n\
+             fn main() { let g = G { v: 4294967297 }; print_int(g.v); }",
+            "4294967297\n",
+        ),
+        (
+            "scalar capture in a generic fn body",
+            "struct T { n: i64 }\ntype A = T;\n\
+             fn f<T>(x: T) -> i64 { let a: A = T { n: 7 }; return a.n; }\n\
+             fn main() { print_int(f(1)); }",
+            "7\n",
+        ),
+        (
+            "array capture in a generic fn body",
+            "struct T { n: i64 }\ntype A = [T; 2];\n\
+             fn f<T>(x: T) -> i64 { let a: A = [T { n: 7 }, T { n: 8 }]; return a[1].n; }\n\
+             fn main() { print_int(f(1)); }",
+            "8\n",
+        ),
+    ];
+    for (shape, source, want) in rows {
+        let out = run(source, "alias_beside");
+        assert_eq!(out, want, "{}", shape);
+    }
+}
+
+/// A generic struct literal whose instantiation code generation cannot pick
+/// is refused by name (#63). The pick reads the C type of the literal's FIRST
+/// field and matches it to an `i64`, `bool` or `String` argument and nothing
+/// else; every other literal fell back to the uninstantiated `struct G`,
+/// which gcc refused as an incomplete type. Each row below reached gcc on
+/// 12042e0; on main (ad63231) four did, and the enum-first-field row was
+/// refused before code generation as `expected K, found K`.
+#[test]
+fn a_generic_struct_literal_code_generation_cannot_instantiate_is_refused_by_name() {
+    let rows: [(&str, &str, &str); 10] = [
+        (
+            "a struct argument (#63)",
+            "struct Qq { n: i64 }\nstruct Box2<T> { v: T }\n\
+             fn main() { let b = Box2 { v: Qq { n: 6 } }; print_int(b.v.n); }",
+            "`Box2<Qq>`",
+        ),
+        (
+            "a struct argument read in place",
+            "struct S { n: i64 }\nstruct G<T> { v: T }\n\
+             fn main() { print_int(G { v: S { n: 6 } }.v.n); }",
+            "`G<S>`",
+        ),
+        (
+            "a bool argument behind an i64 first field",
+            "struct G<T> { n: i64, v: T }\n\
+             fn main() { let g = G { n: 1, v: true }; print_int(g.n); }",
+            "`G<bool>`",
+        ),
+        (
+            "an enum first field",
+            "enum K { A, B }\nstruct G<T> { k: K, v: T }\n\
+             fn main() { let g = G { k: K::A, v: 5 }; print_int(g.v); }",
+            "`G<i64>`",
+        ),
+        // The four argument kinds the type checker records with no name: the
+        // refusal says so, and never prints the placeholder it records.
+        (
+            "an array argument",
+            "struct G<T> { v: T }\n\
+             fn main() { let xs: [i64; 2] = [1, 2]; let g = G { v: xs }; print_int(g.v[1]); }",
+            "has no name in the instantiation record",
+        ),
+        (
+            "a tuple argument",
+            "struct G<T> { v: T }\n\
+             fn main() { let p = (1, 2); let g = G { v: p }; print_int(g.v.1); }",
+            "has no name in the instantiation record",
+        ),
+        (
+            "a char argument",
+            "struct G<T> { v: T }\nfn main() { let g = G { v: 'a' }; print_int(1); }",
+            "has no name in the instantiation record",
+        ),
+        (
+            "a float argument",
+            "struct G<T> { v: T }\nfn main() { let g = G { v: 1.5 }; print_int(1); }",
+            "has no name in the instantiation record",
+        ),
+        // The record keeps no integer width: this program never writes
+        // `G<i64>`, and the refusal must not say it does.
+        (
+            "a u32 argument",
+            "struct G<T> { v: T }\n\
+             fn main() { let x: u32 = 5; let g = G { v: x }; print_int(1); }",
+            "The record keeps no integer width: i32, u32 and u64 all appear as `i64`.",
+        ),
+        (
+            "an i32 argument",
+            "struct G<T> { v: T }\n\
+             fn main() { let x: i32 = 5; let g = G { v: x }; print_int(1); }",
+            "The record keeps no integer width: i32, u32 and u64 all appear as `i64`.",
+        ),
+    ];
+    for (shape, source, want) in rows {
+        let text = refused(source, "generic_literal");
+        assert!(
+            text.contains("is a literal of the generic struct") && text.contains(want),
+            "{}: {}",
+            shape,
+            text
+        );
+        assert!(!text.contains("Unknown"), "{}: {}", shape, text);
+        assert!(!text.contains("in this program at"), "{}: {}", shape, text);
+    }
+}
+
+/// The literals the pick does match, which must keep running: an `i64`,
+/// `bool` or `String` argument in the first field, read from a literal, a
+/// variable or a call, in either field order, and two instantiations side by
+/// side.
+#[test]
+fn a_generic_struct_literal_at_i64_bool_or_string_still_runs() {
+    let rows: [(&str, &str, &str); 6] = [
+        (
+            "i64, bool and String",
+            "struct G<T> { v: T }\nfn main() { let a = G { v: 4294967297 }; \
+             let b = G { v: true }; let c = G { v: \"hi\" }; print_int(a.v); \
+             if b.v { print_int(1); } print(c.v); }",
+            "4294967297\n1\nhi\n",
+        ),
+        (
+            "an i64 first field that is not the parameter, at i64",
+            "struct G<T> { n: i64, v: T }\n\
+             fn main() { let g = G { n: 1, v: 5 }; print_int(g.n); print_int(g.v); }",
+            "1\n5\n",
+        ),
+        (
+            "fields written in another order",
+            "struct G<T> { n: i64, v: T }\n\
+             fn main() { let g = G { v: true, n: 1 }; print_int(g.n); if g.v { print_int(2); } }",
+            "1\n2\n",
+        ),
+        (
+            "two parameters",
+            "struct P<A, B> { a: A, b: B }\n\
+             fn main() { let p = P { a: 1, b: true }; print_int(p.a); if p.b { print_int(2); } }",
+            "1\n2\n",
+        ),
+        (
+            "a variable and a call",
+            "fn five() -> i64 { return 5; }\nstruct G<T> { v: T }\n\
+             fn main() { let x = 4; let g = G { v: x }; let h = G { v: five() }; \
+             print_int(g.v); print_int(h.v); }",
+            "4\n5\n",
+        ),
+        (
+            "a String variable read in place",
+            "struct G<T> { v: T }\n\
+             fn main() { let s: String = \"hi\"; print(G { v: s }.v); }",
+            "hi\n",
+        ),
+    ];
+    for (shape, source, want) in rows {
+        assert_eq!(run(source, "generic_literal_runs"), want, "{}", shape);
     }
 }

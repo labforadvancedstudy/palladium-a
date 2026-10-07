@@ -6371,7 +6371,7 @@ impl CodeGenerator {
                                     break;
                                 }
                             }
-                            found_name.unwrap_or(name.as_str())
+                            Self::instantiation_matched(name, found_name, instantiations)?
                         } else {
                             name.as_str()
                         }
@@ -6944,6 +6944,81 @@ impl CodeGenerator {
             },
             _ => ty.clone(),
         }
+    }
+
+    /// The instantiation a generic struct literal was matched to, or a refusal
+    /// by name when the match found none (WT-01 W2a review round 3).
+    ///
+    /// The match reads the C type of the literal's FIRST field and accepts an
+    /// instantiation with an `i64` (`long long`), `bool` (`int`) or `String`
+    /// (`char*`) argument, and nothing else. Every other literal — a struct or
+    /// enum argument, a `u32`, an array, a tuple, or a `bool` argument behind
+    /// an `i64` first field — fell back to the uninstantiated `struct G`,
+    /// which no generic struct ever defines, and gcc refused the program:
+    /// `incomplete type 'struct G'`, or, for an argument the type checker
+    /// records as `Unknown` (an array, a tuple, a char, a float), `incomplete
+    /// type 'struct Unknown'` one definition earlier. That is #63, measured as
+    /// 42 of the 50 programs main refused and the round-2 build sent to gcc.
+    /// Refused here, before any C exists.
+    /// Two neighbours are NOT this refusal: `infer_expr_type` keeps a second
+    /// copy of the match that reads the first field's expression KIND, so an
+    /// unannotated `let g = G { v: s }` over a `String` or `bool` VARIABLE
+    /// still declares `struct G g`; and an annotated `let g: G<i64>` is
+    /// lowered as `void*` (#74). Both still reach gcc.
+    fn instantiation_matched<'m>(
+        name: &str,
+        found: Option<&'m str>,
+        instantiations: &[(Vec<String>, String)],
+    ) -> Result<&'m str> {
+        found.ok_or_else(|| {
+            // What the type checker RECORDED for the struct, which is not what
+            // the program wrote: an integer of any width is recorded as `i64`
+            // (measured: i32, u32, u64), and an argument it cannot name as the
+            // placeholder `Unknown` (measured: an array, a tuple, a char, a
+            // float). The placeholder is never printed; both are said instead.
+            let is_word = |arg: &String, w: &str| {
+                arg.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .any(|word| word == w)
+            };
+            let named: Vec<String> = instantiations
+                .iter()
+                .filter(|(args, _)| !args.iter().any(|a| is_word(a, "Unknown")))
+                .map(|(args, _)| format!("`{}<{}>`", name, args.join(", ")))
+                .collect();
+            let any_arg = |w: &str| {
+                instantiations
+                    .iter()
+                    .any(|(args, _)| args.iter().any(|a| is_word(a, w)))
+            };
+            let mut record = String::new();
+            if !named.is_empty() {
+                record.push_str(&format!(
+                    " The instantiations the type checker recorded for `{}` are {}.",
+                    name,
+                    named.join(", ")
+                ));
+            }
+            if any_arg("i64") {
+                record.push_str(
+                    " The record keeps no integer width: i32, u32 and u64 all appear as `i64`.",
+                );
+            }
+            if any_arg("Unknown") {
+                record.push_str(
+                    " An argument that is an array, a tuple, a char or a float has no name in \
+                     the instantiation record, so no literal holding one can be matched.",
+                );
+            }
+            CompileError::CodegenError {
+                message: format!(
+                    "`{} {{ .. }}` is a literal of the generic struct `{}`, and code generation \
+                     picks a literal's instantiation from the C type of its first field, which \
+                     it can match only to an `i64`, `bool` or `String` argument; it matched \
+                     none here.{} Write a non-generic struct for this argument",
+                    name, name, record
+                ),
+            }
+        })
     }
 
     /// An enum payload may not be an ARRAY: the payload is a union member and a

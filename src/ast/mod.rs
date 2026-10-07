@@ -1753,12 +1753,16 @@ impl std::fmt::Display for UnaryOp {
 // (main ad63231 prints 4294967297). Every walk below now carries the names
 // bound where it is, and a bound name is never looked up in the table.
 //
-// HYGIENE, the same rule from the other side. An alias's BODY is written at
-// the top level, so its names mean the GLOBAL types: expanded inside
-// `struct G<T>`, `type A = T;` would put a `T` where `G` binds one, and
-// monomorphisation would then substitute it. Such an expansion is not made;
-// the alias keeps its name there, and `type_to_c` resolves that name to the
-// global type by itself, exactly as it did before round 1.
+// THE OTHER SIDE: an alias's BODY is written at the top level, so its names
+// mean the GLOBAL types, and the body is expanded in that scope wherever the
+// alias is used, inside a generic item too. Inside a generic FUNCTION the
+// expanded `T` is a `Custom` while the function's own parameter is a
+// `TypeParam`, and code generation substitutes only `TypeParam` there, so the
+// global type is what it stays. Inside a generic struct, enum, impl or trait
+// the two spellings coincide, and the type checker refuses such a use by name
+// where a literal or a call reads the item's signature (`refuse_alias_capture`,
+// src/typeck/mod.rs). Round 2 left the alias's NAME in place instead, and
+// `type_to_c` printed an array alias there as `struct T[2] a` (review round 3).
 //
 // GENERIC aliases (`type Pair<T> = (T, T)`) are not expanded at their uses —
 // code generation skips them everywhere already, and expanding one is
@@ -1822,22 +1826,6 @@ pub fn expand_aliases_in_block(
 
 type Aliases = std::collections::HashMap<String, Type>;
 
-/// Does `ty` name any of `bound`, as a `Custom` or as a `TypeParam`?
-fn names_any(ty: &Type, bound: &[String]) -> bool {
-    match ty {
-        Type::Custom(n) | Type::TypeParam(n) => bound.contains(n),
-        Type::Array(elem, _) => names_any(elem, bound),
-        Type::Generic { args, .. } => args.iter().any(|a| match a {
-            GenericArg::Type(t) => names_any(t, bound),
-            GenericArg::Const(ConstValue::ConstParam(n)) => bound.contains(n),
-            GenericArg::Const(ConstValue::Integer(_)) => false,
-        }),
-        Type::Reference { inner, .. } | Type::Future { output: inner } => names_any(inner, bound),
-        Type::Tuple(types) => types.iter().any(|t| names_any(t, bound)),
-        _ => false,
-    }
-}
-
 fn expand_type(ty: &mut Type, aliases: &Aliases, bound: &[String], depth: usize) {
     match ty {
         Type::Custom(name) => {
@@ -1848,9 +1836,7 @@ fn expand_type(ty: &mut Type, aliases: &Aliases, bound: &[String], depth: usize)
                 // The body in ITS scope — the top level, where nothing is bound.
                 let mut target = target.clone();
                 expand_type(&mut target, aliases, &[], depth + 1);
-                if !names_any(&target, bound) {
-                    *ty = target;
-                }
+                *ty = target;
             }
         }
         Type::Array(elem, size) => {
@@ -2290,15 +2276,38 @@ mod alias_expansion_tests {
         );
     }
 
-    /// HYGIENE: an alias body is written at the top level, so its names mean
-    /// the GLOBAL types. Expanded inside `struct G<T>`, `type A = T;` would put
-    /// a `T` where `G` binds one and monomorphisation would substitute it, so
-    /// the expansion is not made there and the alias keeps its name — which
-    /// code generation's `type_to_c` resolves to the global `struct T`.
+    /// An alias body is written at the top level, so its names mean the
+    /// GLOBAL types, and it is expanded inside a generic item like anywhere
+    /// else (review round 3b; 12042e0 left the alias's NAME there instead, and
+    /// `type_to_c` printed an array alias as `struct T[2] a`). Inside a generic
+    /// FUNCTION the expanded `T` is a `Custom` while the function's own
+    /// parameter is a `TypeParam`, and code generation substitutes only
+    /// `TypeParam` there, so the expanded name keeps meaning the global
+    /// `struct T`. Inside a generic STRUCT the two spellings coincide — the
+    /// parser binds no parameter there — and the type checker refuses such a
+    /// use by name before code generation runs.
     #[test]
-    fn an_alias_whose_body_names_a_bound_parameter_is_not_captured() {
-        let p =
-            expanded("struct T { n: i64 }\ntype A = T;\nstruct G<T> { v: T, a: A }\nfn main() {}");
-        assert_eq!(struct_fields(&p, "G"), vec![custom("T"), custom("A")]);
+    fn an_alias_whose_body_names_a_bound_parameter_expands_to_the_global_type() {
+        let p = expanded(
+            "struct T { n: i64 }\ntype A = [T; 2];\nstruct G<T> { v: T, a: A }\n\
+             fn f<T>(x: T) -> i64 { let a: A = [T { n: 7 }, T { n: 8 }]; return a[1].n; }\n\
+             fn main() {}",
+        );
+        let arr = |t: Type| Type::Array(Box::new(t), ArraySize::Literal(2));
+        assert_eq!(struct_fields(&p, "G"), vec![custom("T"), arr(custom("T"))]);
+        let f = p
+            .items
+            .iter()
+            .find_map(|i| match i {
+                Item::Function(f) if f.name == "f" => Some(f),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(f.params[0].ty, Type::TypeParam("T".to_string()));
+        assert!(
+            matches!(&f.body[0], Stmt::Let { ty: Some(t), .. } if *t == arr(custom("T"))),
+            "f's `let a: A`: {:?}",
+            f.body[0]
+        );
     }
 }
