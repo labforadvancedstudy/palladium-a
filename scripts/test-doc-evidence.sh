@@ -1142,8 +1142,21 @@ PYCI
 # does not gate: the real workflow uses none of them, so without these the detector's
 # rules are unexercised -- the coverage runner reported `ci-gating` UNCOVERED, which is
 # exactly what an unexercised rule looks like from outside.
+#
+# EVERY CASE GETS ITS OWN WORKFLOW FILE, and that is checked, not assumed. $TMP is fresh,
+# so a file that already exists was written by an earlier case: the cases are not
+# isolated, and a verdict is only right because they happen to run one after another.
+# `name` is assigned in its OWN `local`: bash expands every word of a `local` before it
+# assigns any, so a `$name` later in the same statement read the unset outer one, died
+# under `set -u`, and every case wrote $TMP/wf_.yml.
 wf_case() {   # wf_case <case> <expect runs|no> <yaml body>
-  local name=$1 want=$2 body=$3 f="$TMP/wf_$(printf '%s' "$name" | tr -c 'A-Za-z0-9' '_').yml"
+  local name=$1 want=$2 body=$3
+  local f="$TMP/wf_$(printf '%s' "$name" | tr -c 'A-Za-z0-9' '_').yml"
+  if [ -e "$f" ]; then
+    printf '  %sFAIL%s %s\n' "$RED" "$NC" "$name"
+    printf '         (its workflow file %s was already written by an earlier case)\n' "$f"
+    fail=$((fail+1)); return
+  fi
   mkdir -p "$(dirname "$f")"; printf '%s\n' "$body" > "$f"
   local got=no; ci_runs check-doc-evidence.sh "$f" && got=runs
   if [ "$got" = "$want" ]; then
