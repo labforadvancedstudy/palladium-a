@@ -816,7 +816,8 @@ revision; on 2026-08-23 from `1174-1180`, which was the file-I/O prelude and had
 method mangling — the line numbers had been tracked through an edit while the target was never
 re-read; and on 2026-08-25, when `4690ef0` inserted above it).
 **implemented**: `Self` in a method signature resolves to the type the block is for
-(`src/ast/mod.rs:264`), and BOTH the type checker and code generation call that one function. Until
+(`src/ast/mod.rs:264`) — in the method body too, at any depth — and the type checker, the borrow
+checker and code generation all call that one function. Until
 `4690ef0` the return type was substituted in code generation alone, so `fn new(..) -> Self` worked
 while `fn area(self)` reached the C compiler as `struct Self self` — a type nothing declares.
 **unimplemented**: associated constants and associated types are rejected — an impl body may
@@ -1648,7 +1649,7 @@ how a whole section came to be stale without any reader noticing it was there.
 
 [N12](#n12-memory-model) requires that `&mut` be takeable only of a `mut` binding, and the
 implementation now enforces it for every referent kind. The check is
-`check_mutable_borrow_allowed` (`src/ownership/borrow_checker.rs:408-414`), which reads the
+`check_mutable_borrow_allowed` (`src/ownership/borrow_checker.rs:1401-1406`), which reads the
 `mutable_bindings` map described in [A9.2](#a92-array-parameters); a name no binder
 registered is refused rather than permitted.
 
@@ -1741,9 +1742,11 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-xfail-six`
 (2026-08-31):
 
-**verified 86 · untranscribed 0 · vacuous 6 · xfail 6 · reject 122 · skip 2 · failures 0**, over 222
-fixtures. (`fix/projection-move-scope` added one `run` fixture, `tests/regression/projection_move_scope.pd`:
-a move out of a field that used to outlive its function, measured 2026-10-06. The su2 round of `feat/m2-xfail-six` added five: `tests/04_self_place.pd`, the first
+**verified 88 · untranscribed 0 · vacuous 6 · xfail 6 · reject 122 · skip 2 · failures 0**, over 224
+fixtures. (WT-01 unit W1c added two `run` fixtures, `tests/04_self_field_reads.pd` and
+`tests/04_self_type_positions.pd`: `Self` now means the impl's type in the borrow checker and in a
+method body too. Then `fix/projection-move-scope` added one `run` fixture, `tests/regression/projection_move_scope.pd`:
+a move out of a field that used to outlive its function, measured on the merged tree 2026-10-07. The su2 round of `feat/m2-xfail-six` added five: `tests/04_self_place.pd`, the first
 fixture in which a method taking a reference receiver links at all, and four `reject`s for the
 writes through a receiver the type checker refuses — through `&self`, through a by-value
 `self`, `self` as an assignment target and `*self` as a place. Its review round added

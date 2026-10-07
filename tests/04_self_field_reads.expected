@@ -1,0 +1,11 @@
+`&self` reads `self.pos` twice:
+6
+`&mut self` copies `self.pos` into `self.err_pos`, reads it, advances it:
+3
+the caller sees both writes:
+4
+3
+and the `&self` reader sees the advanced position:
+8
+a by-value receiver reads `self.pos` twice too:
+19

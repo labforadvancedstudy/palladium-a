@@ -164,6 +164,13 @@ CMD_REFERRED = {
 # exited 2 ("No such file or directory") on a clean tree and had been recorded as
 # "0, exit 1".
 CMD_BUILD_ARTIFACT_ROOTS = {"target", "build_output"}   # compared case-folded
+# Directories that are not THIS checkout's tree at all: the repository's metadata, and
+# the conventional home of sibling worktrees. Reading either reads unversioned state.
+CMD_NOT_THE_TREE = {".git": "the repository's metadata, not its tree",
+                    ".worktrees": "another checkout's tree, not this one"}
+# Everything an operand may neither be inside nor contain, each with what it IS.
+CMD_UNREAD_DIRS = {**{d: "a build artifact" for d in CMD_BUILD_ARTIFACT_ROOTS},
+                   **CMD_NOT_THE_TREE}
 
 # Shell control operators. shlex(punctuation_chars=True) surfaces these as their own
 # tokens ONLY when unquoted, so `grep -nE '#\[token\("(with|effect)"\)\]' f` keeps its
@@ -565,9 +572,24 @@ GREP_SHORTS_WITH_ARG = "mABCd"
 # must not inherit it. Handled as a whole token AND as a letter inside a short cluster:
 # stripping only the token `-v` left `-vn` inverted, so a legitimate item written that way
 # was falsely REJECTED. Fail-closed, but it made an honest observation unwritable.
-GREP_DEREF_RECURSIVE = {"-R", "--dereference-recursive"}
 GREP_INVERT = {"-v", "--invert-match"}
 GREP_INVERT_SHORT = "v"
+# Options that make a RECURSIVE read follow symbolic links while it descends, enumerated
+# from this machine's man pages (BSD grep 2.6.0, BSD find) plus GNU grep's spellings.
+# `-R` alone was refused, and BSD `-S` -- "all symbolic links are followed" under -r --
+# read src/meta -> ../.git through an ACCEPTED `grep -rS ref src/`. Exact case on purpose:
+# grep -s is --no-messages, and sort -S is a buffer size.
+#   grep -R, --dereference-recursive   GNU: follow every link. (BSD -R is -r; it stays
+#                                      refused so the claim holds under either grep.)
+#   grep -S                            BSD: follow every link during -r. grep only.
+#   find -L, -follow                   follow every link while descending.
+# NOT refused here, and why: grep -O and find -H follow only links NAMED ON THE COMMAND
+# LINE, and contained() resolves and judges every hop of every operand; grep -p and find
+# -P are the no-follow defaults. (find -H and -P precede the paths, which find's
+# positional rule refuses anyway.)
+GREP_DEREF_RECURSIVE = {"-R", "--dereference-recursive"}
+GREP_DEREF_GREP_ONLY = {"-S"}
+FIND_DEREF = {"-L", "-follow"}
 
 # find's expression, ENUMERATED. Everything a `cmd:` item needs in order to observe the
 # tree, and nothing else. Until this existed the expression was forwarded to find
@@ -619,20 +641,32 @@ def resolve_tool(name: str):
 def contained(rel: str):
     """Resolve a path operand and require it to stay inside the repository.
 
-    `Path.resolve()` follows symlinks, which a lexical check cannot: a link committed
-    inside the repo can point anywhere, and the gate would then be measuring unversioned
-    content while reporting on this tree. scripts/conformance.sh:600-612 refuses the same
-    thing for the same reason.
+    Resolution follows symlinks, which a lexical check cannot: a link committed inside the
+    repo can point anywhere, and the gate would then be measuring unversioned content while
+    reporting on this tree. scripts/conformance.sh:600-612 refuses the same thing for the
+    same reason. It is done one component at a time (_resolve_operand), so every path the
+    operand passes through is judged, and not only the two ends.
+
+    WHAT IT DOES NOT PROVE. Every test here is on a PATH. A hard link to a file under .git/
+    or build_output/ has no name and no hop that says so -- it IS the ordinary file it also
+    is -- so nothing path-based can see it. And it governs the operand only: below a
+    recursive operand grep -r does not follow symlinks (-R, which does, is refused), so
+    what a scope HOLDS is _holds_unread's question, not this one's.
     """
     if rel.startswith(("/", "~")):
         return None, f"names {rel!r}, which is absolute; a `cmd:` observes this tree only"
     p = (ROOT / rel)
-    if not p.exists():
-        return None, (f"reads {rel!r}, which does not exist. An absence measured over a "
-                      f"path that is not there is not an absence: BSD grep with --include "
-                      f"exits 1 and prints nothing for a missing directory, which is "
-                      f"exactly what a true absence proof looks like")
-    real = p.resolve()
+    # RESOLVED, AND JUDGED BY PATH, BEFORE THE EXISTENCE TEST. Whether an operand is build
+    # output or repository metadata is a fact about its PATH, and it used to be asked only
+    # once the path existed: `build_output/x.c` was "does not exist" on a fresh checkout
+    # and "a build artifact" on a built one, and `grep -r X .` was refused on a built tree
+    # and ACCEPTED on a fresh one, having read .git/. Until 2026-10-07 the L3 control's
+    # 4 MiB cap refused that root read by accident; once the control could read past the
+    # cap, the accident was all that stood there, so the question is decided here instead.
+    real, hops, loop = _resolve_operand(rel)
+    if loop:
+        return None, (f"reads {rel!r}, whose symlinks do not resolve within "
+                      f"{CMD_MAX_HOPS} hops — a loop, or a chain no observation needs")
     if real != ROOT and ROOT not in real.parents:
         return None, (f"names {rel!r}, which resolves to {real} — outside {ROOT}. The gate "
                       f"would be measuring unversioned content and reporting it as this "
@@ -642,7 +676,27 @@ def contained(rel: str):
     # a slash and `docs/../target` both walked straight past — and CI creates target/
     # before the documentation-evidence step, so generated state could validate
     # documentation. The question is which directory the path IS IN once resolved, so it
-    # is asked of the resolved, checkout-relative first component.
+    # is asked of EVERY resolved, checkout-relative component: pdc writes build_output/
+    # relative to its working directory (src/main.rs:161), and the first component alone
+    # let `bootstrap/<v>/build_output/` through. Case-folded: on a case-insensitive
+    # checkout `TARGET` is the same directory as `target`.
+    parts = [x.casefold() for x in real.relative_to(ROOT).parts]
+    hit, how = next((x for x in parts if x in CMD_UNREAD_DIRS), None), "resolves into"
+    if hit is not None:
+        return None, (f"reads {rel!r}, which {how} {hit}/ — "
+                      f"{CMD_UNREAD_DIRS[hit]}. A `cmd:` item must be reproducible from a "
+                      f"clean checkout, so generated state is evidence only through the "
+                      f"gate that generates it")
+    # ...AND AT EVERY HOP OFF THAT ROUTE. Judging the operand as written and where it
+    # landed saw neither the middle of a chain -- `alias -> linked/.git -> pointer` was
+    # `alias` and `linked/pointer`, read through repository metadata -- nor a link's own
+    # NAME, which resolution replaces with its target's. Every component the operand spells
+    # is one of these hops, before any `..` is applied, so `target/../src` and a link named
+    # target, build_output, .git or .worktrees are refused by that name wherever they lead.
+    for kind, where, link in hops:
+        problem = _hop_problem(rel, kind, where, link, real)
+        if problem:
+            return None, problem
     # A RECURSIVE ROOT THAT CONTAINS AN EXCLUDED DIRECTORY READS IT. The alias repair
     # fixed EXPLICIT operands: `target`, `docs/../target`. It did nothing about
     # `grep -r pattern .`, which resolves to the repository root, passes containment, and
@@ -650,20 +704,119 @@ def contained(rel: str):
     # READ, not how the path was spelled -- so an operand that is an ANCESTOR of an
     # excluded directory is refused, exactly as one inside it is. That narrows the grammar
     # instead of validating it, the move the find expression and the five-command list
-    # both needed.
-    if any((real / d).exists() for d in CMD_BUILD_ARTIFACT_ROOTS):
-        return None, (f"names {rel!r}, which CONTAINS build output; a recursive read from "
-                      f"here would descend into it. Name the subdirectory the observation "
-                      f"is actually about")
-    # Case-folded: on a case-insensitive checkout `TARGET` is the same directory as
-    # `target`, and a case-sensitive comparison would let the alias through.
-    first = real.relative_to(ROOT).parts[0].casefold() if real != ROOT else ""
-    if first in CMD_BUILD_ARTIFACT_ROOTS:
-        return None, (f"reads {rel!r}, which resolves into {first}/ — a build artifact. A "
-                      f"`cmd:` item must be reproducible from a clean checkout, so "
-                      f"generated state is evidence only through the gate that generates "
-                      f"it")
+    # both needed. Two halves, one refusal. BY PATH: an ancestor of where those
+    # directories LIVE -- the checkout root, for target/, build_output/ and .git -- is
+    # refused whether or not they exist yet. BY MEASUREMENT: a build_output/ that pdc wrote
+    # further down can only be found by looking (see _holds_unread).
+    if any(real in (ROOT / d).parents for d in CMD_UNREAD_DIRS) or _holds_unread(real):
+        return None, (f"names {rel!r}, which CONTAINS build output or repository metadata "
+                      f"({', '.join(sorted(CMD_UNREAD_DIRS))}); a recursive read from here "
+                      f"would descend into it. Name the subdirectory the observation is "
+                      f"actually about")
+    if not p.exists():
+        return None, (f"reads {rel!r}, which does not exist. An absence measured over a "
+                      f"path that is not there is not an absence: BSD grep with --include "
+                      f"exits 1 and prints nothing for a missing directory, which is "
+                      f"exactly what a true absence proof looks like")
     return real, None
+
+
+# Symlinks followed while resolving ONE operand. macOS stops at 32 (MAXSYMLINKS); a chain
+# longer than that is a loop or something no observation needs, and is refused by name.
+CMD_MAX_HOPS = 32
+
+
+def _resolve_operand(rel: str):
+    """Resolve `rel` under ROOT one component at a time, as the kernel does. -> (real, hops, loop)
+
+    `hops` is every place the resolution went, in order: ("path", <absolute path>, None)
+    for each component reached -- the operand's own prefixes, and each step inside a link
+    target -- and ("link", <the link's literal target text>, <the link>) for each symlink
+    followed. A link's target is spliced in FRONT of the components still to walk, so a
+    link in a middle component, a chain, an absolute target and a `..` inside a target
+    all take the same path through this loop; `..` is the physical parent, because `here`
+    never holds an unresolved link. A component that does not exist is walked lexically,
+    which is what the existence test after this expects. `loop` is True when more than
+    CMD_MAX_HOPS links were followed.
+    """
+    hops, todo, here, followed = [], rel.split("/"), ROOT, 0
+    while todo:
+        c = todo.pop(0)
+        if c in ("", "."):
+            continue
+        here = here.parent if c == ".." else here / c
+        hops.append(("path", here, None))
+        if c != ".." and here.is_symlink():
+            followed += 1
+            if followed > CMD_MAX_HOPS:
+                return None, hops, True
+            text = os.readlink(here)
+            hops.append(("link", text, here))
+            todo = text.split("/") + todo
+            here = Path("/") if text.startswith("/") else here.parent
+    return here, hops, False
+
+
+def _shown(path) -> str:
+    """A hop as a reader should see it: checkout-relative inside the checkout."""
+    return str(path.relative_to(ROOT)) if (path == ROOT or ROOT in path.parents) else str(path)
+
+
+def _hop_problem(rel: str, kind: str, where, link, real):
+    """One recorded hop of an operand -> the refusal it earns, or None.
+
+    A hop ON the final route (`real` or one of its ancestors) is not judged here: where the
+    operand lands, and every directory it lands under, is the "resolves into" check's.
+    """
+    if kind == "link":
+        if where.startswith("/"):
+            return (f"reads {rel!r}, whose link {_shown(link)} -> {where!r} is absolute. A "
+                    f"`cmd:` observes this tree only, and an absolute target says where one "
+                    f"checkout lives, not what this one holds")
+        names = [x.casefold() for x in where.split("/") if x not in ("", ".", "..")]
+        how = f"whose link {_shown(link)} -> {where!r} names"
+    else:
+        if where == real or where in real.parents:
+            return None
+        if where != ROOT and ROOT not in where.parents:
+            return (f"reads {rel!r}, which passes through {where} — outside {ROOT}. The "
+                    f"gate would be measuring unversioned content and reporting it as this "
+                    f"repository's state")
+        names = [x.casefold() for x in where.relative_to(ROOT).parts]
+        how = f"which passes through {_shown(where)}, naming"
+    hit = next((x for x in names if x in CMD_UNREAD_DIRS), None)
+    if hit is None:
+        return None
+    return (f"reads {rel!r}, {how} {hit}/ — {CMD_UNREAD_DIRS[hit]}. A `cmd:` item must be "
+            f"reproducible from a clean checkout, so generated state is evidence only "
+            f"through the gate that generates it")
+
+
+# The one that can be a FILE: submodules and linked checkouts keep `.git` as a gitfile
+# (`gitdir: <path>`), which is repository metadata exactly as the directory is.
+CMD_UNREAD_FILES = {".git"}
+
+
+def _holds_unread(top) -> bool:
+    """Whether a directory holds unread metadata or build output at ANY depth. -> bool
+
+    By measurement, because by path it cannot be known: pdc writes build_output/ relative
+    to its working directory, so one can appear under any directory it was run from. Every
+    depth, because a test of direct children only let `bootstrap/` through while it held
+    `bootstrap/<v>/build_output/`. A path that does not exist holds nothing -- os.walk
+    yields nothing for it -- so this needs no existence test of its own.
+
+    FILES TOO, for `.git`. Only directories were looked at, so a scope holding a gitfile
+    was accepted -- `grep -rn X vendor/` over `vendor/mod/.git` read the metadata pointer,
+    and an absence over a scope whose only file was that pointer passed its L3 control on
+    metadata alone. Kept to CMD_UNREAD_FILES: other untracked files are a separate question.
+    """
+    for _, dirs, files in os.walk(top):
+        if any(d.casefold() in CMD_UNREAD_DIRS for d in dirs):
+            return True
+        if any(f.casefold() in CMD_UNREAD_FILES for f in files):
+            return True
+    return False
 
 
 def parse_segment(argv):
@@ -680,6 +833,9 @@ def parse_segment(argv):
     # demand a file literally called `*.v`. Once the expression starts it never stops.
     in_find_expr = False
     for tok in rest:
+        if head == "find" and tok in FIND_DEREF:
+            return None, (f"uses {tok}, which follows symlinks while descending, so a link "
+                          f"inside the tree can lead the read outside it")
         if in_find_expr:
             opts.append(tok)
             continue
@@ -697,11 +853,11 @@ def parse_segment(argv):
                               f"`find <path>... <expression>`, and a `cmd:` item must name "
                               f"the scope it observes first")
             base = tok.split("=", 1)[0]
-            if base in GREP_DEREF_RECURSIVE:
-                return None, ("uses -R, which follows symlinks while descending, so a link "
-                              "inside the tree can lead the read outside it. Containment "
-                              "is checked on the operand, and only -r keeps that check "
-                              "meaning what it says")
+            if base in GREP_DEREF_RECURSIVE or (head == "grep" and base in GREP_DEREF_GREP_ONLY):
+                return None, (f"uses {base}, which follows symlinks while descending, so a "
+                              f"link inside the tree can lead the read outside it. "
+                              f"Containment is checked on the operand, and only -r keeps "
+                              f"that check meaning what it says")
             if base in GREP_PATTERN_OPTS:
                 return None, (f"supplies its pattern through {base!r}. That is refused: if "
                               f"the pattern can arrive through an option, the first operand "
@@ -714,9 +870,9 @@ def parse_segment(argv):
             # at the whole token let the `e` through with its argument counted as a path.
             if not tok.startswith("--"):
                 for ch in tok[1:]:
-                    if ch == "R":
-                        return None, (f"clusters -R inside {tok!r}, which follows symlinks "
-                                      f"while descending; use -r")
+                    if ch == "R" or (head == "grep" and ch == "S"):
+                        return None, (f"clusters -{ch} inside {tok!r}, which follows "
+                                      f"symlinks while descending; use -r")
                     if ch in GREP_PATTERN_SHORTS:
                         return None, (f"clusters -{ch} inside {tok!r}, which supplies the "
                                       f"pattern; see above. Write the pattern as the first "
@@ -944,7 +1100,7 @@ def _classify(argv, rc: int, text: str, ok_status):
     return gate_probe.classify(gate_probe.Run(argv, rc, text), reject_codes=ok_status)
 
 
-def run_pipeline(segments, timeout: int = CMD_TIMEOUT_S):
+def run_pipeline(segments, timeout: int = CMD_TIMEOUT_S, drain_excess: bool = False):
     """Run the pipeline. -> (rc, stdout, harness-error-or-None)
 
     EVERY SEGMENT'S STATUS IS CHECKED, not just the last one. An upstream segment killed
@@ -973,6 +1129,21 @@ def run_pipeline(segments, timeout: int = CMD_TIMEOUT_S):
     cleanup path, and it kills and reaps every process whatever happened, so an upstream
     hang after the downstream has been terminated becomes a controlled harness error
     rather than a traceback or a leaked process.
+
+    `drain_excess` IS FOR THE L3 CONTROL AND NOTHING ELSE. The output cap exists because
+    a measured run's line count is COMPARED, so a run too loud to buffer is a badly
+    scoped item. The control asks a different question -- did the scope produce
+    anything at all -- and output past the cap answers it a fortiori. Refusing it there
+    was a false verdict that fired on SOURCE GROWTH: `grep -rn '' src/ --include='*.rs'`
+    measured 4,159,939 bytes against this 4 MiB cap on 2026-10-07, and crossing it would
+    have turned eight feature-index absence items red with "could not be shown to read
+    anything". So under the flag the first CMD_MAX_BYTES + 1 bytes are kept and the rest
+    is READ AND DROPPED to end of stream, not abandoned. Stopping at the cap would kill
+    the pipeline before its exit status or its stderr existed, and a loud scope that then
+    failed would pass as "read something"; draining leaves every check below exactly as
+    it is, under the same deadline and the same memory bound. The stdout returned is
+    then a PREFIX, which is all an emptiness test needs -- and is why a caller that
+    counts lines may never pass the flag.
     """
     env = {"PATH": SAFE_PATH, "LC_ALL": "C"}   # pinned, not inherited
     # ONE DEADLINE FOR THE WHOLE PIPELINE. `timeout` used to be spent again in full by the
@@ -1022,8 +1193,18 @@ def run_pipeline(segments, timeout: int = CMD_TIMEOUT_S):
 
         def _drain():
             try:
-                box["out"] = procs[-1].stdout.read(CMD_MAX_BYTES + 1)
-            except OSError as exc:                       # pipe torn down by the kill
+                out = procs[-1].stdout.read(CMD_MAX_BYTES + 1)
+                if drain_excess and len(out) > CMD_MAX_BYTES:
+                    while procs[-1].stdout.read(65536):   # read and dropped: bounded
+                        pass
+                box["out"] = out
+            # ValueError too: the drain is a loop, and the `finally` below closes this
+            # stream once the join has timed out, so the next read can be of a closed
+            # file. The verdict has been returned by then, so what this prevents is a
+            # traceback from this daemon thread on the gate's stderr. Raised BEFORE the
+            # join returned, it would leave `box` empty and the run would read as an
+            # EMPTY stream; only the probe's stand-in stream does that, and it pins this.
+            except (OSError, ValueError) as exc:         # pipe torn down by the kill
                 box["err"] = exc
 
         reader = threading.Thread(target=_drain, daemon=True)
@@ -1035,7 +1216,7 @@ def run_pipeline(segments, timeout: int = CMD_TIMEOUT_S):
         if "err" in box:
             return None, "", f"could not read the pipeline's output: {box['err']}"
         out = box.get("out", b"")
-        if len(out) > CMD_MAX_BYTES:
+        if len(out) > CMD_MAX_BYTES and not drain_excess:
             return None, "", (f"produced more than {CMD_MAX_BYTES} bytes. A `cmd:` "
                               f"item is an observation, not a dump; narrow its scope")
         try:
@@ -1106,6 +1287,10 @@ def probe_reads_something(segments):
 
     Required of every item claiming 0 lines, and of nothing else: an item claiming N > 0
     has already demonstrated that it read something.
+
+    MORE OUTPUT THAN THE CAP IS A PASS HERE, not a refusal: it is the question answered
+    a fortiori. The run is drained to its end (see run_pipeline), so an empty scope, a
+    non-zero exit, stderr and the timeout fail exactly as they did below the cap.
     """
     first = segments[0]
     probe = build_probe(first["parsed"])
@@ -1117,7 +1302,8 @@ def probe_reads_something(segments):
     exe, err = resolve_tool(first["parsed"]["head"])
     if err:
         return err
-    rc, out, herr = run_pipeline([{"argv": [exe] + probe[1:], "parsed": first["parsed"]}])
+    rc, out, herr = run_pipeline([{"argv": [exe] + probe[1:], "parsed": first["parsed"]}],
+                                 drain_excess=True)
     if herr:
         return f"could not be shown to read anything: the control run {herr}"
     if rc != 0 or not out:
