@@ -70,7 +70,7 @@ llvm-sys = { version = "170", optional = true }
 
 # Data structures
 indexmap = "2.2"
-petgraph = "0.6"
+petgraph = "0.8"
 
 # Utilities
 tracing = "0.1"
