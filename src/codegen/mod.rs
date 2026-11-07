@@ -2972,7 +2972,7 @@ impl CodeGenerator {
                 }
                 Type::Unit => "void",
                 Type::Custom(_name) => {
-                    self.register_tuple_type(field_type)?; // an alias kept by name
+                    self.register_field_tuple_type(struct_def, field_type)?; // kept by name
                     let resolved_type = self.type_to_c(field_type);
                     self.output
                         .push_str(&format!("{} {};\n", resolved_type, field_name));
@@ -7122,6 +7122,44 @@ impl CodeGenerator {
             }
         }
         Ok(())
+    }
+
+    /// `register_tuple_type` for a struct's field written as an alias kept by
+    /// NAME — refused, as a field written as a tuple is, where the alias hides
+    /// a tuple (`type A = &(i64, i64)`) and the struct is not a generic one's
+    /// instantiation: every other struct is emitted before the tuple shapes,
+    /// so its `__pd_tuple2_long_long_long_long* p;` named a type nothing had
+    /// declared yet, and gcc refused every program that declared it (on main
+    /// too; 0c85c72 and 1dad901 refused it as a reference in a struct). A
+    /// generic struct's instantiation is emitted after them, and keeps it.
+    fn register_field_tuple_type(&mut self, owner: &StructDef, ty: &Type) -> Result<()> {
+        let instantiated = self
+            .generic_struct_instantiation_map
+            .values()
+            .flatten()
+            .any(|(_, name)| *name == owner.name);
+        if !instantiated && self.hides_a_tuple(ty, 0) {
+            return Err(CompileError::Generic(
+                "Tuple types in structs not yet supported".to_string(),
+            ));
+        }
+        self.register_tuple_type(ty)
+    }
+
+    /// Does `ty` name a tuple at some depth, through the aliases it names (a
+    /// cyclic alias stops at the depth bound)?
+    fn hides_a_tuple(&self, ty: &Type, depth: usize) -> bool {
+        match ty {
+            Type::Tuple(_) => true,
+            Type::Array(inner, _) | Type::Reference { inner, .. } => {
+                self.hides_a_tuple(inner, depth)
+            }
+            Type::Custom(name) if depth < 64 => self
+                .type_aliases
+                .get(name)
+                .is_some_and(|body| self.hides_a_tuple(body, depth + 1)),
+            _ => false,
+        }
     }
 
     /// Which of the aliases `declared` code generation keeps by NAME where one

@@ -3321,8 +3321,8 @@ impl TypeChecker {
                 if let Some(expected) = &self.current_function_return {
                     if !self.written_admits(expected, &expr_type, Some(expr)) {
                         return Err(CompileError::TypeMismatch {
-                            expected: expected.to_string(),
-                            found: expr_type.to_string(),
+                            expected: Self::told(expected, &expr_type),
+                            found: Self::told(&expr_type, expected),
                             span: None,
                         });
                     }
@@ -3353,8 +3353,8 @@ impl TypeChecker {
                         return Err(self
                             .error_helper
                             .type_mismatch(
-                                &expected_type.to_string(),
-                                &value_type.to_string(),
+                                &Self::told(&expected_type, &value_type),
+                                &Self::told(&value_type, &expected_type),
                                 None,
                             )
                             .with_code(DiagnosticCode::LetAnnotationAndInitialiserAgree));
@@ -3455,8 +3455,8 @@ impl TypeChecker {
                         // A written type admits it, or the binding's value meets it
                         if !self.admits_or_meets(&var_type, &value_type, value) {
                             return Err(self.error_helper.type_mismatch(
-                                &var_type.to_string(),
-                                &value_type.to_string(),
+                                &Self::told(&var_type, &value_type),
+                                &Self::told(&value_type, &var_type),
                                 None,
                             ));
                         }
@@ -3494,8 +3494,8 @@ impl TypeChecker {
                         // A written type admits it, or the element's value meets it
                         if !self.admits_or_meets(&elem_type, &value_type, value) {
                             return Err(CompileError::TypeMismatch {
-                                expected: elem_type.to_string(),
-                                found: value_type.to_string(),
+                                expected: Self::told(&elem_type, &value_type),
+                                found: Self::told(&value_type, &elem_type),
                                 span: None,
                             });
                         }
@@ -3581,8 +3581,8 @@ impl TypeChecker {
                         // Check that types match (a written type: `written_admits`)
                         if !self.written_admits(&field_type, &value_type, Some(value)) {
                             return Err(CompileError::TypeMismatch {
-                                expected: field_type.to_string(),
-                                found: value_type.to_string(),
+                                expected: Self::told(&field_type, &value_type),
+                                found: Self::told(&value_type, &field_type),
                                 span: None,
                             });
                         }
@@ -4126,8 +4126,8 @@ impl TypeChecker {
                                 && !(method && self.is_or_names(&arg_type, expected_type))
                             {
                                 return Err(CompileError::TypeMismatch {
-                                    expected: expected_type.to_string(),
-                                    found: arg_type.to_string(),
+                                    expected: Self::told(expected_type, &arg_type),
+                                    found: Self::told(&arg_type, expected_type),
                                     span: None,
                                 }
                                 .with_code(DiagnosticCode::ArgumentHasTheParameterType));
@@ -4239,8 +4239,8 @@ impl TypeChecker {
                         // Comparison operations require same types
                         if self.merged(&left_type, &right_type).is_none() {
                             return Err(CompileError::TypeMismatch {
-                                expected: left_type.to_string(),
-                                found: right_type.to_string(),
+                                expected: Self::told(&left_type, &right_type),
+                                found: Self::told(&right_type, &left_type),
                                 span: None,
                             });
                         }
@@ -4310,8 +4310,8 @@ impl TypeChecker {
                     let elem_expr_type = self.check_expression(elem)?;
                     let Some(merged) = self.merged(&elem_type, &elem_expr_type) else {
                         return Err(CompileError::TypeMismatch {
-                            expected: elem_type.to_string(),
-                            found: elem_expr_type.to_string(),
+                            expected: Self::told(&elem_type, &elem_expr_type),
+                            found: Self::told(&elem_expr_type, &elem_type),
                             span: None,
                         });
                     };
@@ -4410,7 +4410,7 @@ impl TypeChecker {
                                     Some(existing) => self.merged(existing, &provided_type).ok_or_else(|| {
                                         CompileError::Generic(format!(
                                             "Conflicting type constraints for type parameter '{}': {} vs {}",
-                                            spelled(param_name), existing, provided_type
+                                            spelled(param_name), Self::told(existing, &provided_type), Self::told(&provided_type, existing)
                                         ))
                                     })?,
                                     None => provided_type,
@@ -4424,7 +4424,7 @@ impl TypeChecker {
                                     Some(existing) => self.merged(existing, &provided_type).ok_or_else(|| {
                                         CompileError::Generic(format!(
                                             "Conflicting type constraints for type parameter '{}': {} vs {}",
-                                            spelled(type_name), existing, provided_type
+                                            spelled(type_name), Self::told(existing, &provided_type), Self::told(&provided_type, existing)
                                         ))
                                     })?,
                                     None => provided_type,
@@ -4475,8 +4475,8 @@ impl TypeChecker {
                         let provided_type = self.check_expression(provided_expr)?;
                         if !self.field_admits(&provided_type, &concrete, provided_expr) {
                             return Err(CompileError::TypeMismatch {
-                                expected: concrete.to_string(),
-                                found: provided_type.to_string(),
+                                expected: Self::told(&concrete, &provided_type),
+                                found: Self::told(&provided_type, &concrete),
                                 span: None,
                             });
                         }
@@ -4567,8 +4567,8 @@ impl TypeChecker {
                     let provided_type = self.check_expression(provided_expr)?;
                     if !self.written_admits(field_type, &provided_type, Some(provided_expr)) {
                         return Err(CompileError::TypeMismatch {
-                            expected: field_type.to_string(),
-                            found: provided_type.to_string(),
+                            expected: Self::told(field_type, &provided_type),
+                            found: Self::told(&provided_type, field_type),
                             span: None,
                         });
                     }
@@ -5095,10 +5095,10 @@ impl TypeChecker {
                     *span,
                 )?;
 
-                // ONE TYPE, NOT TWO. The value is stored in a single
-                // hoisted temporary (see `src/codegen/mod.rs`), so branches
-                // that disagree have no C declaration to be given.
+                // ONE TYPE, NOT TWO: the value is stored in one hoisted temporary
+                // (see `src/codegen/mod.rs`); two that disagree have no C declaration.
                 let Some(merged) = self.merged(&then_type, &else_type) else {
+                    let (then_type, else_type) = Self::told_apart(&then_type, &else_type);
                     return Err(CompileError::TypeMismatch {
                         expected: format!("both branches of this `if` to have type {}", then_type),
                         found: format!("an `else` branch of type {}", else_type),
@@ -5277,9 +5277,9 @@ impl TypeChecker {
                                 expected: format!(
                                     "every arm of this `match` to have type {}, as the first one \
                                      does",
-                                    first
+                                    Self::told(&first, &arm_type)
                                 ),
-                                found: format!("an arm of type {}", arm_type),
+                                found: format!("an arm of type {}", Self::told(&arm_type, &first)),
                                 span: Some(*span),
                             });
                         }
@@ -5480,9 +5480,9 @@ impl TypeChecker {
                 Some(existing) if merged.is_none() => Err(CompileError::TypeMismatch {
                     expected: format!(
                         "every `break` out of this `loop` to carry a {}, as the first one does",
-                        existing
+                        Self::told(existing, &value_type)
                     ),
-                    found: format!("a `break` carrying a {}", value_type),
+                    found: format!("a `break` carrying a {}", Self::told(&value_type, existing)),
                     span: Some(span),
                 }),
                 _ => {
@@ -6250,8 +6250,8 @@ impl TypeChecker {
                         return Err(CompileError::Generic(format!(
                             "Type parameter '{}' has conflicting types: '{}' and '{}'",
                             spelled(param_name),
-                            existing_type,
-                            arg
+                            shown_argument(existing_type, first),
+                            shown_argument(&arg, &value)
                         )));
                     }
                 }
@@ -6519,8 +6519,8 @@ impl TypeChecker {
                         && !self.written_admits(expected_type, &arg_type, Some(arg))
                     {
                         return Err(CompileError::TypeMismatch {
-                            expected: expected_type.to_string(),
-                            found: arg_type.to_string(),
+                            expected: Self::told(expected_type, &arg_type),
+                            found: Self::told(&arg_type, expected_type),
                             span: None,
                         });
                     }
@@ -6887,18 +6887,32 @@ impl TypeChecker {
     /// so a generic it is handed to is instantiated at the name, as main
     /// instantiated it. Anything else is `ast_type_to_checker_type`'s answer. A
     /// tuple keeps the alias its own resolution gave (`resolved_alias`), and
-    /// gets none from a reference alias, as since review round 5.
+    /// gets none from a reference alias's resolution, as since review round 5
+    /// — but is declared here as the reference alias written at the top
+    /// (`declares_tuple`, review round 8).
     fn declared_type(&self, ty: &crate::ast::Type) -> CheckerType {
         let resolved = self.ast_type_to_checker_type(ty);
         match ty {
             crate::ast::Type::Custom(name)
-                if self.type_aliases.contains_key(name)
-                    && !matches!(resolved, CheckerType::Tuple(..)) =>
+                if self.type_aliases.contains_key(name) && self.declares_tuple(name, &resolved) =>
             {
                 resolved.declared(name, true)
             }
             _ => resolved,
         }
+    }
+
+    /// Does a value of the alias `name`, whose type is `resolved`, take the
+    /// alias's declaration where it is written: any value but a tuple (a tuple
+    /// keeps its own, `resolved_alias`) — and a tuple a REFERENCE alias names
+    /// (`type B = &(i64, i64)`), which its resolution gives none (review round
+    /// 8). Without one, a value of `B` was a tuple declared as nothing, one
+    /// type with every `(i64, i64)` and every tuple alias's value: beside
+    /// `type A = (i64, i64)` in an `if`, given with one to `two<U>(x: U,
+    /// y: U)`, or assigned over one, it reached C as a pointer where a struct
+    /// stands (gcc on 144a493; main refused each by the name).
+    fn declares_tuple(&self, name: &str, resolved: &CheckerType) -> bool {
+        !matches!(resolved, CheckerType::Tuple(..)) || self.alias_is_reference(name)
     }
 
     /// `ty` as a DECLARATION writes it — a `let` annotation, a function's
@@ -6911,8 +6925,7 @@ impl TypeChecker {
         let resolved = self.ast_type_to_checker_type(ty);
         match ty {
             crate::ast::Type::Custom(name)
-                if self.type_aliases.contains_key(name)
-                    && !matches!(resolved, CheckerType::Tuple(..)) =>
+                if self.type_aliases.contains_key(name) && self.declares_tuple(name, &resolved) =>
             {
                 resolved.declared(name, false)
             }
@@ -7234,7 +7247,7 @@ impl TypeChecker {
     /// main would have admitted it (`names`): an alias this checker erases
     /// (`type X = i32`) names only a type declared as it.
     fn is_or_names(&self, found: &CheckerType, expected: &CheckerType) -> bool {
-        if (found == expected && !self.narrows_a_named(expected, found))
+        if (found == expected && !self.names_another_type(expected, found))
             || self.names(found, expected)
         {
             return true;
@@ -7299,6 +7312,7 @@ impl TypeChecker {
         found: &CheckerType,
         value: Option<&Expr>,
     ) -> bool {
+        let written_as = value;
         let value = value.map(|v| match v {
             Expr::Reference { expr, .. } => expr.as_ref(),
             v => v,
@@ -7347,22 +7361,29 @@ impl TypeChecker {
                 };
                 n == m && (0..count).all(|i| self.written_admits(written, found, element(i)))
             }
-            (CheckerType::Tuple(written, _), CheckerType::Tuple(found, _)) => {
+            (CheckerType::Tuple(elements, _), CheckerType::Tuple(found_elements, _)) => {
                 let element = |i: usize| match value {
                     Some(Expr::Tuple { elements, .. }) => elements.get(i),
                     _ => None,
                 };
-                written.len() == found.len()
-                    && written
+                elements.len() == found_elements.len()
+                    && !self.tuples_differ(written, found, self.lossless_value(found, written_as))
+                    && elements
                         .iter()
-                        .zip(found)
+                        .zip(found_elements)
                         .enumerate()
                         .all(|(i, (w, f))| self.written_admits(w, f, element(i)))
             }
+            // A place main typed by an alias's NAME takes only a value of the
+            // type the alias names in the source (`misnamed`) — a literal too,
+            // read as the type this checker spells it (review round 8: `z = 3`
+            // into a binding `z` of `N = u32` main typed by the name ran on
+            // 144a493 and printed `4294967292`, where main refused the program
+            // and its alias-free twin prints `-4`). A place main read as the
+            // type the alias names (a `let` annotation: `let r: N = 7`) is not
+            // by the name, and takes a literal as before.
             _ => {
-                written == found
-                    && (value.is_some_and(Self::is_literal_value)
-                        || !self.narrows_a_named(written, found))
+                written == found && !self.misnamed(written, self.lossless_value(found, written_as))
             }
         }
     }
@@ -7504,10 +7525,17 @@ impl TypeChecker {
     /// and is carried to a generic by it, wherever both sides do. Nothing else
     /// meets a name: a literal, an undeclared value and another alias's name
     /// are refused as before, and as main refused them.
+    ///
+    /// AND TWO VALUES ARE ONE TYPE ONLY IF THE SOURCE SAYS SO where main typed
+    /// either by an alias's NAME (`names_another_type`, review round 8): the
+    /// comparison above is in this checker's spelling, where `&i64`, `&u32`
+    /// and `i64` are one `Int`, so a value of `type A = &i64` and one of
+    /// `type B = &u32` were one type here — main's "conflicting types: 'A'
+    /// and 'B'" became "the C backend emitted ill-typed C" on 144a493.
     fn merged(&self, a: &CheckerType, b: &CheckerType) -> Option<CheckerType> {
         let a = self.name_read_as_declared(a, b);
         let b = self.name_read_as_declared(b, a.as_ref());
-        let one = *a == *b && !self.narrows_a_named(&a, &b) && !self.narrows_a_named(&b, &a);
+        let one = *a == *b && !self.names_another_type(&a, &b) && !self.names_another_type(&b, &a);
         one.then(|| self.agreed(a.into_owned(), &b))
     }
 
@@ -7586,60 +7614,147 @@ impl TypeChecker {
         }
     }
 
-    /// Would a value of type `found` lose width or sign where `named` stands:
-    /// `named` declared by the NAME of an alias of a narrower or unsigned
-    /// integer, or of an `f32` (`alias_narrows`), and `found` not declared as
-    /// an alias of the same type, at some depth of an array or a tuple?
+    /// Is `found` another type than `named` where `named` stands: `named`
+    /// declared by the NAME of an alias (main's own type was the name), and
+    /// the type that alias names in the SOURCE's spelling (`lossless`) not
+    /// `found`'s, at some depth of an array or a tuple — or two tuples
+    /// declared as aliases of two types?
     ///
-    /// ONE `Int` FOR EVERY WIDTH (review round 7). main typed a generic's
-    /// result, a method's and a generic struct's field by the alias's NAME
-    /// and refused any other value there or beside it (`expected N, found
-    /// Int`). Since review round 1 they are the type the alias names, which
-    /// this checker spells `Int` whatever the width, and an `i64` compared
-    /// equal: under `type N = u32`, `let k = 4294967297;` given to
-    /// `fn h<T>(t: T, x: N)`, a method's `x: N`, a generic struct's `n: N`,
-    /// returned from `fn h<T>(t: T) -> N`, assigned over `let mut r = f(1)`,
-    /// or beside `f(1)` in an `if` or an array, ran and printed `1` on
-    /// 1dad901. Refused here, as main refused it; a reference alias is not
-    /// this (its C type cannot be confused silently), nor a tuple's.
-    fn narrows_a_named(&self, named: &CheckerType, found: &CheckerType) -> bool {
+    /// ONE `Int` FOR EVERY WIDTH AND FOR EVERY POINTER (review rounds 7 and
+    /// 8). main typed a generic's result, a method's and a generic struct's
+    /// field by the alias's NAME and refused any other value there or beside
+    /// it (`expected N, found Int`, `conflicting types: 'A' and 'B'`). Since
+    /// review round 1 they are the type the alias names, which this checker
+    /// spells `Int` whatever the width and reads through any reference, and
+    /// any other `Int` compared equal: under `type N = u32` an `i64` holding
+    /// `4294967297` given to a generic's or a method's `x: N`, a generic
+    /// struct's `n: N`, or beside `f(1)` in an `if` ran and printed `1` on
+    /// 1dad901; under `type A = &i64; type B = &u32` (or `type B = i64`) a
+    /// value of each given to one `two<U>(x: U, y: U)`, or meeting in an
+    /// `if`, a `match`, an array, a comparison or an assignment, was one type
+    /// and reached C as a `long long *` given for an `unsigned int *` — gcc,
+    /// or "the C backend emitted ill-typed C", on 144a493. Refused here, as
+    /// main refused each. Two aliases of one type agree (`same_alias_type`):
+    /// `type B = &i64` beside `A` is `A`'s type. A value declared as no alias
+    /// is read as the type this checker spells (`Int` an `i64`), so an `i64`
+    /// still meets an `i64` alias's name, a `bool` a `bool`'s, a struct its
+    /// alias's — and an `Int` never a reference alias's name.
+    fn names_another_type(&self, named: &CheckerType, found: &CheckerType) -> bool {
         match (named, found) {
             (CheckerType::Array(named, _), CheckerType::Array(found, _)) => {
-                self.narrows_a_named(named, found)
+                self.names_another_type(named, found)
             }
-            (CheckerType::Tuple(named, _), CheckerType::Tuple(found, _)) => named
-                .iter()
-                .zip(found)
-                .any(|(n, f)| self.narrows_a_named(n, f)),
-            _ => {
-                named.declared_by_name()
-                    && named.declared_as().is_some_and(|alias| {
-                        self.alias_narrows(alias)
-                            && !found
-                                .declared_as()
-                                .is_some_and(|declared| self.same_alias_type(alias, declared))
-                    })
+            (CheckerType::Tuple(elements, _), CheckerType::Tuple(found_elements, _)) => {
+                self.tuples_differ(named, found, self.lossless(found))
+                    || elements
+                        .iter()
+                        .zip(found_elements)
+                        .any(|(n, f)| self.names_another_type(n, f))
             }
+            _ => self.misnamed(named, self.lossless(found)),
         }
     }
 
-    /// Is the alias `name` an `i32`, `u32`, `u64` or `f32` — a type whose
-    /// values this checker's `Int` or `Float` cannot be told from wider or
-    /// signed ones?
-    fn alias_narrows(&self, name: &str) -> bool {
-        use crate::ast::Type as T;
-        matches!(
-            self.alias_expansion(name),
-            Some(T::I32 | T::U32 | T::U64 | T::F32)
-        )
+    /// Are two tuples, one type in this checker's spelling, two types where a
+    /// declaration names them: the first declared as an alias that does not
+    /// name what the second is (`found_as`, its `lossless` reading: `&r` is a
+    /// reference, so `h(&r)` for `p: R` under `type R = &(i64, i64)` gives
+    /// `R` what it names even where `r` is a `(i64, i64)` alias's value), the
+    /// second declared as an alias and the first by no alias but where the
+    /// first is a REFERENCE alias's by its NAME (`declares_tuple`) — or the
+    /// second such a value and the first declared as nothing? A tuple alias's
+    /// value meets an undeclared tuple as before: every tuple alias names its
+    /// tuple wherever it is written (`resolved_alias`), so its declaration
+    /// does not say that main typed it by the name.
+    fn tuples_differ(
+        &self,
+        named: &CheckerType,
+        found: &CheckerType,
+        found_as: Option<crate::ast::Type>,
+    ) -> bool {
+        let by_reference =
+            |ty: &CheckerType, alias: &str| ty.declared_by_name() && self.alias_is_reference(alias);
+        let not_mine = |mine: &str| found_as.is_some_and(|f| Some(f) != self.alias_expansion(mine));
+        match (named.declared_as(), found.declared_as()) {
+            (Some(mine), Some(_)) => not_mine(mine),
+            (Some(mine), None) => by_reference(named, mine) && not_mine(mine),
+            (None, Some(theirs)) => by_reference(found, theirs),
+            (None, None) => false,
+        }
     }
 
-    /// `is_or_names`, or a LITERAL of the field's type (`G { v: 1, n: 7 }`):
-    /// a generic struct's field reads a literal at its declared type, as an
-    /// annotation does, and only a VALUE declared otherwise is refused under
-    /// a narrowing alias (`narrows_a_named`).
+    /// Is `named` declared by the NAME of an alias whose type, as the source
+    /// spells it (`lossless`), is not `found`?
+    fn misnamed(&self, named: &CheckerType, found: Option<crate::ast::Type>) -> bool {
+        named.declared_by_name()
+            && matches!((self.lossless(named), found), (Some(named), Some(found)) if named != found)
+    }
+
+    /// The type a value of `ty` has as the SOURCE spells it, at the top, where
+    /// this checker can say it: the type the alias it was declared as names
+    /// (`alias_expansion`) — or, for an alias's NAME, the type the name names
+    /// — and otherwise the type its own spelling names: `Int` an `i64`,
+    /// `Float` an `f64` (a narrower, an unsigned or a referenced value is told
+    /// apart only where it was declared as an alias). `None` where this
+    /// checker's type names no one source type.
+    fn lossless(&self, ty: &CheckerType) -> Option<crate::ast::Type> {
+        use crate::ast::Type as T;
+        if let Some(alias) = ty.declared_as() {
+            return self.alias_expansion(alias);
+        }
+        match ty {
+            CheckerType::Int(_) => Some(T::I64),
+            CheckerType::Float(_) => Some(T::F64),
+            CheckerType::Bool(_) => Some(T::Bool),
+            CheckerType::Char(_) => Some(T::Char),
+            CheckerType::String(_) => Some(T::String),
+            CheckerType::Struct(name, _) if self.type_aliases.contains_key(name) => {
+                self.alias_expansion(name)
+            }
+            CheckerType::Struct(name, _) | CheckerType::Enum(name, _) => {
+                Some(T::Custom(name.clone()))
+            }
+            CheckerType::Tuple(elements, _) => elements
+                .iter()
+                .map(|e| self.lossless(e))
+                .collect::<Option<Vec<_>>>()
+                .map(T::Tuple),
+            _ => None,
+        }
+    }
+
+    /// `lossless`, for a value of `found` written as `value`: a reference
+    /// taken where it is written (`&m`, which this checker types as `m`) is a
+    /// reference to `m`'s type — so `gk(1, &m)` for `x: A` under
+    /// `type A = &i64` gives what `A` names, and `gk(1, m)` does not.
+    fn lossless_value(
+        &self,
+        found: &CheckerType,
+        value: Option<&Expr>,
+    ) -> Option<crate::ast::Type> {
+        let ty = self.lossless(found)?;
+        Some(match value {
+            Some(Expr::Reference { mutable, .. }) => crate::ast::Type::Reference {
+                lifetime: None,
+                mutable: *mutable,
+                inner: Box::new(ty),
+            },
+            _ => ty,
+        })
+    }
+
+    /// `is_or_names`, or a reference taken where it is written to a value of
+    /// what the field's alias names (`lossless_value`): a generic struct's
+    /// field written `n: A` under `type A = &i64` takes `&m`. A LITERAL is a
+    /// value like any other (review round 8: `G { v: 1, n: 7 }` under
+    /// `type N = u32` ran on 144a493 and printed `4294967288`; main refused
+    /// it by the name, as it refused every literal at a narrowing alias's
+    /// name), and so is an array of `i64`s for `a: [X; 2]` (`X = i32`).
     fn field_admits(&self, found: &CheckerType, expected: &CheckerType, value: &Expr) -> bool {
-        self.is_or_names(found, expected) || (found == expected && Self::is_literal_value(value))
+        self.is_or_names(found, expected)
+            || (matches!(value, Expr::Reference { .. })
+                && found == expected
+                && !self.misnamed(expected, self.lossless_value(found, Some(value))))
     }
 
     /// The type a value passed for a type parameter has, where this checker
@@ -7656,6 +7771,8 @@ impl TypeChecker {
     /// type-argument spellings tell apart where the alias's own spelling
     /// loses nothing (`N` against `i64` under `type N = i64`)? The parameter
     /// is then instantiated at the NAME, as main instantiated it for both.
+    /// Two aliases of two types are not (`merged`), and are refused as main
+    /// refused them, by the names main gave them (`shown_argument`).
     fn one_type(&self, first: &Option<CheckerType>, value: &Option<CheckerType>) -> bool {
         match (first, value) {
             (Some(first), Some(value)) => self.merged(first, value).is_some(),
@@ -7671,6 +7788,42 @@ impl TypeChecker {
     /// declared as it, which main ran (review round 7).
     fn admits_or_meets(&self, place: &CheckerType, found: &CheckerType, value: &Expr) -> bool {
         self.written_admits(place, found, Some(value)) || self.merged(place, found).is_some()
+    }
+
+    /// `ty` as a diagnostic names it beside `other`: as it prints — unless the
+    /// two print alike, as two tuples declared as aliases of two types do
+    /// (`(Int, Int)` and `(Int, Int)`, refused since review round 8 because
+    /// the declarations differ): then a type declared as an alias is named by
+    /// it, as main named it, at every depth of an array or a tuple.
+    fn told(ty: &CheckerType, other: &CheckerType) -> String {
+        let shown = ty.to_string();
+        if shown != other.to_string() {
+            return shown;
+        }
+        match (ty, other, ty.declared_as()) {
+            (CheckerType::Array(elem, size), CheckerType::Array(theirs, _), _) => {
+                let size = match size {
+                    ArraySizeValue::Literal(n) => n.to_string(),
+                    ArraySizeValue::ConstParam(name) => spelled(name).to_string(),
+                };
+                format!("[{}; {}]", Self::told(elem, theirs), size)
+            }
+            (_, _, Some(alias)) => spelled(alias).to_string(),
+            (CheckerType::Tuple(mine, _), CheckerType::Tuple(theirs, _), None) => {
+                let elements: Vec<String> = mine
+                    .iter()
+                    .zip(theirs)
+                    .map(|(m, t)| Self::told(m, t))
+                    .collect();
+                format!("({})", elements.join(", "))
+            }
+            _ => shown,
+        }
+    }
+
+    /// `told`, for each of two types beside the other.
+    fn told_apart(a: &CheckerType, b: &CheckerType) -> (String, String) {
+        (Self::told(a, b), Self::told(b, a))
     }
 
     /// The type of the value the innermost value `loop` already carries,
@@ -7865,6 +8018,18 @@ impl CheckerType {
 /// user's String literal `"x#1"` is quoted as written (review round 5).
 fn spelled(name: &str) -> &str {
     crate::ast::user_spelling(name)
+}
+
+/// How a conflict between a type parameter's arguments names one of them:
+/// by the alias a value was declared as where main typed it by the NAME
+/// (`DeclaredAs::shown`), as main's own spelling of it was the name — `'A'
+/// and 'B'` under `type A = &i64; type B = i64`, where `spelling` is `i64` —
+/// and otherwise as it is spelled for the instantiation.
+fn shown_argument<'a>(spelling: &'a str, value: &'a Option<CheckerType>) -> &'a str {
+    match value.as_ref().and_then(CheckerType::declaration) {
+        Some(declared) => declared.shown(spelling),
+        None => spelling,
+    }
 }
 
 /// The type argument a generic struct instantiation records when the argument

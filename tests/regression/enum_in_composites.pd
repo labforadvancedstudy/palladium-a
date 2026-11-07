@@ -49,6 +49,15 @@
 // pointer passed by value; on 1dad901 `return r0;` was emitted
 // `return (*r0);` (gcc refused it) and the field was refused as a reference
 // in a struct.
+//
+// Review round 8 added ONE ALIAS, ONE TYPE. Two values main typed by the
+// names of two aliases are one type only if the aliases name one type in the
+// source: on 144a493 a `&i64` alias's value and a `&u32` alias's were one
+// `Int` and reached C as two pointer types (main refused them by name, and
+// so does this compiler now — a refusal, which this fixture cannot run).
+// What runs is what main ran: two values of `Rf` given to one generic's
+// `U` and merged by an `if`, and a literal at `Wn` where main read `Wn` as
+// the `u32` it names — an annotation, and an assignment into it.
 
 enum K {
     A,
@@ -180,6 +189,28 @@ struct Holder {
     p: Rf,
 }
 
+struct Cell {
+    n: i64,
+}
+
+impl Cell {
+    fn at(&self) -> Rf {
+        return &self.n;
+    }
+}
+
+fn rboth<U>(x: U, y: U) -> U {
+    return x;
+}
+
+fn rnot<U>(u: U) -> i64 {
+    return ~(*u);
+}
+
+fn lnot<U>(u: U) -> i64 {
+    return ~u;
+}
+
 fn main() {
     // Both literal forms against an annotation.
     let xs: [K; 4] = [K::B; 4];
@@ -302,4 +333,21 @@ fn main() {
     print("\nReference alias:");
     print_int(*rz);
     print_int(*hold.p);
+
+    // Two values of one reference alias are one type; a literal meets an alias
+    // where main read it as the type the alias names.
+    let c1 = Cell { n: 4294967297 };
+    let c2 = Cell { n: 9 };
+    let ra = c1.at();
+    let rb = c2.at();
+    let rt = rboth(ra, rb);
+    let rif = if wc { rb } else { ra };
+    let lw: Wn = 3;
+    let mut la: Wn = 7;
+    la = 3;
+    print("\nOne alias, one type:");
+    print_int(rnot(rt));
+    print_int(rnot(rif));
+    print_int(lnot(lw));
+    print_int(lnot(la));
 }
