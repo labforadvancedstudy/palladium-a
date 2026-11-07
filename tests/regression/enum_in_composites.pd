@@ -26,6 +26,17 @@
 // `type Wd = bool;` is instantiated at `i64`, and f841b99 expanded the field's
 // `Wd` as the alias before monomorphising, so `Wide { v: 4294967297 }` printed
 // `1` with exit 0 — a silent wrong answer this transcript now pins.
+//
+// Review round 6 added AN ALIAS MAIN TYPED BY ITS NAME. A `u32` alias that a
+// generic function or a method returns is handed to another generic at the
+// alias, as main handed it, so `~7` is the `u32` complement 4294967288: on
+// 40efcf3 the value was the type the alias names, which this checker spells
+// `Int` for every width, the generic was instantiated at `i64`, and both
+// programs ran and printed -8. A binding annotated with that alias keeps it.
+// And an element of an array written with a tuple alias, assigned a
+// generic's result, runs as on main: it was refused as `expected B, found
+// (Int, Int)`, because the assignment compared with `!=` what the `let`
+// admits.
 
 enum K {
     A,
@@ -121,6 +132,32 @@ struct Wide<Wd> {
     v: Wd,
 }
 
+type Wn = u32;
+
+fn wnot<U>(u: U) -> i64 {
+    return ~u;
+}
+
+fn wmake<T>(t: T) -> Wn {
+    return 7;
+}
+
+impl Seat {
+    fn wn(&self) -> Wn {
+        return 7;
+    }
+}
+
+type Pair = (i64, i64);
+
+fn pmake<T>(t: T) -> Pair {
+    return (4294967297, 8);
+}
+
+fn pfirst<X>(x: X) -> i64 {
+    return x.0;
+}
+
 fn main() {
     // Both literal forms against an annotation.
     let xs: [K; 4] = [K::B; 4];
@@ -202,4 +239,19 @@ fn main() {
     if flag {
         print_int(1);
     }
+
+    // An alias a generic or a method returns is carried to a generic by name.
+    let wr = wmake(1);
+    let seat = Seat { n: 1 };
+    let ws = seat.wn();
+    let wy = wmake(2);
+    let wz: Wn = wy;
+    let mut pairs: [Pair; 2] = [pmake(1), pmake(2)];
+    pairs[0] = pmake(3);
+    let p0 = pairs[0];
+    print("\nAlias carried by name:");
+    print_int(wnot(wr));
+    print_int(wnot(ws));
+    print_int(wnot(wz));
+    print_int(pfirst(p0));
 }

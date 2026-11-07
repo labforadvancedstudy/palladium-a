@@ -941,7 +941,7 @@ enum is compiled to. Use `match`.
 
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
 They are ordinary user enums if you declare them. The only special-casing left is the REFUSAL: `?` is
-rejected outright by the type checker (`src/typeck/mod.rs:5025-5025`) and again by code generation
+rejected outright by the type checker (`src/typeck/mod.rs:5047-5047`) and again by code generation
 (`src/codegen/mod.rs:6556-6560`). It used to typecheck against a `Generic{name:"Result"}` shape
 and then emit C for a `struct Result` layout nothing defines (see
 [A6.5](#a65-question-mark-async-and-await)).
@@ -1076,7 +1076,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
   *(This bullet read "partial — codegen error 'Range expressions can only be used in for loops'"
   until `ef74eba`.)*
 - partial: empty array literal `[]` — typeck cannot infer the element type
-  (`src/typeck/mod.rs:6296-6300`, corrected from line 1874 of the pre-cleanup revision and again on 2026-08-25, when it had come to rest on a closing brace).
+  (`src/typeck/mod.rs:6321-6325`, corrected from line 1874 of the pre-cleanup revision and again on 2026-08-25, when it had come to rest on a closing brace).
 
 **FIXED — the precedence bug**: `parse_multiplication` parsed its RIGHT operand with
 `parse_postfix` rather than `parse_unary`, so the left side descended through the unary level and
@@ -1179,8 +1179,8 @@ infers only the parameters a variant mentions, so `Result::Err(e)` yields `Resul
 syntactic trap is worth stating: a `match` arm that is a block must not be followed by a comma,
 and propagation needs block arms because `return` is not an expression.
 
-The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:5025-5025`, `.await` at
-`src/typeck/mod.rs:5033-5033`) and again by code generation (`?` at `src/codegen/mod.rs:6556-6560`,
+The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:5047-5047`, `.await` at
+`src/typeck/mod.rs:5055-5055`) and again by code generation (`?` at `src/codegen/mod.rs:6556-6560`,
 `.await` at `src/codegen/mod.rs:6568-6572`), which is callable on its own.
 
 What they used to do:
@@ -1360,7 +1360,7 @@ struct patterns, `ref`/`mut` bindings, `..` rest.
 **Exhaustiveness holds for every scrutinee type** (N6-10). An enum must cover its variants; a
 `bool` is covered by `true` and `false` together; every other type needs an arm that matches every
 value — `_`, a binding, `name @ <irrefutable>`, an `a | b` with an irrefutable alternative, or a
-tuple of irrefutables (`src/typeck/exhaustiveness.rs:114`, `src/typeck/mod.rs:5378`). NO INTERVAL
+tuple of irrefutables (`src/typeck/exhaustiveness.rs:114`, `src/typeck/mod.rs:5403`). NO INTERVAL
 ARITHMETIC IS PROMISED: `0..=59` beside `60..=<i64 max>` beside `<i64 min>..=-1` covers every
 integer and is still refused, and the diagnostic says why rather than leaving the reader to infer
 it. A guarded arm counts toward nothing — whether it is taken is not decidable from the pattern.

@@ -610,8 +610,8 @@ enum BreakTarget {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CheckerType {
     Unit,
-    String,
-    Int,
+    String(DeclaredAs),
+    Int(DeclaredAs),
     /// `f64` and `f32` (N4-02).
     ///
     /// ONE checker type for both widths, deliberately. The checker's job here
@@ -622,8 +622,8 @@ pub enum CheckerType {
     /// the compiler's internals could be wrong about. The AST keeps both
     /// (`Type::F32` / `Type::F64`) because code generation must emit `float`
     /// or `double`, and that IS observable.
-    Float,
-    Bool,
+    Float(DeclaredAs),
+    Bool(DeclaredAs),
     /// One Unicode scalar (N4-04), NOT an `i64`.
     ///
     /// Distinct with no implicit conversion in either direction: `'a' + 1`
@@ -631,12 +631,12 @@ pub enum CheckerType {
     /// `97 as char` are how you cross. The carrier in C is unchanged
     /// (`long long`), so this distinction costs nothing at run time — it is
     /// entirely a claim about what the program meant.
-    Char,
+    Char(DeclaredAs),
     Array(Box<CheckerType>, ArraySizeValue),
     Function(Vec<CheckerType>, Box<CheckerType>),
-    Struct(String),
+    Struct(String, DeclaredAs),
     TypeParam(String),
-    Enum(String),
+    Enum(String, DeclaredAs),
     Generic {
         name: String,
         args: Vec<GenericArgValue>,
@@ -657,10 +657,10 @@ pub enum CheckerType {
 fn builtin_type(ty: crate::builtins::BuiltinType) -> CheckerType {
     use crate::builtins::BuiltinType;
     match ty {
-        BuiltinType::I64 => CheckerType::Int,
-        BuiltinType::Str => CheckerType::String,
-        BuiltinType::Bool => CheckerType::Bool,
-        BuiltinType::Char => CheckerType::Char,
+        BuiltinType::I64 => CheckerType::INT,
+        BuiltinType::Str => CheckerType::STRING,
+        BuiltinType::Bool => CheckerType::BOOL,
+        BuiltinType::Char => CheckerType::CHAR,
         BuiltinType::Unit => CheckerType::Unit,
     }
 }
@@ -699,12 +699,12 @@ impl From<&crate::ast::Type> for CheckerType {
     fn from(ast_type: &crate::ast::Type) -> Self {
         match ast_type {
             crate::ast::Type::Unit => CheckerType::Unit,
-            crate::ast::Type::String => CheckerType::String,
-            crate::ast::Type::I32 | crate::ast::Type::I64 => CheckerType::Int,
-            crate::ast::Type::F32 | crate::ast::Type::F64 => CheckerType::Float,
-            crate::ast::Type::Bool => CheckerType::Bool,
-            crate::ast::Type::Char => CheckerType::Char,
-            crate::ast::Type::U32 | crate::ast::Type::U64 => CheckerType::Int,
+            crate::ast::Type::String => CheckerType::STRING,
+            crate::ast::Type::I32 | crate::ast::Type::I64 => CheckerType::INT,
+            crate::ast::Type::F32 | crate::ast::Type::F64 => CheckerType::FLOAT,
+            crate::ast::Type::Bool => CheckerType::BOOL,
+            crate::ast::Type::Char => CheckerType::CHAR,
+            crate::ast::Type::U32 | crate::ast::Type::U64 => CheckerType::INT,
             crate::ast::Type::Array(elem_type, size) => {
                 let size_value = match size {
                     ArraySize::Literal(n) => ArraySizeValue::Literal(*n),
@@ -716,7 +716,7 @@ impl From<&crate::ast::Type> for CheckerType {
                 };
                 CheckerType::Array(Box::new(CheckerType::from(elem_type.as_ref())), size_value)
             }
-            crate::ast::Type::Custom(name) => CheckerType::Struct(name.clone()),
+            crate::ast::Type::Custom(name) => CheckerType::named_struct(name.clone()),
             crate::ast::Type::TypeParam(name) => {
                 // Type parameters need proper handling through substitution
                 // For now, create a placeholder type that can be unified later
@@ -765,11 +765,11 @@ impl std::fmt::Display for CheckerType {
         match self {
             CheckerType::Unit => write!(f, "()"),
             CheckerType::Range => write!(f, "a range"),
-            CheckerType::String => write!(f, "String"),
-            CheckerType::Int => write!(f, "Int"),
-            CheckerType::Float => write!(f, "Float"),
-            CheckerType::Bool => write!(f, "Bool"),
-            CheckerType::Char => write!(f, "Char"),
+            CheckerType::String(_) => write!(f, "String"),
+            CheckerType::Int(_) => write!(f, "Int"),
+            CheckerType::Float(_) => write!(f, "Float"),
+            CheckerType::Bool(_) => write!(f, "Bool"),
+            CheckerType::Char(_) => write!(f, "Char"),
             CheckerType::Array(elem_type, size) => match size {
                 ArraySizeValue::Literal(n) => write!(f, "[{}; {}]", elem_type, n),
                 ArraySizeValue::ConstParam(name) => write!(f, "[{}; {}]", elem_type, spelled(name)),
@@ -784,9 +784,9 @@ impl std::fmt::Display for CheckerType {
                 }
                 write!(f, ") -> {}", ret)
             }
-            CheckerType::Struct(name) => write!(f, "{}", spelled(name)),
+            CheckerType::Struct(name, _) => write!(f, "{}", spelled(name)),
             CheckerType::TypeParam(name) => write!(f, "{}", spelled(name)),
-            CheckerType::Enum(name) => write!(f, "{}", spelled(name)),
+            CheckerType::Enum(name, _) => write!(f, "{}", spelled(name)),
             CheckerType::Generic { name, args } => {
                 write!(f, "{}<", spelled(name))?;
                 for (i, arg) in args.iter().enumerate() {
@@ -1428,7 +1428,7 @@ impl TypeChecker {
 
     fn as_enums_where_known(enum_names: &HashSet<String>, ty: CheckerType) -> CheckerType {
         match ty {
-            CheckerType::Struct(name) if enum_names.contains(&name) => CheckerType::Enum(name),
+            CheckerType::Struct(n, d) if enum_names.contains(&n) => CheckerType::Enum(n, d),
             CheckerType::Array(elem, size) => CheckerType::Array(
                 Box::new(Self::as_enums_where_known(enum_names, *elem)),
                 size,
@@ -1681,7 +1681,7 @@ impl TypeChecker {
                         // constructor registered here still resolved.
                         if matches!(enum_def.visibility, crate::ast::Visibility::Public) {
                             // Store enum type information
-                            let enum_type = CheckerType::Enum(enum_def.name.clone());
+                            let enum_type = CheckerType::named_enum(enum_def.name.clone());
 
                             // THE ENUM'S OWN SHAPE, not only its constructors.
                             //
@@ -2549,13 +2549,13 @@ impl TypeChecker {
                         let param_types: Vec<CheckerType> = func
                             .params
                             .iter()
-                            .map(|param| self.ast_type_to_checker_type(&param.ty))
+                            .map(|param| self.written_type(&param.ty))
                             .collect();
 
                         let return_type = func
                             .return_type
                             .as_ref()
-                            .map(|t| self.ast_type_to_checker_type(t))
+                            .map(|t| self.written_type(t))
                             .unwrap_or(CheckerType::Unit);
 
                         let func_type = CheckerType::Function(param_types, Box::new(return_type));
@@ -2585,7 +2585,7 @@ impl TypeChecker {
                         let fields: Vec<(String, CheckerType)> = struct_def
                             .fields
                             .iter()
-                            .map(|(name, ty)| (name.clone(), self.ast_type_to_checker_type(ty)))
+                            .map(|(name, ty)| (name.clone(), self.written_type(ty)))
                             .collect();
 
                         self.structs.insert(struct_def.name.clone(), fields);
@@ -2644,7 +2644,7 @@ impl TypeChecker {
                             });
 
                             // Also register variant constructors as functions
-                            let enum_type = CheckerType::Enum(enum_def.name.clone());
+                            let enum_type = CheckerType::named_enum(enum_def.name.clone());
                             let variant_name = format!("{}::{}", enum_def.name, variant.name);
 
                             let func_type = match &variant.data {
@@ -3012,13 +3012,13 @@ impl TypeChecker {
                     if let Some(impl_type) = &self.current_impl_type {
                         // Enum or struct: the set every other reader uses
                         if self.enum_names.contains(impl_type) {
-                            return CheckerType::Enum(impl_type.clone());
+                            return CheckerType::named_enum(impl_type.clone());
                         } else {
-                            return CheckerType::Struct(impl_type.clone());
+                            return CheckerType::named_struct(impl_type.clone());
                         }
                     } else {
                         // Self used outside of impl block - this is an error but return a placeholder
-                        return CheckerType::Struct("Self".to_string());
+                        return CheckerType::named_struct("Self".to_string());
                     }
                 }
 
@@ -3215,7 +3215,7 @@ impl TypeChecker {
         // Add function parameters to symbol table
         for param in &func.params {
             self.refuse_global_shadow(&param.name, "the parameter")?;
-            let checker_type = self.ast_type_to_checker_type(&param.ty);
+            let checker_type = self.written_type(&param.ty);
             self.symbols
                 .define(param.name.clone(), checker_type, param.mutable)?;
         }
@@ -3319,7 +3319,7 @@ impl TypeChecker {
             Stmt::Return(Some(expr)) => {
                 let expr_type = self.check_expression(expr)?;
                 if let Some(expected) = &self.current_function_return {
-                    if expr_type != *expected {
+                    if !self.written_admits(expected, &expr_type, Some(expr)) {
                         return Err(CompileError::TypeMismatch {
                             expected: expected.to_string(),
                             found: expr_type.to_string(),
@@ -3348,7 +3348,7 @@ impl TypeChecker {
                 // rule; a code attached inside the helper would say the two were
                 // one. Same reason `consume_coded` takes the code per call site.
                 if let Some(annotated_type) = ty {
-                    let expected_type = self.ast_type_to_checker_type(annotated_type);
+                    let expected_type = self.written_type(annotated_type);
                     if !self.written_admits(&expected_type, &value_type, Some(value)) {
                         return Err(self
                             .error_helper
@@ -3359,8 +3359,8 @@ impl TypeChecker {
                             )
                             .with_code(DiagnosticCode::LetAnnotationAndInitialiserAgree));
                     }
-                    // Define variable with annotated type
-                    self.symbols.define(name.clone(), expected_type, *mutable)?;
+                    let bound = self.annotated(annotated_type, expected_type, &value_type);
+                    self.symbols.define(name.clone(), bound, *mutable)?;
                 } else {
                     // Define variable with inferred type
                     self.symbols.define(name.clone(), value_type, *mutable)?;
@@ -3452,8 +3452,8 @@ impl TypeChecker {
                         // Type check the value expression
                         let value_type = self.check_expression(value)?;
 
-                        // Check that types match
-                        if value_type != var_type {
+                        // Check that types match (a written type: `written_admits`)
+                        if !self.written_admits(&var_type, &value_type, Some(value)) {
                             return Err(self.error_helper.type_mismatch(
                                 &var_type.to_string(),
                                 &value_type.to_string(),
@@ -3469,7 +3469,7 @@ impl TypeChecker {
 
                         // Type check the index expression (must be Int)
                         let index_type = self.check_expression(index)?;
-                        if index_type != CheckerType::Int {
+                        if index_type != CheckerType::INT {
                             return Err(CompileError::TypeMismatch {
                                 expected: "Int".to_string(),
                                 found: index_type.to_string(),
@@ -3491,8 +3491,8 @@ impl TypeChecker {
                         // Type check the value expression
                         let value_type = self.check_expression(value)?;
 
-                        // Check that types match
-                        if value_type != elem_type {
+                        // Check that types match (a written type: `written_admits`)
+                        if !self.written_admits(&elem_type, &value_type, Some(value)) {
                             return Err(CompileError::TypeMismatch {
                                 expected: elem_type.to_string(),
                                 found: value_type.to_string(),
@@ -3508,7 +3508,7 @@ impl TypeChecker {
 
                         let field_type = match &object_type {
                             // Handle non-generic structs
-                            CheckerType::Struct(name) => {
+                            CheckerType::Struct(name, _) => {
                                 // Look up the struct fields
                                 let fields = self.structs.get(name).ok_or_else(|| {
                                     CompileError::Generic(format!("Unknown struct type: {}", name))
@@ -3578,8 +3578,8 @@ impl TypeChecker {
                         // Type check the value expression
                         let value_type = self.check_expression(value)?;
 
-                        // Check that types match
-                        if value_type != field_type {
+                        // Check that types match (a written type: `written_admits`)
+                        if !self.written_admits(&field_type, &value_type, Some(value)) {
                             return Err(CompileError::TypeMismatch {
                                 expected: field_type.to_string(),
                                 found: value_type.to_string(),
@@ -3607,7 +3607,7 @@ impl TypeChecker {
             } => {
                 // Type check the condition - must be Bool
                 let cond_type = self.check_expression(condition)?;
-                if cond_type != CheckerType::Bool {
+                if cond_type != CheckerType::BOOL {
                     return Err(CompileError::TypeMismatch {
                         expected: "Bool".to_string(),
                         found: cond_type.to_string(),
@@ -3638,7 +3638,7 @@ impl TypeChecker {
             } => {
                 // Type check the condition - must be Bool
                 let cond_type = self.check_expression(condition)?;
-                if cond_type != CheckerType::Bool {
+                if cond_type != CheckerType::BOOL {
                     return Err(CompileError::TypeMismatch {
                         expected: "Bool".to_string(),
                         found: cond_type.to_string(),
@@ -3689,7 +3689,7 @@ impl TypeChecker {
                     CheckerType::Array(elem_type, _size) => elem_type.as_ref().clone(),
                     // A range yields the integers between its ends — whether it
                     // was written in the header or bound by a `let` first.
-                    CheckerType::Range => CheckerType::Int,
+                    CheckerType::Range => CheckerType::INT,
                     _ => {
                         return Err(CompileError::Generic(format!(
                             "For loop requires an array, found {}",
@@ -3857,7 +3857,7 @@ impl TypeChecker {
                     }
                 } else {
                     // Not a parameter: a global name, so a global alias resolves
-                    Ok(self.ast_type_to_checker_type(ty))
+                    Ok(self.declared_type(ty))
                 }
             }
             // A composite: its parameters are substituted at every depth
@@ -3918,9 +3918,9 @@ impl TypeChecker {
     /// Type check an expression and return its type
     fn check_expression(&mut self, expr: &Expr) -> Result<CheckerType> {
         match expr {
-            Expr::String(_) => Ok(CheckerType::String),
-            Expr::Integer(_) => Ok(CheckerType::Int),
-            Expr::Float(_) => Ok(CheckerType::Float),
+            Expr::String(_) => Ok(CheckerType::STRING),
+            Expr::Integer(_) => Ok(CheckerType::INT),
+            Expr::Float(_) => Ok(CheckerType::FLOAT),
             // N4-12. A tuple's type is the tuple of its elements' types — there
             // is nothing to unify, because the elements are not required to
             // agree with each other about anything.
@@ -3977,8 +3977,8 @@ impl TypeChecker {
             // The VALUE is unchanged and still asserted on:
             // `tests/02_types_chars.pd` reads the bytes, not just that it
             // compiles.
-            Expr::Char(_) => Ok(CheckerType::Char),
-            Expr::Bool(_) => Ok(CheckerType::Bool),
+            Expr::Char(_) => Ok(CheckerType::CHAR),
+            Expr::Bool(_) => Ok(CheckerType::BOOL),
             Expr::Ident(name) => {
                 // First check if it's a variable
                 if let Some(var_info) = self.symbols.lookup(name) {
@@ -4115,10 +4115,16 @@ impl TypeChecker {
                             });
                         }
 
-                        // Check argument types
+                        // Check argument types. A METHOD's parameter is read as
+                        // main read it, by the alias's NAME (`kinded`), so an
+                        // alias name meets it as a generic's parameter does
+                        // (`is_or_names`, review round 6).
+                        let method = self.is_method(func_name);
                         for (arg, expected_type) in args.iter().zip(param_types.iter()) {
                             let arg_type = self.check_expression(arg)?;
-                            if !self.written_admits(expected_type, &arg_type, Some(arg)) {
+                            if !self.written_admits(expected_type, &arg_type, Some(arg))
+                                && !(method && self.is_or_names(&arg_type, expected_type))
+                            {
                                 return Err(CompileError::TypeMismatch {
                                     expected: expected_type.to_string(),
                                     found: arg_type.to_string(),
@@ -4146,19 +4152,23 @@ impl TypeChecker {
                     BinOp::Add => {
                         // Addition can work for both Int and String (concatenation)
                         match (&left_type, &right_type) {
-                            (CheckerType::Int, CheckerType::Int) => Ok(CheckerType::Int),
-                            (CheckerType::Float, CheckerType::Float) => Ok(CheckerType::Float),
-                            (CheckerType::String, CheckerType::String) => Ok(CheckerType::String),
+                            (CheckerType::Int(_), CheckerType::Int(_)) => Ok(CheckerType::INT),
+                            (CheckerType::Float(_), CheckerType::Float(_)) => {
+                                Ok(CheckerType::FLOAT)
+                            }
+                            (CheckerType::String(_), CheckerType::String(_)) => {
+                                Ok(CheckerType::STRING)
+                            }
                             _ => {
                                 // For Add, we expect both operands to have the same type
-                                if left_type == CheckerType::String {
+                                if left_type == CheckerType::STRING {
                                     Err(CompileError::TypeMismatch {
                                         expected: "String".to_string(),
                                         found: right_type.to_string(),
                                         span: None,
                                     })
-                                } else if left_type == CheckerType::Int
-                                    || left_type == CheckerType::Float
+                                } else if left_type == CheckerType::INT
+                                    || left_type == CheckerType::FLOAT
                                 {
                                     // NO IMPLICIT WIDENING. `1 + 2.5` is a type
                                     // error and not an f64: C would convert
@@ -4186,9 +4196,11 @@ impl TypeChecker {
                     BinOp::Sub | BinOp::Mul | BinOp::Div => {
                         // Arithmetic over one numeric type, with no mixing.
                         match (&left_type, &right_type) {
-                            (CheckerType::Int, CheckerType::Int) => Ok(CheckerType::Int),
-                            (CheckerType::Float, CheckerType::Float) => Ok(CheckerType::Float),
-                            (CheckerType::Int, _) | (CheckerType::Float, _) => {
+                            (CheckerType::Int(_), CheckerType::Int(_)) => Ok(CheckerType::INT),
+                            (CheckerType::Float(_), CheckerType::Float(_)) => {
+                                Ok(CheckerType::FLOAT)
+                            }
+                            (CheckerType::Int(_), _) | (CheckerType::Float(_), _) => {
                                 Err(CompileError::TypeMismatch {
                                     expected: left_type.to_string(),
                                     found: right_type.to_string(),
@@ -4207,21 +4219,21 @@ impl TypeChecker {
                         // at all (it is `fmod`, a library call), so accepting
                         // Float here would emit C that gcc rejects — the class
                         // of defect D5 was closed for.
-                        if left_type != CheckerType::Int {
+                        if left_type != CheckerType::INT {
                             return Err(CompileError::TypeMismatch {
                                 expected: "Int".to_string(),
                                 found: left_type.to_string(),
                                 span: None,
                             });
                         }
-                        if right_type != CheckerType::Int {
+                        if right_type != CheckerType::INT {
                             return Err(CompileError::TypeMismatch {
                                 expected: "Int".to_string(),
                                 found: right_type.to_string(),
                                 span: None,
                             });
                         }
-                        Ok(CheckerType::Int)
+                        Ok(CheckerType::INT)
                     }
                     BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
                         // Comparison operations require same types
@@ -4233,25 +4245,25 @@ impl TypeChecker {
                             });
                         }
                         // Comparison operations return Bool
-                        Ok(CheckerType::Bool)
+                        Ok(CheckerType::BOOL)
                     }
                     BinOp::And | BinOp::Or => {
                         // Logical operations require both operands to be Bool
-                        if left_type != CheckerType::Bool {
+                        if left_type != CheckerType::BOOL {
                             return Err(CompileError::TypeMismatch {
                                 expected: "Bool".to_string(),
                                 found: left_type.to_string(),
                                 span: None,
                             });
                         }
-                        if right_type != CheckerType::Bool {
+                        if right_type != CheckerType::BOOL {
                             return Err(CompileError::TypeMismatch {
                                 expected: "Bool".to_string(),
                                 found: right_type.to_string(),
                                 span: None,
                             });
                         }
-                        Ok(CheckerType::Bool)
+                        Ok(CheckerType::BOOL)
                     }
                     // N5-12. INTEGER OPERANDS ONLY, both sides, no exceptions.
                     // C would happily accept a `double` for `&` after an
@@ -4260,7 +4272,7 @@ impl TypeChecker {
                     // these as bitwise operators, and bits are what integers
                     // have.
                     BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
-                        if left_type != CheckerType::Int {
+                        if left_type != CheckerType::INT {
                             return Err(CompileError::TypeMismatch {
                                 expected: format!(
                                     "an integer on the left of `{}`, which is a bitwise operator",
@@ -4270,7 +4282,7 @@ impl TypeChecker {
                                 span: None,
                             });
                         }
-                        if right_type != CheckerType::Int {
+                        if right_type != CheckerType::INT {
                             return Err(CompileError::TypeMismatch {
                                 expected: format!(
                                     "an integer on the right of `{}`, which is a bitwise operator",
@@ -4280,7 +4292,7 @@ impl TypeChecker {
                                 span: None,
                             });
                         }
-                        Ok(CheckerType::Int)
+                        Ok(CheckerType::INT)
                     }
                 }
             }
@@ -4339,7 +4351,7 @@ impl TypeChecker {
 
                 // Type check the index expression (must be Int)
                 let index_type = self.check_expression(index)?;
-                if index_type != CheckerType::Int {
+                if index_type != CheckerType::INT {
                     return Err(CompileError::TypeMismatch {
                         expected: "Int".to_string(),
                         found: index_type.to_string(),
@@ -4475,22 +4487,22 @@ impl TypeChecker {
                         .iter()
                         .map(|ct| {
                             match ct {
-                                CheckerType::Int => "i64".to_string(),
-                                CheckerType::Bool => "bool".to_string(),
-                                CheckerType::String => "String".to_string(),
-                                CheckerType::Struct(n) | CheckerType::Enum(n) => n.clone(),
+                                CheckerType::Int(_) => "i64".to_string(),
+                                CheckerType::Bool(_) => "bool".to_string(),
+                                CheckerType::String(_) => "String".to_string(),
+                                CheckerType::Struct(n, _) | CheckerType::Enum(n, _) => n.clone(),
                                 CheckerType::Generic { name, args } => {
                                     // Handle nested generics like Box<Box<Int>>
                                     let arg_strs: Vec<String> = args
                                         .iter()
                                         .map(|a| match a {
                                             GenericArgValue::Type(t) => match t {
-                                                CheckerType::Int => "i64".to_string(),
-                                                CheckerType::Bool => "bool".to_string(),
-                                                CheckerType::String => "String".to_string(),
-                                                CheckerType::Struct(n) => n.clone(),
+                                                CheckerType::Int(_) => "i64".to_string(),
+                                                CheckerType::Bool(_) => "bool".to_string(),
+                                                CheckerType::String(_) => "String".to_string(),
+                                                CheckerType::Struct(n, _) => n.clone(),
                                                 // An enum was "Unknown" here too.
-                                                CheckerType::Enum(n) => n.clone(),
+                                                CheckerType::Enum(n, _) => n.clone(),
                                                 _ => UNNAMED_TYPE_ARGUMENT.to_string(),
                                             },
                                             GenericArgValue::Const(c) => match c {
@@ -4549,8 +4561,11 @@ impl TypeChecker {
                             ))
                         })?;
 
+                    // The field's WRITTEN type: `struct H { a: [N; 2] }` keeps
+                    // `N` as its name, and admits what a `let` admits
+                    // (`written_admits`, review round 6)
                     let provided_type = self.check_expression(provided_expr)?;
-                    if provided_type != *field_type {
+                    if !self.written_admits(field_type, &provided_type, Some(provided_expr)) {
                         return Err(CompileError::TypeMismatch {
                             expected: field_type.to_string(),
                             found: provided_type.to_string(),
@@ -4572,7 +4587,7 @@ impl TypeChecker {
                     }
                 }
 
-                Ok(CheckerType::Struct(name.clone()))
+                Ok(CheckerType::named_struct(name.clone()))
             }
             Expr::FieldAccess { object, field, .. } => {
                 // Type check the object expression
@@ -4580,7 +4595,7 @@ impl TypeChecker {
 
                 match &object_type {
                     // Handle non-generic structs
-                    CheckerType::Struct(name) => {
+                    CheckerType::Struct(name, _) => {
                         // Look up the struct fields
                         let fields = self.structs.get(name).ok_or_else(|| {
                             CompileError::Generic(format!("Unknown struct type: {}", name))
@@ -4791,7 +4806,7 @@ impl TypeChecker {
                         });
                     } else {
                         // No type parameters inferred, return basic enum
-                        return Ok(CheckerType::Enum(enum_name.clone()));
+                        return Ok(CheckerType::named_enum(enum_name.clone()));
                     }
                 }
 
@@ -4896,7 +4911,7 @@ impl TypeChecker {
                     }
                 }
 
-                Ok(CheckerType::Enum(enum_name.clone()))
+                Ok(CheckerType::named_enum(enum_name.clone()))
             }
             Expr::Range { start, end, .. } => {
                 // Type check start and end expressions
@@ -4904,14 +4919,14 @@ impl TypeChecker {
                 let end_type = self.check_expression(end)?;
 
                 // Both must be integers
-                if start_type != CheckerType::Int {
+                if start_type != CheckerType::INT {
                     return Err(CompileError::TypeMismatch {
                         expected: "Int".to_string(),
                         found: start_type.to_string(),
                         span: None,
                     });
                 }
-                if end_type != CheckerType::Int {
+                if end_type != CheckerType::INT {
                     return Err(CompileError::TypeMismatch {
                         expected: "Int".to_string(),
                         found: end_type.to_string(),
@@ -4927,32 +4942,32 @@ impl TypeChecker {
                 match op {
                     UnaryOp::Neg => {
                         // Negation requires operand to be Int
-                        if operand_type != CheckerType::Int {
+                        if operand_type != CheckerType::INT {
                             return Err(CompileError::TypeMismatch {
                                 expected: "Int".to_string(),
                                 found: operand_type.to_string(),
                                 span: None,
                             });
                         }
-                        Ok(CheckerType::Int)
+                        Ok(CheckerType::INT)
                     }
                     UnaryOp::Not => {
                         // Logical not requires operand to be Bool
-                        if operand_type != CheckerType::Bool {
+                        if operand_type != CheckerType::BOOL {
                             return Err(CompileError::TypeMismatch {
                                 expected: "Bool".to_string(),
                                 found: operand_type.to_string(),
                                 span: None,
                             });
                         }
-                        Ok(CheckerType::Bool)
+                        Ok(CheckerType::BOOL)
                     }
                     UnaryOp::BitNot => {
                         // `~` flips bits, so it wants the thing that has them.
                         // Kept distinct from `!` on purpose: folding the two
                         // together would make `!0` and `~0` the same
                         // expression with two different answers.
-                        if operand_type != CheckerType::Int {
+                        if operand_type != CheckerType::INT {
                             return Err(CompileError::TypeMismatch {
                                 expected: "an integer operand for `~`, which flips its bits"
                                     .to_string(),
@@ -4960,7 +4975,7 @@ impl TypeChecker {
                                 span: None,
                             });
                         }
-                        Ok(CheckerType::Int)
+                        Ok(CheckerType::INT)
                     }
                 }
             }
@@ -5001,7 +5016,14 @@ impl TypeChecker {
 
                 // For now, assume dereference returns the same type
                 // TODO: Proper reference type handling - should check that expr_type is a reference
-                Ok(expr_type)
+                //
+                // Except the alias a REFERENCE was declared as: what `*r` reads
+                // is not a pointer, and a generic handed it is not instantiated
+                // at the pointer's alias (`DeclaredAs`).
+                match expr_type.declared_as() {
+                    Some(alias) if self.alias_is_reference(alias) => Ok(expr_type.undeclared()),
+                    _ => Ok(expr_type),
+                }
             }
             // D5. `?` and `.await` parse, but no backend lowers either: the C
             // emitter produced a `struct Result` layout nothing else emits, and
@@ -5040,7 +5062,7 @@ impl TypeChecker {
                 span,
             } => {
                 let cond_type = self.check_expression(condition)?;
-                if cond_type != CheckerType::Bool {
+                if cond_type != CheckerType::BOOL {
                     return Err(CompileError::TypeMismatch {
                         expected: "Bool".to_string(),
                         found: cond_type.to_string(),
@@ -5121,12 +5143,15 @@ impl TypeChecker {
                 // character the third one? Neither question has an answer this
                 // specification gives, so they are refused by name.
                 let numeric = |t: &CheckerType| {
-                    matches!(t, CheckerType::Int | CheckerType::Float | CheckerType::Bool)
+                    matches!(
+                        t,
+                        CheckerType::Int(_) | CheckerType::Float(_) | CheckerType::Bool(_)
+                    )
                 };
                 let legal = match (&from, &to) {
-                    (CheckerType::Char, CheckerType::Char) => true,
-                    (CheckerType::Char, t) | (t, CheckerType::Char) => {
-                        matches!(t, CheckerType::Int)
+                    (CheckerType::Char(_), CheckerType::Char(_)) => true,
+                    (CheckerType::Char(_), t) | (t, CheckerType::Char(_)) => {
+                        matches!(t, CheckerType::Int(_))
                     }
                     (f, t) => numeric(f) && numeric(t),
                 };
@@ -5158,7 +5183,7 @@ impl TypeChecker {
                 // given and didn't — so `55296 as char` is a compile error and
                 // `tests/reject/char_from_non_scalar.pd` pins it, while the
                 // computed case stays with the trap and `tests/n4_char_traps.rs`.
-                if matches!(to, CheckerType::Char) {
+                if matches!(to, CheckerType::Char(_)) {
                     if let Expr::Integer(n) = expr.as_ref() {
                         let scalar = *n;
                         if !(0..=0x10FFFF).contains(&scalar) || (0xD800..=0xDFFF).contains(&scalar)
@@ -5323,7 +5348,7 @@ impl TypeChecker {
             return Ok(());
         };
         let guard_type = self.check_expression(guard)?;
-        if guard_type == CheckerType::Bool {
+        if guard_type == CheckerType::BOOL {
             Ok(())
         } else {
             Err(CompileError::TypeMismatch {
@@ -5359,11 +5384,11 @@ impl TypeChecker {
         // N6-02's one completeness case. `bool` has two values and literal
         // patterns can now name both, so a `match` on one is checkable without
         // a catch-all — the only scrutinee type of which that is true.
-        if matches!(scrutinee, CheckerType::Bool) {
+        if matches!(scrutinee, CheckerType::Bool(_)) {
             return ExhaustivenessChecker::new(HashMap::new()).check_bool_match(patterns, span);
         }
 
-        let CheckerType::Enum(enum_name) = scrutinee else {
+        let CheckerType::Enum(enum_name, _) = scrutinee else {
             // N6-10. EVERY OTHER SCRUTINEE TYPE NEEDS AN IRREFUTABLE ARM. The
             // spec's sentence is "a non-exhaustive match is a compile error, not
             // a silent fall-through, and this applies to every scrutinee type,
@@ -5475,7 +5500,7 @@ impl TypeChecker {
     /// resolve.
     fn method_owner_name(ty: &CheckerType) -> Option<String> {
         match ty {
-            CheckerType::Struct(name) | CheckerType::Enum(name) => Some(name.clone()),
+            CheckerType::Struct(name, _) | CheckerType::Enum(name, _) => Some(name.clone()),
             CheckerType::Generic { name, .. } => Some(name.clone()),
             _ => None,
         }
@@ -5749,8 +5774,8 @@ impl TypeChecker {
                 // ORDER, paired with the type a scrutinee must have to be
                 // compared against it.
                 let ordered = |literal: &PatternLiteral| match literal {
-                    PatternLiteral::Int(v) => Some((*v, CheckerType::Int)),
-                    PatternLiteral::Char(c) => Some((*c as i64, CheckerType::Char)),
+                    PatternLiteral::Int(v) => Some((*v, CheckerType::INT)),
+                    PatternLiteral::Char(c) => Some((*c as i64, CheckerType::CHAR)),
                     PatternLiteral::Str(_) | PatternLiteral::Bool(_) => None,
                 };
                 for (literal, which) in [(lo, "low"), (hi, "high")] {
@@ -5798,7 +5823,7 @@ impl TypeChecker {
                 }
                 let empty = if *inclusive { low > high } else { low >= high };
                 if empty {
-                    let unit = if low_type == CheckerType::Char {
+                    let unit = if low_type == CheckerType::CHAR {
                         "code point"
                     } else {
                         "integer"
@@ -5824,11 +5849,11 @@ impl TypeChecker {
             // two things C would happily compare and Palladium must not.
             Pattern::Literal(literal) => {
                 let (literal_type, spelling) = match literal {
-                    PatternLiteral::Int(v) => (CheckerType::Int, v.to_string()),
-                    PatternLiteral::Str(v) => (CheckerType::String, format!("{:?}", v)),
-                    PatternLiteral::Bool(v) => (CheckerType::Bool, v.to_string()),
+                    PatternLiteral::Int(v) => (CheckerType::INT, v.to_string()),
+                    PatternLiteral::Str(v) => (CheckerType::STRING, format!("{:?}", v)),
+                    PatternLiteral::Bool(v) => (CheckerType::BOOL, v.to_string()),
                     PatternLiteral::Char(v) => {
-                        (CheckerType::Char, format!("'{}'", v.escape_debug()))
+                        (CheckerType::CHAR, format!("'{}'", v.escape_debug()))
                     }
                 };
                 if literal_type == *expected_type {
@@ -5860,7 +5885,7 @@ impl TypeChecker {
             } => {
                 // Check that the expected type matches the enum
                 match expected_type {
-                    CheckerType::Enum(name) if name == enum_name => {}
+                    CheckerType::Enum(name, _) if name == enum_name => {}
                     CheckerType::Generic { name, .. } if name == enum_name => {
                         // A generic enum's payload types are its type parameters,
                         // which are not resolved here; the constructor for one is
@@ -6015,7 +6040,7 @@ impl TypeChecker {
 
                     // Handle both regular and generic enums
                     match value_type {
-                        CheckerType::Enum(expected_enum) if expected_enum == enum_name => {
+                        CheckerType::Enum(expected_enum, _) if expected_enum == enum_name => {
                             // Regular enum - check if it's actually a generic enum
                             if self.generic_enums.contains_key(enum_name) {
                                 // This shouldn't happen - generic enums should have Generic type
@@ -6337,17 +6362,17 @@ impl TypeChecker {
             // Not a spellable type argument: there is no surface name for a
             // range, so a generic can never be instantiated at one.
             CheckerType::Range => "range".to_string(),
-            CheckerType::String => "String".to_string(),
-            CheckerType::Int => "i64".to_string(),
-            CheckerType::Float => "f64".to_string(),
-            CheckerType::Bool => "bool".to_string(),
-            CheckerType::Char => "char".to_string(),
+            CheckerType::String(_) => "String".to_string(),
+            CheckerType::Int(_) => "i64".to_string(),
+            CheckerType::Float(_) => "f64".to_string(),
+            CheckerType::Bool(_) => "bool".to_string(),
+            CheckerType::Char(_) => "char".to_string(),
             CheckerType::Array(elem, size) => {
                 format!("[{}; {}]", self.checker_type_to_string(elem), size)
             }
-            CheckerType::Struct(name) => name.clone(),
+            CheckerType::Struct(name, _) => name.clone(),
             CheckerType::TypeParam(name) => name.clone(),
-            CheckerType::Enum(name) => name.clone(),
+            CheckerType::Enum(name, _) => name.clone(),
             CheckerType::Function(params, ret) => {
                 let param_strs: Vec<String> = params
                     .iter()
@@ -6398,14 +6423,15 @@ impl TypeChecker {
         let mut param_types = Vec::new();
         for (_param_name, param_type) in &generic_func.params {
             let substituted_type = self.substitute_type(param_type, &subst_map)?;
-            param_types.push(self.ast_type_to_checker_type(&substituted_type));
+            param_types.push(self.declared_type(&substituted_type));
         }
 
-        // Substitute return type
+        // Substitute return type: an alias it names is the type the alias
+        // names, declared as the alias (`declared_type`)
         let return_type = match &generic_func.return_type {
             Some(ret_type) => {
                 let substituted = self.substitute_type(ret_type, &subst_map)?;
-                self.ast_type_to_checker_type(&substituted)
+                self.declared_type(&substituted)
             }
             None => CheckerType::Unit,
         };
@@ -6846,8 +6872,146 @@ impl TypeChecker {
     /// round were refused as `expected X, found (Int, Int)` (or `Int`, or the
     /// struct), for a tuple, a scalar and a struct alias alike. main typed
     /// both as the name and ran every one.
+    ///
+    /// The name is not dropped: main typed the result as the NAME, so it is
+    /// declared as the alias (`declared_type`, review round 6).
     fn kinded(&self, ty: &crate::ast::Type, type_params: &[String]) -> CheckerType {
-        self.ast_type_to_checker_type(&Self::type_params_bound(ty, type_params))
+        self.declared_type(&Self::type_params_bound(ty, type_params))
+    }
+
+    /// `ty` read where main typed a value by the NAME of the alias `ty` names
+    /// at the top — a generic function's instantiated signature
+    /// (`instantiate_generic_function`), a method's signature (`kinded`), a
+    /// generic struct's or enum's field (`substitute_type_params`): the type
+    /// the alias names, declared as that alias (`DeclaredAs`, review round 6),
+    /// so a generic it is handed to is instantiated at the name, as main
+    /// instantiated it. Anything else is `ast_type_to_checker_type`'s answer. A
+    /// tuple keeps the alias its own resolution gave (`resolved_alias`), and
+    /// gets none from a reference alias, as since review round 5.
+    fn declared_type(&self, ty: &crate::ast::Type) -> CheckerType {
+        let resolved = self.ast_type_to_checker_type(ty);
+        match ty {
+            crate::ast::Type::Custom(name)
+                if self.type_aliases.contains_key(name)
+                    && !matches!(resolved, CheckerType::Tuple(..)) =>
+            {
+                resolved.declared(name, true)
+            }
+            _ => resolved,
+        }
+    }
+
+    /// `ty` as a DECLARATION writes it — a `let` annotation, a function's
+    /// parameter or result, a struct's field: `ast_type_to_checker_type`'s
+    /// answer, declared as the alias `ty` names at the top, but not by NAME
+    /// (`DeclaredAs`): main read these as the type the alias names. A value of
+    /// it is admitted under the alias where the alias's body is erased
+    /// (`written_admits`); a generic handed it is instantiated as before.
+    fn written_type(&self, ty: &crate::ast::Type) -> CheckerType {
+        let resolved = self.ast_type_to_checker_type(ty);
+        match ty {
+            crate::ast::Type::Custom(name)
+                if self.type_aliases.contains_key(name)
+                    && !matches!(resolved, CheckerType::Tuple(..)) =>
+            {
+                resolved.declared(name, false)
+            }
+            _ => resolved,
+        }
+    }
+
+    /// The alias `name` with every alias in it expanded, at every depth — the
+    /// type it names as the SOURCE spells it, widths and references included
+    /// (`crate::ast::expand_aliases_in_type`, which stops a cyclic alias).
+    fn alias_expansion(&self, name: &str) -> Option<crate::ast::Type> {
+        let body = self.type_aliases.get(name)?;
+        let mut ty = body.clone();
+        crate::ast::expand_aliases_in_type(&mut ty, &self.type_aliases, &[]);
+        Some(ty)
+    }
+
+    /// Do the aliases `a` and `b` name one type as the source spells it?
+    fn same_alias_type(&self, a: &str, b: &str) -> bool {
+        if a == b {
+            return true;
+        }
+        match (self.alias_expansion(a), self.alias_expansion(b)) {
+            (Some(x), Some(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    /// Does this checker's spelling of the alias `name` lose what the source
+    /// says — an integer (one `Int` for every width), a float (one `Float`
+    /// for both), or a reference (read as its referent), at any depth? Then
+    /// the type it names in this checker's spelling is not the type a value
+    /// of it has in C, and a value is the alias's only if it was DECLARED as
+    /// it (`DeclaredAs`). A struct or an enum is its name; a `bool`, a `char`,
+    /// a `String` and `()` are what they say.
+    fn alias_is_erased(&self, name: &str) -> bool {
+        fn erased(ty: &crate::ast::Type, aliases: &HashMap<String, crate::ast::Type>) -> bool {
+            use crate::ast::Type as T;
+            match ty {
+                T::I32 | T::I64 | T::U32 | T::U64 | T::F32 | T::F64 | T::Reference { .. } => true,
+                T::Array(elem, _) => erased(elem, aliases),
+                T::Tuple(types) => types.iter().any(|t| erased(t, aliases)),
+                T::Future { output } => erased(output, aliases),
+                T::Generic { args, .. } => args
+                    .iter()
+                    .any(|arg| matches!(arg, GenericArg::Type(t) if erased(t, aliases))),
+                // An alias the expansion stopped at (a cycle) says nothing.
+                T::Custom(name) => aliases.contains_key(name),
+                _ => false,
+            }
+        }
+        self.alias_expansion(name)
+            .is_none_or(|ty| erased(&ty, &self.type_aliases))
+    }
+
+    /// Is the alias `name` a reference — a value declared as it a pointer in C?
+    fn alias_is_reference(&self, name: &str) -> bool {
+        matches!(
+            self.alias_expansion(name),
+            Some(crate::ast::Type::Reference { .. })
+        )
+    }
+
+    /// Is `found` the NAME of an alias (`Struct(alias)`, as a written type
+    /// keeps an alias nested in a composite or behind `&`) whose type is
+    /// `expected` — admitted where main admitted it? main compared a name
+    /// with a name, so the name meets a type DECLARED as the same alias
+    /// (`DeclaredAs`: a generic's or a method's signature). Any other type the
+    /// alias names admits the name only if this checker's spelling of the
+    /// alias loses nothing (`alias_is_erased`): under `type X = i32` the name
+    /// `X` is an `int` and an erased `Int` may be a `long long` (review round
+    /// 6: `[X; 2]` handed to `xs: [i64; 2]` was an ill-typed C call).
+    fn names(&self, found: &CheckerType, expected: &CheckerType) -> bool {
+        let CheckerType::Struct(alias, _) = found else {
+            return false;
+        };
+        self.type_aliases.contains_key(alias)
+            && self.through_alias_name(found) == *expected
+            && (!self.alias_is_erased(alias) || self.named_as(alias, expected))
+    }
+
+    /// Was `ty` declared as the alias `alias` (or one of the same type) where
+    /// main's own type was the NAME — so that main compared a name with it?
+    fn named_as(&self, alias: &str, ty: &CheckerType) -> bool {
+        ty.declared_by_name() && self.declared_as_named(alias, ty)
+    }
+
+    /// Is `func_name` a method (`Owner::name`, as `method_call_as_path_call`
+    /// spells it) — a signature main read by an alias's NAME (`kinded`)?
+    fn is_method(&self, func_name: &str) -> bool {
+        func_name.split_once("::").is_some_and(|(owner, _)| {
+            self.structs.contains_key(owner) || self.enum_names.contains(owner)
+        })
+    }
+
+    /// Was `ty` declared as the alias `alias`, or as one of the same type?
+    fn declared_as_named(&self, alias: &str, ty: &CheckerType) -> bool {
+        ty.declared_as()
+            .is_some_and(|declared| self.same_alias_type(alias, declared))
     }
 
     /// `ty` with every `Custom(name)` that names one of `type_params` turned
@@ -7037,7 +7201,7 @@ impl TypeChecker {
     /// alias names.
     fn through_alias_name(&self, ty: &CheckerType) -> CheckerType {
         match ty {
-            CheckerType::Struct(name) if self.type_aliases.contains_key(name) => {
+            CheckerType::Struct(name, _) if self.type_aliases.contains_key(name) => {
                 self.ast_type_to_checker_type(&crate::ast::Type::Custom(name.clone()))
             }
             _ => ty.clone(),
@@ -7063,8 +7227,14 @@ impl TypeChecker {
     /// results `[s.pair(), s.pair()]` handed to it is `[B; 2]` — the same name
     /// one level down, refused until it was compared there too (a program main
     /// ran).
+    ///
+    /// Since review round 6 a method's signature is the type the alias names,
+    /// declared as the alias (`kinded`); a NAME still comes from a written
+    /// type (`arr[0]` over `let arr: [B; 2]`), and it names the type only where
+    /// main would have admitted it (`names`): an alias this checker erases
+    /// (`type X = i32`) names only a type declared as it.
     fn is_or_names(&self, found: &CheckerType, expected: &CheckerType) -> bool {
-        if found == expected || self.through_alias_name(found) == *expected {
+        if found == expected || self.names(found, expected) {
             return true;
         }
         match (found, expected) {
@@ -7105,9 +7275,22 @@ impl TypeChecker {
     ///   M3's to lift (tests/xfail/alias_nested_in_tuple_annotation.pd,
     ///   tests/xfail/alias_as_array_element.pd stay refused).
     ///
+    /// AN ALIAS THIS CHECKER ERASES ADMITS ONLY A VALUE DECLARED AS IT (review
+    /// round 6). The comparison above is in this checker's spelling, which has
+    /// one `Int` for every width, one `Float` for both, and a reference read as
+    /// its referent (`alias_is_erased`). So under `type X = i32`, `let p: &X =
+    /// &m` admitted an `i64` `m` (`int *` from `long long *`: an internal
+    /// compiler error), `[X; 2]` admitted `i64`s (a silent narrowing that ran),
+    /// and `type X = i64` admitted an `i32` — each refused on main by name.
+    /// Under such an alias a non-tuple value is the alias's only if it was
+    /// declared as an alias of the same type (`DeclaredAs`: a generic's or a
+    /// method's result, as main typed it by the name); a tuple, only if it was
+    /// declared as the alias itself, as before.
+    ///
     /// `value` is the expression at this depth when its shape is known (an
     /// array or tuple literal is followed element by element); `None` admits
-    /// by type alone.
+    /// by type alone. A written type DECLARED as an alias (a method's parameter)
+    /// admits that alias's name (`names`), as main's name admitted main's name.
     fn written_admits(
         &self,
         written: &CheckerType,
@@ -7118,17 +7301,32 @@ impl TypeChecker {
             Expr::Reference { expr, .. } => expr.as_ref(),
             v => v,
         });
+        // (Not a tuple's: a tuple is declared as its alias wherever the alias
+        // is written, `resolved_alias`, and main admitted the name only where
+        // its own type was the name.)
+        if let CheckerType::Struct(alias, _) = found {
+            if self.type_aliases.contains_key(alias)
+                && !matches!(written, CheckerType::Tuple(..))
+                && self.named_as(alias, written)
+                && self.through_alias_name(found) == *written
+            {
+                return true;
+            }
+        }
         match (written, found) {
-            (CheckerType::Struct(name), _) if self.type_aliases.contains_key(name) => {
+            (CheckerType::Struct(name, _), _) if self.type_aliases.contains_key(name) => {
                 let named = self.through_alias_name(written);
                 match (found, &named) {
                     // `type B2 = B;` names the tuple `B` declares: a value of
                     // either is declared as `B` (`resolved_alias`).
                     (
-                        CheckerType::Tuple(_, DeclaredAs(Some(declared))),
-                        CheckerType::Tuple(_, DeclaredAs(Some(alias))),
+                        CheckerType::Tuple(_, DeclaredAs(Some(declared), _)),
+                        CheckerType::Tuple(_, DeclaredAs(Some(alias), _)),
                     ) => declared == alias,
                     (CheckerType::Tuple(..), _) => false,
+                    _ if self.alias_is_erased(name) => {
+                        written == found || (named == *found && self.declared_as_named(name, found))
+                    }
                     _ => {
                         written == found
                             || (named == *found && !value.is_some_and(Self::is_literal_value))
@@ -7204,25 +7402,70 @@ impl TypeChecker {
         }
         match self.ast_type_to_checker_type(aliased_type) {
             CheckerType::Tuple(elements, _) => {
-                CheckerType::Tuple(elements, DeclaredAs(Some(name.to_string())))
+                CheckerType::Tuple(elements, DeclaredAs(Some(name.to_string()), true))
             }
             resolved => resolved,
         }
     }
 
     /// The type argument `expr` gives a type parameter it is passed for: a
-    /// tuple is carried by the alias its declaration named it by
-    /// (`DeclaredAs`), and only by that one; anything else is spelled as
-    /// `infer_expr_type` spells it.
+    /// value is carried by the alias its declaration named it by
+    /// (`DeclaredAs`) — a tuple, and since review round 6 any value main typed
+    /// by the alias's name — and only by that one; anything else is spelled
+    /// as `infer_expr_type` spells it.
     fn type_argument_of(&self, expr: &Expr) -> Result<String> {
         if let Expr::Ident(name) = expr {
-            if let Some(CheckerType::Tuple(_, DeclaredAs(Some(alias)))) =
-                self.symbols.lookup(name).map(|v| &v.ty)
-            {
-                return Ok(alias.clone());
+            if let Some(ty) = self.symbols.lookup(name).map(|v| &v.ty) {
+                if let Some(alias) = ty.declared_as() {
+                    let tuple = matches!(ty, CheckerType::Tuple(..));
+                    if tuple || (ty.declared_by_name() && self.spelled_lossily(alias)) {
+                        return Ok(alias.to_string());
+                    }
+                }
             }
         }
         self.infer_expr_type(expr)
+    }
+
+    /// Does this checker spell a value of the alias `name` as a type argument
+    /// that is not the type the alias names — an integer narrower or unsigned
+    /// (`Int` is spelled `i64`), a float or a `char` (spelled `f64` / `char`,
+    /// which no type argument reads back), or a reference (spelled as its
+    /// referent)? Only such a value is carried to a generic by the alias's
+    /// name. An alias of `i64`, `bool`, `String`, a struct or an enum is
+    /// spelled as the type it names, which is the C type main's name gave, and
+    /// an array has no type-argument spelling at all.
+    fn spelled_lossily(&self, name: &str) -> bool {
+        use crate::ast::Type as T;
+        matches!(
+            self.alias_expansion(name),
+            Some(T::I32 | T::U32 | T::U64 | T::F32 | T::F64 | T::Char | T::Reference { .. })
+        )
+    }
+
+    /// The type of a binding annotated `annotation` (`expected`, as resolved)
+    /// and initialised with a value of type `value`: the annotation's —
+    /// declared as the alias the annotation names when the value was declared
+    /// as an alias of the same type. `let z: N = r` over `let r = f(1)` (`f`
+    /// returning `N`) is a `N` that a generic is instantiated at, as `r` is;
+    /// `let r: N = 7` is not, as on main, where it was the type `N` names.
+    fn annotated(
+        &self,
+        annotation: &crate::ast::Type,
+        expected: CheckerType,
+        value: &CheckerType,
+    ) -> CheckerType {
+        match (annotation, value.declared_as()) {
+            (crate::ast::Type::Custom(name), Some(declared))
+                if self.type_aliases.contains_key(name)
+                    && self.same_alias_type(name, declared)
+                    && value.declared_by_name()
+                    && !matches!(expected, CheckerType::Tuple(..)) =>
+            {
+                expected.undeclared().declared(name, true)
+            }
+            _ => expected,
+        }
     }
 }
 
@@ -7253,8 +7496,44 @@ impl TypeChecker {
 /// (`CheckerType::agreeing`). Where a WRITTEN type keeps the alias as its
 /// name (`[B; 2]`, `&B`), that name admits a tuple declared as it
 /// (`TypeChecker::written_admits`), as main's name admitted main's name.
+///
+/// AND EVERY OTHER ALIAS, WHERE main TYPED THE VALUE BY ITS NAME (review round
+/// 6). main gave a generic's result, and a method's, the alias's NAME as its
+/// type, and a generic handed that value was instantiated at the name — so
+/// under `type N = u32`, `g(f(1))`-shaped forwards ran `g__N(unsigned int)`.
+/// Since review round 1 the value is the type `N` names, and this checker has
+/// ONE `Int` for every width, one `Float` for both, reads a reference as its
+/// referent, and spells `char` and `f64` as no type argument it can read back:
+/// `~7` forwarded printed `-8` where main printed `4294967288`, a `u64` lost
+/// its sign, and an `f64`, `char` or `&T` alias that main ran was refused or
+/// sent to gcc. Such a value now carries the alias as well — `String`, `Int`,
+/// `Float`, `Bool`, `Char`, a struct and an enum hold a `DeclaredAs` too — and
+/// it is attached exactly where main's type was the name: a generic
+/// function's instantiated signature, a method's signature, a generic
+/// struct's or enum's field (`TypeChecker::declared_type`). NOT at a `let`
+/// annotation, a function's parameter or return, or a struct's field: main
+/// read those as the type the alias names and instantiated a generic at that
+/// type (`let r: N = 7; g(r)` printed `-8` on main, as `let r: u32 = 7` does),
+/// and the value a program prints is main's wherever main ran it. A binding
+/// annotated with the alias its value was declared as keeps it
+/// (`TypeChecker::annotated`). The name is what a generic is instantiated at
+/// only where this checker's own spelling would say less than the alias
+/// (`TypeChecker::spelled_lossily`); an alias of `i64`, `bool`, `String`, a
+/// struct or an enum is spelled as what it names, the C type main's name
+/// gave. And under an alias nested in a written type, a value of a type the
+/// checker erases is admitted only if declared as it
+/// (`TypeChecker::written_admits`).
+///
+/// TWO THINGS, KEPT APART. The alias (`.0`) is attached wherever a declaration
+/// writes an alias at the top (`TypeChecker::written_type`: a `let`
+/// annotation, a function's parameter and result, a struct's field) as well as
+/// at the signatures main typed by the NAME (`declared_type`), and it is what
+/// a written alias admits under an erased body. `.1` says main's own type was
+/// the name: only then is a generic instantiated at the alias, so that a
+/// value main printed through `i64` (`let r: N = 7; g(r)`) still prints what
+/// main printed.
 #[derive(Debug, Clone)]
-pub struct DeclaredAs(pub Option<String>);
+pub struct DeclaredAs(pub Option<String>, pub bool);
 
 impl PartialEq for DeclaredAs {
     fn eq(&self, _: &Self) -> bool {
@@ -7263,30 +7542,108 @@ impl PartialEq for DeclaredAs {
 }
 
 impl CheckerType {
+    pub const STRING: CheckerType = CheckerType::String(DeclaredAs(None, false));
+    pub const INT: CheckerType = CheckerType::Int(DeclaredAs(None, false));
+    pub const FLOAT: CheckerType = CheckerType::Float(DeclaredAs(None, false));
+    pub const BOOL: CheckerType = CheckerType::Bool(DeclaredAs(None, false));
+    pub const CHAR: CheckerType = CheckerType::Char(DeclaredAs(None, false));
+
     /// A tuple no alias declaration names: a tuple literal, or a tuple type
     /// written out element by element.
     fn tuple(elements: Vec<CheckerType>) -> CheckerType {
-        CheckerType::Tuple(elements, DeclaredAs(None))
+        CheckerType::Tuple(elements, DeclaredAs(None, false))
+    }
+
+    /// The struct `name`, declared as no alias.
+    fn named_struct(name: String) -> CheckerType {
+        CheckerType::Struct(name, DeclaredAs(None, false))
+    }
+
+    /// The enum `name`, declared as no alias.
+    fn named_enum(name: String) -> CheckerType {
+        CheckerType::Enum(name, DeclaredAs(None, false))
+    }
+
+    /// Where this type keeps the alias a value of it was declared as.
+    fn declared_as_slot(&mut self) -> Option<&mut DeclaredAs> {
+        match self {
+            CheckerType::String(d)
+            | CheckerType::Int(d)
+            | CheckerType::Float(d)
+            | CheckerType::Bool(d)
+            | CheckerType::Char(d)
+            | CheckerType::Struct(_, d)
+            | CheckerType::Enum(_, d)
+            | CheckerType::Tuple(_, d) => Some(d),
+            _ => None,
+        }
+    }
+
+    /// The alias a value of this type was declared as, if any (`DeclaredAs`).
+    fn declared_as(&self) -> Option<&str> {
+        self.declaration().and_then(|d| d.0.as_deref())
+    }
+
+    /// Was it declared as that alias where main's type was the alias's NAME?
+    fn declared_by_name(&self) -> bool {
+        self.declaration().is_some_and(|d| d.0.is_some() && d.1)
+    }
+
+    fn declaration(&self) -> Option<&DeclaredAs> {
+        match self {
+            CheckerType::String(d)
+            | CheckerType::Int(d)
+            | CheckerType::Float(d)
+            | CheckerType::Bool(d)
+            | CheckerType::Char(d)
+            | CheckerType::Struct(_, d)
+            | CheckerType::Enum(_, d)
+            | CheckerType::Tuple(_, d) => Some(d),
+            _ => None,
+        }
+    }
+
+    /// This type, declared as `alias` (`by_name`: where main typed it by the
+    /// name) — unless it already says which alias (a tuple keeps the one its
+    /// own resolution gave, `resolved_alias`), or has no slot for one (an
+    /// array, a function, `()`).
+    fn declared(mut self, alias: &str, by_name: bool) -> CheckerType {
+        if let Some(slot) = self.declared_as_slot() {
+            if slot.0.is_none() {
+                *slot = DeclaredAs(Some(alias.to_string()), by_name);
+            }
+        }
+        self
+    }
+
+    /// This type, declared as no alias at the top.
+    fn undeclared(mut self) -> CheckerType {
+        if let Some(slot) = self.declared_as_slot() {
+            *slot = DeclaredAs(None, false);
+        }
+        self
     }
 
     /// `self`, as the type it and `other` — which compares equal to it —
-    /// have together: a tuple keeps the alias name it was declared as only
-    /// where `other` was declared as the same alias, at every depth.
+    /// have together: a value keeps the alias name it was declared as only
+    /// where `other` was declared as the same alias, at every depth, and as
+    /// main's name only where both were.
     fn agreeing(self, other: &CheckerType) -> CheckerType {
-        match (self, other) {
-            (CheckerType::Tuple(mine, name), CheckerType::Tuple(theirs, other_name)) => {
+        let agreed = self.declared_as().is_some() && self.declared_as() == other.declared_as();
+        let by_name = self.declared_by_name() && other.declared_by_name();
+        let ty = match (self, other) {
+            (CheckerType::Tuple(mine, name), CheckerType::Tuple(theirs, _)) => {
                 let elements = mine.into_iter().zip(theirs).map(|(m, t)| m.agreeing(t));
-                let name = if name.0 == other_name.0 {
-                    name
-                } else {
-                    DeclaredAs(None)
-                };
                 CheckerType::Tuple(elements.collect(), name)
             }
             (CheckerType::Array(mine, size), CheckerType::Array(theirs, _)) => {
                 CheckerType::Array(Box::new(mine.agreeing(theirs)), size)
             }
             (ty, _) => ty,
+        };
+        match (agreed, ty.declared_as().map(str::to_string)) {
+            (true, Some(alias)) => ty.undeclared().declared(&alias, by_name),
+            _ => ty.undeclared(),
         }
     }
 }
@@ -8374,7 +8731,7 @@ mod tests {
         let mut tc = TypeChecker::new();
         tc.enum_names.insert("K".to_string());
         let k = || Type::Custom("K".to_string());
-        let ek = || CheckerType::Enum("K".to_string());
+        let ek = || CheckerType::named_enum("K".to_string());
         let arr = |t: Type, n: usize| Type::Array(Box::new(t), ArraySize::Literal(n));
         let carr =
             |t: CheckerType, n: usize| CheckerType::Array(Box::new(t), ArraySizeValue::Literal(n));
@@ -8390,7 +8747,7 @@ mod tests {
             (
                 "(K, i64)",
                 Type::Tuple(vec![k(), Type::I64]),
-                CheckerType::tuple(vec![ek(), CheckerType::Int]),
+                CheckerType::tuple(vec![ek(), CheckerType::INT]),
             ),
             ("&K", reference(k(), false), ek()),
             ("&mut K", reference(k(), true), ek()),

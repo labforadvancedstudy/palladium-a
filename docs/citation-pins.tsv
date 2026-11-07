@@ -397,26 +397,26 @@ src/typeck/mod.rs	3172-3175	src/typeck/mod.rs	0cfaaf978eca	if func.is_async && S
 src/typeck/mod.rs	3199-3199	docs/specification/language-spec.md	de12aa7cdb7f	// the construct cannot be honoured wherever it sits, while an imported
 src/typeck/mod.rs	4041-4041	docs/specification/language-spec.md	517c4f4b07b2	if let Expr::FieldAccess { object, field, .. } = func.as_ref() {
 src/typeck/mod.rs	4060-4068	src/builtins.rs	8af373d3bc2a	if let Some(builtin) = crate::builtins::lookup(func_name) { if let Some(reaso ... tin { name: func_name.clone(), reason: reason.to_string(), span: None, }); } }
-src/typeck/mod.rs	4487-4487	docs/contributing/citation-and-predicate-debt.md	e92658c899d3	GenericArgValue::Type(t) => match t {
-src/typeck/mod.rs	4487-4487	docs/specification/bootstrap-subset.md	e92658c899d3	GenericArgValue::Type(t) => match t {
-src/typeck/mod.rs	4798-4802	tests/m3_imported_calls.rs	3ad1ebfc685e	if !self.enums.contains_key(enum_name) { return Err(CompileError::Generic(format!( "Undefined enum type: {}", enum_name )));
-src/typeck/mod.rs	4968-4968	src/codegen/mod.rs	4cba7df8d4d6	mutable: _, expr, ..
-src/typeck/mod.rs	5025-5025	docs/reference/features/async-system/async-as-effect.md	4dc00a8ac34c	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)
-src/typeck/mod.rs	5025-5025	docs/reference/features/feature-index.toml	4dc00a8ac34c	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)
-src/typeck/mod.rs	5025-5025	docs/specification/bootstrap-subset.md	4dc00a8ac34c	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)
-src/typeck/mod.rs	5025-5025	docs/specification/language-spec.md	4dc00a8ac34c	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)
-src/typeck/mod.rs	5029-5031	src/codegen/llvm_text_backend.rs	2a8d2b321e39	Err(CompileError::Generic( "Unexpected macro invocation in type checking - macros should be expanded before this phase".to_string() ))
-src/typeck/mod.rs	5033-5033	docs/reference/features/async-system/async-as-effect.md	ee15f80a768a	Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
-src/typeck/mod.rs	5033-5033	docs/specification/bootstrap-subset.md	ee15f80a768a	Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
-src/typeck/mod.rs	5033-5033	docs/specification/language-spec.md	ee15f80a768a	Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
-src/typeck/mod.rs	5378-5378	docs/reference/features/feature-index.toml	b4cfe845d961	if patterns.iter().any(ExhaustivenessChecker::is_irrefutable) {
-src/typeck/mod.rs	5378-5378	docs/specification/language-spec.md	b4cfe845d961	if patterns.iter().any(ExhaustivenessChecker::is_irrefutable) {
-src/typeck/mod.rs	6296-6300	docs/specification/language-spec.md	628e7c502a43	if elements.is_empty() { return Err(CompileError::Generic( "Cannot infer type from empty array".to_string(), )); }
-src/typeck/mod.rs	6298-6298	docs/reference/features/feature-index.toml	917b6d488770	"Cannot infer type from empty array".to_string(),
-src/typeck/mod.rs	6549-6549	tests/m3_imported_calls.rs	284927a601b1	let mut keys: Vec<&FunctionInstantiation> = self.instantiations.keys().collect();
-src/typeck/mod.rs	6549-6550	docs/contributing/MILESTONES.md	8803e64de7ca	let mut keys: Vec<&FunctionInstantiation> = self.instantiations.keys().collect(); keys.sort_by(|a, b| (&a.name, &a.type_args).cmp(&(&b.name, &b.type_args)));
-src/typeck/mod.rs	6611-6611	tests/m3_imported_calls.rs	11f0f244039f	let mut keys: Vec<&StructInstantiation> = self.struct_instantiations.keys().collect();
-src/typeck/mod.rs	6611-6612	docs/contributing/MILESTONES.md	f6fd74b6bf82	let mut keys: Vec<&StructInstantiation> = self.struct_instantiations.keys().c ... ); keys.sort_by(|a, b| (&a.name, &a.type_args).cmp(&(&b.name, &b.type_args)));
+src/typeck/mod.rs	4499-4499	docs/contributing/citation-and-predicate-debt.md	e92658c899d3	GenericArgValue::Type(t) => match t {
+src/typeck/mod.rs	4499-4499	docs/specification/bootstrap-subset.md	e92658c899d3	GenericArgValue::Type(t) => match t {
+src/typeck/mod.rs	4813-4817	tests/m3_imported_calls.rs	3ad1ebfc685e	if !self.enums.contains_key(enum_name) { return Err(CompileError::Generic(format!( "Undefined enum type: {}", enum_name )));
+src/typeck/mod.rs	4983-4983	src/codegen/mod.rs	4cba7df8d4d6	mutable: _, expr, ..
+src/typeck/mod.rs	5047-5047	docs/reference/features/async-system/async-as-effect.md	4dc00a8ac34c	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)
+src/typeck/mod.rs	5047-5047	docs/reference/features/feature-index.toml	4dc00a8ac34c	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)
+src/typeck/mod.rs	5047-5047	docs/specification/bootstrap-subset.md	4dc00a8ac34c	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)
+src/typeck/mod.rs	5047-5047	docs/specification/language-spec.md	4dc00a8ac34c	Expr::Question { expr: _, span } => Err(CompileError::question_unimplemented(*span)
+src/typeck/mod.rs	5051-5053	src/codegen/llvm_text_backend.rs	2a8d2b321e39	Err(CompileError::Generic( "Unexpected macro invocation in type checking - macros should be expanded before this phase".to_string() ))
+src/typeck/mod.rs	5055-5055	docs/reference/features/async-system/async-as-effect.md	ee15f80a768a	Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
+src/typeck/mod.rs	5055-5055	docs/specification/bootstrap-subset.md	ee15f80a768a	Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
+src/typeck/mod.rs	5055-5055	docs/specification/language-spec.md	ee15f80a768a	Expr::Await { expr: _, span } => Err(CompileError::await_unimplemented(*span)),
+src/typeck/mod.rs	5403-5403	docs/reference/features/feature-index.toml	b4cfe845d961	if patterns.iter().any(ExhaustivenessChecker::is_irrefutable) {
+src/typeck/mod.rs	5403-5403	docs/specification/language-spec.md	b4cfe845d961	if patterns.iter().any(ExhaustivenessChecker::is_irrefutable) {
+src/typeck/mod.rs	6321-6325	docs/specification/language-spec.md	628e7c502a43	if elements.is_empty() { return Err(CompileError::Generic( "Cannot infer type from empty array".to_string(), )); }
+src/typeck/mod.rs	6323-6323	docs/reference/features/feature-index.toml	917b6d488770	"Cannot infer type from empty array".to_string(),
+src/typeck/mod.rs	6575-6575	tests/m3_imported_calls.rs	284927a601b1	let mut keys: Vec<&FunctionInstantiation> = self.instantiations.keys().collect();
+src/typeck/mod.rs	6575-6576	docs/contributing/MILESTONES.md	8803e64de7ca	let mut keys: Vec<&FunctionInstantiation> = self.instantiations.keys().collect(); keys.sort_by(|a, b| (&a.name, &a.type_args).cmp(&(&b.name, &b.type_args)));
+src/typeck/mod.rs	6637-6637	tests/m3_imported_calls.rs	11f0f244039f	let mut keys: Vec<&StructInstantiation> = self.struct_instantiations.keys().collect();
+src/typeck/mod.rs	6637-6638	docs/contributing/MILESTONES.md	f6fd74b6bf82	let mut keys: Vec<&StructInstantiation> = self.struct_instantiations.keys().c ... ); keys.sort_by(|a, b| (&a.name, &a.type_args).cmp(&(&b.name, &b.type_args)));
 src/typeck/mod.rs	744-748	docs/contributing/MILESTONES.md	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
 src/typeck/mod.rs	744-748	docs/reference/features/core-language/implicit-lifetimes.md	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
 src/typeck/mod.rs	744-748	docs/reference/features/feature-index.toml	d9166315602a	crate::ast::Type::Reference { inner, .. } => { // For now, treat references a ... pe // TODO: Proper reference type handling CheckerType::from(inner.as_ref()) }
