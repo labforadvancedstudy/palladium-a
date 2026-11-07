@@ -641,7 +641,7 @@ pub enum CheckerType {
         name: String,
         args: Vec<GenericArgValue>,
     },
-    Tuple(Vec<CheckerType>),
+    Tuple(Vec<CheckerType>, DeclaredAs),
     /// `a..b` and `a..=b` (N5-14).
     ///
     /// A TYPE OF ITS OWN, replacing the `Array(Int, 0)` this used to answer.
@@ -754,7 +754,7 @@ impl From<&crate::ast::Type> for CheckerType {
                 }
             }
             crate::ast::Type::Tuple(types) => {
-                CheckerType::Tuple(types.iter().map(CheckerType::from).collect())
+                CheckerType::tuple(types.iter().map(CheckerType::from).collect())
             }
         }
     }
@@ -772,7 +772,7 @@ impl std::fmt::Display for CheckerType {
             CheckerType::Char => write!(f, "Char"),
             CheckerType::Array(elem_type, size) => match size {
                 ArraySizeValue::Literal(n) => write!(f, "[{}; {}]", elem_type, n),
-                ArraySizeValue::ConstParam(name) => write!(f, "[{}; {}]", elem_type, name),
+                ArraySizeValue::ConstParam(name) => write!(f, "[{}; {}]", elem_type, spelled(name)),
             },
             CheckerType::Function(params, ret) => {
                 write!(f, "fn(")?;
@@ -784,11 +784,11 @@ impl std::fmt::Display for CheckerType {
                 }
                 write!(f, ") -> {}", ret)
             }
-            CheckerType::Struct(name) => write!(f, "{}", name),
-            CheckerType::TypeParam(name) => write!(f, "{}", name),
-            CheckerType::Enum(name) => write!(f, "{}", name),
+            CheckerType::Struct(name) => write!(f, "{}", spelled(name)),
+            CheckerType::TypeParam(name) => write!(f, "{}", spelled(name)),
+            CheckerType::Enum(name) => write!(f, "{}", spelled(name)),
             CheckerType::Generic { name, args } => {
-                write!(f, "{}<", name)?;
+                write!(f, "{}<", spelled(name))?;
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
@@ -797,13 +797,13 @@ impl std::fmt::Display for CheckerType {
                         GenericArgValue::Type(t) => write!(f, "{}", t)?,
                         GenericArgValue::Const(c) => match c {
                             ConstValueResolved::Integer(n) => write!(f, "{}", n)?,
-                            ConstValueResolved::ConstParam(name) => write!(f, "const {}", name)?,
+                            ConstValueResolved::ConstParam(n) => write!(f, "const {}", spelled(n))?,
                         },
                     }
                 }
                 write!(f, ">")
             }
-            CheckerType::Tuple(types) => {
+            CheckerType::Tuple(types, _) => {
                 write!(f, "(")?;
                 for (i, ty) in types.iter().enumerate() {
                     if i > 0 {
@@ -1433,12 +1433,12 @@ impl TypeChecker {
                 Box::new(Self::as_enums_where_known(enum_names, *elem)),
                 size,
             ),
-            CheckerType::Tuple(types) => CheckerType::Tuple(
-                types
-                    .into_iter()
-                    .map(|t| Self::as_enums_where_known(enum_names, t))
-                    .collect(),
-            ),
+            // Only the elements' kinds are decided here; the alias the tuple
+            // was declared as (`DeclaredAs`) stays with it.
+            CheckerType::Tuple(types, name) => {
+                let kinded = |t| Self::as_enums_where_known(enum_names, t);
+                CheckerType::Tuple(types.into_iter().map(kinded).collect(), name)
+            }
             CheckerType::Function(params, ret) => CheckerType::Function(
                 params
                     .into_iter()
@@ -3024,8 +3024,8 @@ impl TypeChecker {
 
                 // First check if it's a type alias
                 if let Some(aliased_type) = self.type_aliases.get(name) {
-                    // Recursively resolve the aliased type
-                    return self.ast_type_to_checker_type(aliased_type);
+                    // Recursively resolve the aliased type (a tuple: `DeclaredAs`)
+                    return self.resolved_alias(name, aliased_type);
                 }
 
                 // Enum or struct: ONE predicate, the one every depth uses.
@@ -3349,7 +3349,7 @@ impl TypeChecker {
                 // one. Same reason `consume_coded` takes the code per call site.
                 if let Some(annotated_type) = ty {
                     let expected_type = self.ast_type_to_checker_type(annotated_type);
-                    if value_type != expected_type {
+                    if !self.written_admits(&expected_type, &value_type, Some(value)) {
                         return Err(self
                             .error_helper
                             .type_mismatch(
@@ -3834,13 +3834,13 @@ impl TypeChecker {
                     } else {
                         Err(CompileError::Generic(format!(
                             "Type parameter {} not found in substitution",
-                            name
+                            spelled(name)
                         )))
                     }
                 } else {
                     Err(CompileError::Generic(format!(
                         "Unknown type parameter: {}",
-                        name
+                        spelled(name)
                     )))
                 }
             }
@@ -3852,7 +3852,7 @@ impl TypeChecker {
                     } else {
                         Err(CompileError::Generic(format!(
                             "Type parameter {} not found in substitution",
-                            name
+                            spelled(name)
                         )))
                     }
                 } else {
@@ -3936,7 +3936,7 @@ impl TypeChecker {
                 for element in elements {
                     element_types.push(self.check_expression(element)?);
                 }
-                Ok(CheckerType::Tuple(element_types))
+                Ok(CheckerType::tuple(element_types))
             }
             // N4-12. `.0` is SYNTAX: the index is read at compile time, and the
             // type it produces is the one that element has. An out-of-range
@@ -3944,7 +3944,7 @@ impl TypeChecker {
             // without the arity is a message the reader has to go and check.
             Expr::TupleIndex { expr, index, span } => {
                 let base = self.check_expression(expr)?;
-                let CheckerType::Tuple(element_types) = base else {
+                let CheckerType::Tuple(element_types, _) = base else {
                     return Err(CompileError::TypeMismatch {
                         expected: "a tuple, which is what `.0` reads an element of".to_string(),
                         found: base.to_string(),
@@ -4118,7 +4118,7 @@ impl TypeChecker {
                         // Check argument types
                         for (arg, expected_type) in args.iter().zip(param_types.iter()) {
                             let arg_type = self.check_expression(arg)?;
-                            if arg_type != *expected_type {
+                            if !self.written_admits(expected_type, &arg_type, Some(arg)) {
                                 return Err(CompileError::TypeMismatch {
                                     expected: expected_type.to_string(),
                                     found: arg_type.to_string(),
@@ -4292,8 +4292,7 @@ impl TypeChecker {
                 }
 
                 // Type check first element
-                let elem_type = self.check_expression(&elements[0])?;
-
+                let mut elem_type = self.check_expression(&elements[0])?;
                 // Check that all elements have the same type
                 for elem in &elements[1..] {
                     let elem_expr_type = self.check_expression(elem)?;
@@ -4304,6 +4303,7 @@ impl TypeChecker {
                             span: None,
                         });
                     }
+                    elem_type = elem_type.agreeing(&elem_expr_type);
                 }
 
                 Ok(CheckerType::Array(
@@ -4398,7 +4398,7 @@ impl TypeChecker {
                                     if *existing_type != provided_type {
                                         return Err(CompileError::Generic(format!(
                                             "Conflicting type constraints for type parameter '{}': {} vs {}",
-                                            param_name, existing_type, provided_type
+                                            spelled(param_name), existing_type, provided_type
                                         )));
                                     }
                                 } else {
@@ -4412,7 +4412,7 @@ impl TypeChecker {
                                     if *existing_type != provided_type {
                                         return Err(CompileError::Generic(format!(
                                             "Conflicting type constraints for type parameter '{}': {} vs {}",
-                                            type_name, existing_type, provided_type
+                                            spelled(type_name), existing_type, provided_type
                                         )));
                                     }
                                 } else {
@@ -4433,12 +4433,12 @@ impl TypeChecker {
                             None => {
                                 return Err(CompileError::Generic(format!(
                                     "Could not infer type parameter '{}' for struct '{}'",
-                                    type_param, name
+                                    spelled(type_param),
+                                    name
                                 )));
                             }
                         }
                     }
-
                     // Check that all required fields are provided
                     for (field_name, field_type) in &generic_struct.fields {
                         let provided_expr = fields
@@ -4461,7 +4461,7 @@ impl TypeChecker {
 
                         // Type check the field with the concrete type
                         let provided_type = self.check_expression(provided_expr)?;
-                        if provided_type != concrete_checker_type {
+                        if !self.is_or_names(&provided_type, &concrete_checker_type) {
                             return Err(CompileError::TypeMismatch {
                                 expected: concrete_checker_type.to_string(),
                                 found: provided_type.to_string(),
@@ -5085,7 +5085,7 @@ impl TypeChecker {
                     .with_code(DiagnosticCode::ValueIfBranchesAgree));
                 }
 
-                Ok(then_type)
+                Ok(then_type.agreeing(&else_type))
             }
             Expr::Block { stmts, value, span } => {
                 self.check_value_block(stmts, value.as_deref(), *span)
@@ -5244,9 +5244,9 @@ impl TypeChecker {
                     self.symbols.exit_scope();
                     let arm_type = arm_type?;
 
-                    match &unified {
+                    match unified.take() {
                         None => unified = Some(arm_type),
-                        Some(first) if *first == arm_type => {}
+                        Some(u) if u == arm_type => unified = Some(u.agreeing(&arm_type)),
                         Some(first) => {
                             return Err(CompileError::TypeMismatch {
                                 expected: format!(
@@ -5451,12 +5451,7 @@ impl TypeChecker {
             }
             .with_code(DiagnosticCode::LoopAndItsBreaksAgreeAboutAValue)),
             Some(BreakTarget::Value(slot)) => match slot {
-                None => {
-                    *slot = Some(value_type);
-                    Ok(())
-                }
-                Some(existing) if *existing == value_type => Ok(()),
-                Some(existing) => Err(CompileError::TypeMismatch {
+                Some(existing) if *existing != value_type => Err(CompileError::TypeMismatch {
                     expected: format!(
                         "every `break` out of this `loop` to carry a {}, as the first one does",
                         existing
@@ -5464,6 +5459,11 @@ impl TypeChecker {
                     found: format!("a `break` carrying a {}", value_type),
                     span: Some(span),
                 }),
+                _ => {
+                    let first = slot.take().unwrap_or_else(|| value_type.clone());
+                    *slot = Some(first.agreeing(&value_type));
+                    Ok(())
+                }
             },
         }
     }
@@ -5693,7 +5693,7 @@ impl TypeChecker {
             // is on. An arity mismatch is reported with BOTH numbers: "expected a
             // tuple pattern" without them sends the reader to count parentheses.
             Pattern::Tuple(elements) => {
-                let CheckerType::Tuple(element_types) = expected_type else {
+                let CheckerType::Tuple(element_types, _) = expected_type else {
                     return Err(CompileError::TypeMismatch {
                         expected: format!(
                             "a pattern of type {}, which is what this `match` is on",
@@ -5974,7 +5974,7 @@ impl TypeChecker {
             Pattern::Or(_) => Ok(()),
             // N6-05. Each element binds against its own element type.
             Pattern::Tuple(elements) => {
-                let CheckerType::Tuple(element_types) = value_type else {
+                let CheckerType::Tuple(element_types, _) = value_type else {
                     // `check_pattern` refused this shape already; binding
                     // nothing is the honest answer for a pattern that will not
                     // be reached.
@@ -6201,7 +6201,7 @@ impl TypeChecker {
                 None => {
                     return Err(CompileError::Generic(format!(
                         "Could not infer type parameter '{}' from function arguments",
-                        type_param
+                        spelled(type_param)
                     )));
                 }
             }
@@ -6219,15 +6219,15 @@ impl TypeChecker {
     ) -> Result<()> {
         match expected_type {
             crate::ast::Type::TypeParam(param_name) => {
-                // This is a type parameter - infer its type from the expression
-                let expr_type = self.carried_by_alias_name(self.infer_expr_type(expr)?);
-
+                let expr_type = self.type_argument_of(expr)?;
                 // Check if we already have a mapping for this type parameter
                 if let Some(existing_type) = type_map.get(param_name) {
                     if existing_type != &expr_type {
                         return Err(CompileError::Generic(format!(
                             "Type parameter '{}' has conflicting types: '{}' and '{}'",
-                            param_name, existing_type, expr_type
+                            spelled(param_name),
+                            existing_type,
+                            expr_type
                         )));
                     }
                 } else {
@@ -6372,7 +6372,7 @@ impl TypeChecker {
                     .collect();
                 format!("{}<{}>", name, arg_strs.join(", "))
             }
-            CheckerType::Tuple(types) => {
+            CheckerType::Tuple(types, _) => {
                 let type_strs: Vec<String> = types
                     .iter()
                     .map(|t| self.checker_type_to_string(t))
@@ -6438,7 +6438,7 @@ impl TypeChecker {
                     }
                     None => Err(CompileError::Generic(format!(
                         "Type parameter '{}' not found in substitution map",
-                        param_name
+                        spelled(param_name)
                     ))),
                 }
             }
@@ -6484,10 +6484,14 @@ impl TypeChecker {
                     )));
                 }
 
-                // Type check each argument
+                // Type check each argument. An instantiated parameter is a
+                // written type too: an alias inside a composite stays its name
+                // (`t: (B, i64)`), and admits what it names (`written_admits`).
                 for (arg, expected_type) in args.iter().zip(&param_types) {
                     let arg_type = self.check_expression(arg)?;
-                    if arg_type != *expected_type {
+                    if !self.is_or_names(&arg_type, expected_type)
+                        && !self.written_admits(expected_type, &arg_type, Some(arg))
+                    {
                         return Err(CompileError::TypeMismatch {
                             expected: expected_type.to_string(),
                             found: arg_type.to_string(),
@@ -6768,7 +6772,7 @@ impl TypeChecker {
                 CheckerType::Array(Box::new(below(elem)?), size)
             }
             crate::ast::Type::Tuple(types) => {
-                CheckerType::Tuple(types.iter().map(below).collect::<Result<_>>()?)
+                CheckerType::tuple(types.iter().map(below).collect::<Result<_>>()?)
             }
             // A reference is its referent, as in `CheckerType::from`.
             crate::ast::Type::Reference { inner, .. } => below(inner)?,
@@ -6826,14 +6830,24 @@ impl TypeChecker {
         })
     }
 
-    /// A generic IMPL's method signature: the impl's own parameters are bound
-    /// first, then the remaining names are kinded. Generic impls are not
-    /// otherwise implemented — their bodies are skipped by `check`, a method
-    /// call cannot find them, and code generation refuses their receivers —
-    /// but the signature is registered, and the rule for a name is the rule
-    /// wherever the name is read.
+    /// A method's signature: the impl's own parameters are bound first (a
+    /// generic IMPL's — generic impls are not otherwise implemented: their
+    /// bodies are skipped by `check`, a method call cannot find them, and code
+    /// generation refuses their receivers — but the signature is registered,
+    /// and the rule for a name is the rule wherever the name is read), then
+    /// the type is read as a FUNCTION's signature reads it
+    /// (`ast_type_to_checker_type`): an alias it names at the top is the type
+    /// that alias names, and every name below is kinded.
+    ///
+    /// Only kinded until review round 5, so `fn take(&self, b: X)` and
+    /// `fn get(&self) -> X` kept the NAME `X` while a generic's result — since
+    /// review round 1 — is the type `X` names: `s.take(f(1))`, `if c {
+    /// s.get() } else { f(1) }`, `[s.get(), r]` and an assignment either way
+    /// round were refused as `expected X, found (Int, Int)` (or `Int`, or the
+    /// struct), for a tuple, a scalar and a struct alias alike. main typed
+    /// both as the name and ran every one.
     fn kinded(&self, ty: &crate::ast::Type, type_params: &[String]) -> CheckerType {
-        self.with_enum_kinds(&Self::type_params_bound(ty, type_params))
+        self.ast_type_to_checker_type(&Self::type_params_bound(ty, type_params))
     }
 
     /// `ty` with every `Custom(name)` that names one of `type_params` turned
@@ -7007,7 +7021,9 @@ impl TypeChecker {
         match type_map.get(param) {
             Some(existing) if *existing != concrete => Err(CompileError::Generic(format!(
                 "Type parameter '{}' has conflicting types: '{}' and '{}'",
-                param, existing, concrete
+                spelled(param),
+                existing,
+                concrete
             ))),
             Some(_) => Ok(()),
             None => {
@@ -7017,33 +7033,271 @@ impl TypeChecker {
         }
     }
 
-    /// A generic call's type argument, carried by the NAME of a non-generic
-    /// alias when the argument is a tuple that alias names (review round 4).
-    ///
-    /// A type argument is carried by name (`type_argument_as_named_type`),
-    /// and a tuple has none of its own. main never saw the tuple: it typed
-    /// `let r = f(1)` over `fn f<U>(x: U) -> A` with `type A = (T, i64)` as
-    /// the opaque `A`, so `fwd(r)` was instantiated at `A`, and code
-    /// generation's `type_to_c` resolved that name to the tuple's C struct —
-    /// compiled and ran. Since round 2 the result is the tuple itself, so the
-    /// same call was refused as an instantiation at `(T, i64)`. The alias's
-    /// name carries it again. An ARRAY is not carried this way: its C type is
-    /// not a type a parameter can be declared with by name, and main sent that
-    /// program to gcc.
-    fn carried_by_alias_name(&self, type_argument: String) -> String {
-        if !type_argument.starts_with('(') {
-            return type_argument;
+    /// `ty`, or — when `ty` is the NAME of a non-generic alias — the type that
+    /// alias names.
+    fn through_alias_name(&self, ty: &CheckerType) -> CheckerType {
+        match ty {
+            CheckerType::Struct(name) if self.type_aliases.contains_key(name) => {
+                self.ast_type_to_checker_type(&crate::ast::Type::Custom(name.clone()))
+            }
+            _ => ty.clone(),
         }
-        let mut names: Vec<&String> = self.type_aliases.keys().collect();
-        names.sort();
-        for name in names {
-            let body = self.ast_type_to_checker_type(&self.type_aliases[name]);
-            if self.checker_type_to_string(&body) == type_argument {
-                return name.clone();
+    }
+
+    /// Is `found` the type `expected` a generic instantiation's signature
+    /// gives, either as it is or by naming it through an alias?
+    ///
+    /// A method's signature is registered with an alias's NAME (`kinded`, as
+    /// on main), and an instantiated generic signature has, since review
+    /// round 1, the type the alias names (`instantiate_generic_function`,
+    /// `substitute_type_params`). So `let m = s.pair(); g(m)` over
+    /// `fn pair(&self) -> B` compared `B` with `(Int, Int)` and was refused,
+    /// with a tuple, a scalar or a struct alias alike — a program main ran
+    /// (review round 5). The two spell one type. ONE-SIDED on purpose: an
+    /// alias name where the signature has the name too (`&B`, which this
+    /// checker reads as `B`) is matched as before, and a tuple where the
+    /// signature has only the name is refused as before.
+    ///
+    /// AT EVERY DEPTH of an array or a tuple: a generic struct's field written
+    /// `[B; 2]` is instantiated to `[(Int, Int); 2]`, and the array of method
+    /// results `[s.pair(), s.pair()]` handed to it is `[B; 2]` — the same name
+    /// one level down, refused until it was compared there too (a program main
+    /// ran).
+    fn is_or_names(&self, found: &CheckerType, expected: &CheckerType) -> bool {
+        if found == expected || self.through_alias_name(found) == *expected {
+            return true;
+        }
+        match (found, expected) {
+            (CheckerType::Array(found, n), CheckerType::Array(expected, m)) => {
+                n == m && self.is_or_names(found, expected)
+            }
+            (CheckerType::Tuple(found, _), CheckerType::Tuple(expected, _)) => {
+                found.len() == expected.len()
+                    && found
+                        .iter()
+                        .zip(expected)
+                        .all(|(f, e)| self.is_or_names(f, e))
+            }
+            _ => false,
+        }
+    }
+
+    /// Does the type `written` — as an annotation or a parameter WROTE it —
+    /// admit `value`, of type `found`?
+    ///
+    /// A written alias is resolved at the top (`let r: B`, `p: B` are the type
+    /// `B` names) and kept as its NAME inside a composite or behind a reference
+    /// (`with_enum_kinds`: kind only, on purpose — comparing structure there
+    /// is M3's). main typed a generic's result, and a method's, as that name
+    /// too, so `let arr: [B; 2] = [f(1), f(2)]`, `let xs: [N; 2] = [f(1),
+    /// f(2)]`, `let p: &X = &r` and `h(&r)` compared a name with a name and
+    /// ran. Since review round 1 those results are the type the alias names,
+    /// and each was refused as `expected [B; 2], found [(Int, Int); 2]` or
+    /// `expected X, found Int` (review round 5). So a written alias name
+    /// admits what it names, at every depth of an array or a tuple:
+    ///
+    /// - a TUPLE only when it was declared as the alias the name resolves to
+    ///   (`DeclaredAs`: this checker's tuple keeps no integer width and no
+    ///   reference);
+    /// - any other value whose type is the one the alias names — but NEVER a
+    ///   literal (`5`, `T { n: 5 }`, `K::A`, `(1, 2)`): main gave a literal its
+    ///   structural type and refused it under the name, and that refusal is
+    ///   M3's to lift (tests/xfail/alias_nested_in_tuple_annotation.pd,
+    ///   tests/xfail/alias_as_array_element.pd stay refused).
+    ///
+    /// `value` is the expression at this depth when its shape is known (an
+    /// array or tuple literal is followed element by element); `None` admits
+    /// by type alone.
+    fn written_admits(
+        &self,
+        written: &CheckerType,
+        found: &CheckerType,
+        value: Option<&Expr>,
+    ) -> bool {
+        let value = value.map(|v| match v {
+            Expr::Reference { expr, .. } => expr.as_ref(),
+            v => v,
+        });
+        match (written, found) {
+            (CheckerType::Struct(name), _) if self.type_aliases.contains_key(name) => {
+                let named = self.through_alias_name(written);
+                match (found, &named) {
+                    // `type B2 = B;` names the tuple `B` declares: a value of
+                    // either is declared as `B` (`resolved_alias`).
+                    (
+                        CheckerType::Tuple(_, DeclaredAs(Some(declared))),
+                        CheckerType::Tuple(_, DeclaredAs(Some(alias))),
+                    ) => declared == alias,
+                    (CheckerType::Tuple(..), _) => false,
+                    _ => {
+                        written == found
+                            || (named == *found && !value.is_some_and(Self::is_literal_value))
+                    }
+                }
+            }
+            (CheckerType::Array(written, n), CheckerType::Array(found, m)) => {
+                let element = |i: usize| match value {
+                    Some(Expr::ArrayLiteral { elements, .. }) => elements.get(i),
+                    Some(Expr::ArrayRepeat { value, .. }) => Some(value.as_ref()),
+                    _ => None,
+                };
+                let count = match value {
+                    Some(Expr::ArrayLiteral { elements, .. }) => elements.len().max(1),
+                    _ => 1,
+                };
+                n == m && (0..count).all(|i| self.written_admits(written, found, element(i)))
+            }
+            (CheckerType::Tuple(written, _), CheckerType::Tuple(found, _)) => {
+                let element = |i: usize| match value {
+                    Some(Expr::Tuple { elements, .. }) => elements.get(i),
+                    _ => None,
+                };
+                written.len() == found.len()
+                    && written
+                        .iter()
+                        .zip(found)
+                        .enumerate()
+                        .all(|(i, (w, f))| self.written_admits(w, f, element(i)))
+            }
+            _ => written == found,
+        }
+    }
+
+    /// Is `expr` a literal — a value whose type main read from its spelling
+    /// (`5`, `"s"`, `T { n: 5 }`, `K::A`, `-5`), or an array or tuple made of
+    /// them — rather than one main typed by the alias a declaration named?
+    fn is_literal_value(expr: &Expr) -> bool {
+        match expr {
+            Expr::String(_)
+            | Expr::Integer(_)
+            | Expr::Float(_)
+            | Expr::Char(_)
+            | Expr::Bool(_)
+            | Expr::StructLiteral { .. }
+            | Expr::EnumConstructor { .. } => true,
+            Expr::Unary {
+                op: UnaryOp::Neg,
+                operand,
+                ..
+            } => Self::is_literal_value(operand),
+            Expr::ArrayLiteral { elements, .. } | Expr::Tuple { elements, .. } => {
+                elements.iter().all(Self::is_literal_value)
+            }
+            Expr::ArrayRepeat { value, .. } | Expr::Reference { expr: value, .. } => {
+                Self::is_literal_value(value)
+            }
+            _ => false,
+        }
+    }
+
+    /// The type alias `name`, whose body is `aliased_type`, as the type it
+    /// names — named by `name` when that body is a tuple (`DeclaredAs`). An
+    /// alias of an alias keeps the name the inner one gives; a reference
+    /// alias (`type A = &(i64, i64)`) gives none.
+    ///
+    /// Any other body is resolved by a call in TAIL position, as before this
+    /// existed: a cyclic alias (`type A = B; type B = A;`, #79) still loops
+    /// rather than exhausting the stack — the behaviour main has, measured.
+    fn resolved_alias(&self, name: &str, aliased_type: &crate::ast::Type) -> CheckerType {
+        if !matches!(aliased_type, crate::ast::Type::Tuple(_)) {
+            return self.ast_type_to_checker_type(aliased_type);
+        }
+        match self.ast_type_to_checker_type(aliased_type) {
+            CheckerType::Tuple(elements, _) => {
+                CheckerType::Tuple(elements, DeclaredAs(Some(name.to_string())))
+            }
+            resolved => resolved,
+        }
+    }
+
+    /// The type argument `expr` gives a type parameter it is passed for: a
+    /// tuple is carried by the alias its declaration named it by
+    /// (`DeclaredAs`), and only by that one; anything else is spelled as
+    /// `infer_expr_type` spells it.
+    fn type_argument_of(&self, expr: &Expr) -> Result<String> {
+        if let Expr::Ident(name) = expr {
+            if let Some(CheckerType::Tuple(_, DeclaredAs(Some(alias)))) =
+                self.symbols.lookup(name).map(|v| &v.ty)
+            {
+                return Ok(alias.clone());
             }
         }
-        type_argument
+        self.infer_expr_type(expr)
     }
+}
+
+/// The tuple alias a value's declaration named it by: `B` for the result of
+/// `fn f<U>(x: U) -> B` under `type B = (i64, i64)`, for a binding annotated
+/// `: B`, a parameter declared `p: B` — and for wherever such a value goes,
+/// because the name rides on the type (review round 5).
+///
+/// IT IS HOW A TUPLE IS CARRIED TO A GENERIC. A type argument is carried by
+/// name (`type_argument_as_named_type`) and a tuple has none of its own. main
+/// typed the value as the alias's name, so `g(r)` was instantiated at `B`
+/// from a call, a binding, an `if`, an array element, a pattern ... Since
+/// review round 1 the value is the tuple the alias names; round 4 then
+/// recovered a name from the tuple, as the first alias in sorted order whose
+/// body read the same in this checker's spelling — which keeps no integer
+/// width and no reference, so an alias the program never used chose the C
+/// type (`type A = (i32, i32)` beside `B` instantiated `g__A`, and gcc refused
+/// `__pd_tuple2_int_int`). The name now comes only from a declaration: the
+/// one place it is attached is the resolution of a written alias name whose
+/// body is a tuple (`TypeChecker::resolved_alias`). A REFERENCE alias is never
+/// attached: this checker reads `&(i64, i64)` as the tuple, and a generic
+/// instantiated at it would read a field through a pointer.
+///
+/// PROVENANCE, NOT IDENTITY: two tuples are one type whatever they were
+/// declared as, exactly as before, so this compares equal to every other
+/// `DeclaredAs`. Where two values meet in one (`if`, `match`, a `loop`'s
+/// `break`s, an array's elements) the name is kept only if they agree on it
+/// (`CheckerType::agreeing`). Where a WRITTEN type keeps the alias as its
+/// name (`[B; 2]`, `&B`), that name admits a tuple declared as it
+/// (`TypeChecker::written_admits`), as main's name admitted main's name.
+#[derive(Debug, Clone)]
+pub struct DeclaredAs(pub Option<String>);
+
+impl PartialEq for DeclaredAs {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl CheckerType {
+    /// A tuple no alias declaration names: a tuple literal, or a tuple type
+    /// written out element by element.
+    fn tuple(elements: Vec<CheckerType>) -> CheckerType {
+        CheckerType::Tuple(elements, DeclaredAs(None))
+    }
+
+    /// `self`, as the type it and `other` — which compares equal to it —
+    /// have together: a tuple keeps the alias name it was declared as only
+    /// where `other` was declared as the same alias, at every depth.
+    fn agreeing(self, other: &CheckerType) -> CheckerType {
+        match (self, other) {
+            (CheckerType::Tuple(mine, name), CheckerType::Tuple(theirs, other_name)) => {
+                let elements = mine.into_iter().zip(theirs).map(|(m, t)| m.agreeing(t));
+                let name = if name.0 == other_name.0 {
+                    name
+                } else {
+                    DeclaredAs(None)
+                };
+                CheckerType::Tuple(elements.collect(), name)
+            }
+            (CheckerType::Array(mine, size), CheckerType::Array(theirs, _)) => {
+                CheckerType::Array(Box::new(mine.agreeing(theirs)), size)
+            }
+            (ty, _) => ty,
+        }
+    }
+}
+
+/// `name` as the source spelled it (`crate::ast::user_spelling`): a type
+/// parameter the alias-capture rename made `T#1` is `T` again. Every place
+/// this checker prints a type (`CheckerType`'s `Display`) or a parameter's
+/// name calls it, and it is given nothing but a name — never a message, so a
+/// user's String literal `"x#1"` is quoted as written (review round 5).
+fn spelled(name: &str) -> &str {
+    crate::ast::user_spelling(name)
 }
 
 /// The type argument a generic struct instantiation records when the argument
@@ -8136,7 +8390,7 @@ mod tests {
             (
                 "(K, i64)",
                 Type::Tuple(vec![k(), Type::I64]),
-                CheckerType::Tuple(vec![ek(), CheckerType::Int]),
+                CheckerType::tuple(vec![ek(), CheckerType::Int]),
             ),
             ("&K", reference(k(), false), ek()),
             ("&mut K", reference(k(), true), ek()),

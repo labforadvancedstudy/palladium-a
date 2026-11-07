@@ -1009,3 +1009,679 @@ fn a_tuple_alias_result_is_carried_to_another_generic_by_its_name() {
         assert_eq!(run(source, "tuple_alias_forward"), want, "{}", shape);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Review round 5: an alias name comes from the declaration that produced the
+// value, and a diagnostic prints a renamed parameter as the source wrote it.
+// ---------------------------------------------------------------------------
+
+/// Compile, link and run, and say how it went instead of panicking: `RUN:`
+/// and the program's output, or the first line of this compiler's refusal,
+/// or `GCC` when the C it emitted did not compile. A table of rows is then
+/// compared whole, so one run shows every row that differs.
+fn outcome(source: &str, prefix: &str) -> String {
+    let name = unique_module_name(prefix);
+    let dir = TempDir::new().unwrap();
+    let src = dir.path().join(format!("{}.pd", name));
+    let exe = dir.path().join(&name);
+    fs::write(&src, source).unwrap();
+    let c_file = match Driver::new().compile_file(&src) {
+        Ok(c) => c,
+        Err(e) => {
+            let text = e.to_string();
+            let first = text.lines().next().unwrap_or("").to_string();
+            return if text.contains("gcc") {
+                "GCC".to_string()
+            } else {
+                format!("REFUSED: {}", first)
+            };
+        }
+    };
+    let out = link_command(&c_file, &exe, OptLevel::Default)
+        .expect("link_command")
+        .output()
+        .expect("gcc");
+    if !out.status.success() {
+        return "GCC".to_string();
+    }
+    let run = Command::new(&exe).output().expect("run");
+    format!("RUN: {}", String::from_utf8_lossy(&run.stdout))
+}
+
+/// AN UNUSED ALIAS NEVER DECIDES HOW A VALUE IS PASSED (review round 5).
+///
+/// Round 4 carried a tuple to another generic by the first alias, in sorted
+/// order, whose body read the same in the type checker's spelling — and that
+/// spelling keeps no integer width and no reference: `(i32, i32)`,
+/// `&(i64, i64)`, `(u64, u64)` and `&mut (i64, i64)` all read `(i64, i64)`.
+/// So an alias the program never uses chose the C type: beside the `B` that
+/// `f` returns, `type A = (i32, i32)` instantiated `g` at `A` and gcc refused
+/// `__pd_tuple2_int_int`; `type A = &(i64, i64)` read a field through a
+/// pointer. main ran both and printed `4294967297`. The name now comes from
+/// the declaration that produced the value: `f`'s declared return type, the
+/// type argument `id` was instantiated at, the binding it was copied from.
+///
+/// A method's result is the fourth row: main registers a method's signature
+/// with the alias's name and ran the forward; since round 1 the generic it is
+/// handed to resolves the alias in its parameter, and the call was refused as
+/// `expected (Int, Int), found B` (with or without a decoy).
+#[test]
+fn an_unused_alias_of_the_same_erased_shape_never_carries_a_value() {
+    let decoys = [
+        ("no decoy", ""),
+        ("(i32, i32)", "type A = (i32, i32);\n"),
+        ("&(i64, i64)", "type A = &(i64, i64);\n"),
+        ("(u64, u64)", "type A = (u64, u64);\n"),
+        ("&mut (i64, i64)", "type A = &mut (i64, i64);\n"),
+        ("(i32, i32), sorting after B", "type Z = (i32, i32);\n"),
+    ];
+    let f = "fn f<U>(x: U) -> B { return (4294967297, 8); }\n";
+    let method =
+        "struct S { n: i64 }\nimpl S { fn pair(&self) -> B { return (4294967297, 8); } }\n";
+    let sources = [
+        ("a generic's result", f, "let r = f(1);"),
+        (
+            "handed back by a generic",
+            f,
+            "let r0 = f(1); let r = id(r0);",
+        ),
+        ("copied to another binding", f, "let r0 = f(1); let r = r0;"),
+        (
+            "a method's result",
+            method,
+            "let s = S { n: 1 }; let r = s.pair();",
+        ),
+    ];
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    for (decoy, decl) in decoys {
+        for (source, defs, bind) in sources {
+            let program = format!(
+                "{}type B = (i64, i64);\nfn g<X>(x: X) -> i64 {{ return x.0; }}\n\
+                 fn id<X>(x: X) -> X {{ return x; }}\n{}fn main() {{ {} print_int(g(r)); }}\n",
+                decl, defs, bind
+            );
+            let row = format!("{} / {}", decoy, source);
+            got.push(format!("{}: {}", row, outcome(&program, "erased_decoy")));
+            want.push(format!("{}: RUN: 4294967297\n", row));
+        }
+    }
+    assert_eq!(got, want);
+}
+
+/// THE ALIAS NAME TRAVELS WITH THE VALUE, THROUGH EVERY EXPRESSION THAT HANDS
+/// THE VALUE ON (review round 5).
+///
+/// main typed `f(1)` over `fn f<U>(x: U) -> B` as the name `B`, so the name
+/// went wherever the value went — an `if`, a `match`, a block, a `loop`'s
+/// `break`, an array and its elements, a tuple and its elements, a pattern, a
+/// dereference — and `g(r)` was instantiated at `B` from any of them: every
+/// row below printed `4294967297` on main. Kept on the `let` alone, the name
+/// reached `g` only from a call or a binding, and each of these rows was
+/// refused as an instantiation at `(i64, i64)`. The unused `A = (i32, i32)`
+/// sorts before `B`, so a name recovered from the tuple would pick it.
+///
+/// The last rows hand on a value two DIFFERENT declarations produced (`A` and
+/// `B`, or `B` and a tuple literal): no one name is the value's, so none is
+/// carried, and the program is refused by this compiler — never by gcc — as
+/// main refused it.
+#[test]
+fn a_tuple_alias_name_travels_with_the_value_through_every_expression() {
+    let defs = "type A = (i32, i32);\ntype B = (i64, i64);\n\
+                fn g<X>(x: X) -> i64 { return x.0; }\nfn id<X>(x: X) -> X { return x; }\n\
+                fn f<U>(x: U) -> B { return (4294967297, 8); }\n\
+                fn fa<U>(x: U) -> A { return (7, 8); }\n";
+    let runs = [
+        (
+            "an `if`",
+            "let c = true; let r = if c { f(1) } else { f(2) }; print_int(g(r));",
+        ),
+        (
+            "a `match`",
+            "let k = 1; let r = match k { 1 => f(1), _ => f(2) }; print_int(g(r));",
+        ),
+        ("a block", "let r = { f(1) }; print_int(g(r));"),
+        (
+            "a block's own binding",
+            "let r = { let q = f(1); q }; print_int(g(r));",
+        ),
+        (
+            "a `loop`'s `break`",
+            "let r = loop { break f(1); }; print_int(g(r));",
+        ),
+        (
+            "an array element",
+            "let arr = [f(1), f(2)]; let r = arr[0]; print_int(g(r));",
+        ),
+        (
+            "a repeated element",
+            "let arr = [f(1); 2]; let r = arr[1]; print_int(g(r));",
+        ),
+        (
+            "a tuple element",
+            "let t = (f(1), 5); let r = t.0; print_int(g(r));",
+        ),
+        (
+            "a tuple pattern",
+            "let t = (f(1), 5); match t { (a, b) => { print_int(g(a)); } }",
+        ),
+        (
+            "a dereference",
+            "let r0 = f(1); let p = &r0; let r = *p; print_int(g(r));",
+        ),
+        (
+            "an array of bindings",
+            "let a = f(1); let b = f(2); let arr = [a, b]; let r = arr[1]; print_int(g(r));",
+        ),
+        (
+            "handed back by a generic, from an `if`",
+            "let c = true; let r0 = if c { f(1) } else { f(2) }; let r = id(r0); print_int(g(r));",
+        ),
+    ];
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    for (shape, body) in runs {
+        let program = format!("{}fn main() {{ {} }}\n", defs, body);
+        got.push(format!("{}: {}", shape, outcome(&program, "alias_travels")));
+        want.push(format!("{}: RUN: 4294967297\n", shape));
+    }
+    let program = format!(
+        "{}fn main() {{ let arr = [f(1), f(2)]; let mut s = 0; \
+         for r in arr {{ s = s + g(r); }} print_int(s); }}\n",
+        defs
+    );
+    got.push(format!(
+        "a `for` element: {}",
+        outcome(&program, "alias_travels")
+    ));
+    want.push("a `for` element: RUN: 8589934594\n".to_string());
+    let two_declarations = [
+        (
+            "an `if` over A and B",
+            "let c = true; let r = if c { fa(1) } else { f(1) };",
+        ),
+        (
+            "a `match` over A and B",
+            "let k = 2; let r = match k { 1 => fa(1), _ => f(1) };",
+        ),
+        (
+            "an array of A and B",
+            "let arr = [fa(1), f(1)]; let r = arr[1];",
+        ),
+        (
+            "an `if` over B and a literal",
+            "let c = false; let r = if c { f(1) } else { (5, 6) };",
+        ),
+    ];
+    for (shape, bind) in two_declarations {
+        let program = format!("{}fn main() {{ {} print_int(g(r)); }}\n", defs, bind);
+        let verdict = outcome(&program, "alias_travels");
+        let refused_here = if verdict.starts_with("REFUSED: ") {
+            "REFUSED".to_string()
+        } else {
+            verdict
+        };
+        got.push(format!("{}: {}", shape, refused_here));
+        want.push(format!("{}: REFUSED", shape));
+    }
+    assert_eq!(got, want);
+}
+
+/// `pdc compile`'s report, as a user reads it (colour codes removed).
+fn printed(source: &str, prefix: &str) -> String {
+    let dir = TempDir::new().unwrap();
+    let src = dir
+        .path()
+        .join(format!("{}.pd", unique_module_name(prefix)));
+    fs::write(&src, source).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
+        .current_dir(dir.path())
+        .arg("compile")
+        .arg(&src)
+        .arg("-o")
+        .arg("probe")
+        .output()
+        .expect("run pdc");
+    let text = String::from_utf8_lossy(&out.stderr).into_owned();
+    let mut plain = String::new();
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            for d in chars.by_ref() {
+                if d == 'm' {
+                    break;
+                }
+            }
+        } else {
+            plain.push(c);
+        }
+    }
+    plain
+}
+
+/// A DIAGNOSTIC NAMES WHAT THE SOURCE WROTE, AND ONLY A GENERATED NAME IS
+/// RESPELLED (review round 5).
+///
+/// Round 4 removed `#<digits>` after every identifier character of the WHOLE
+/// report, rename or no rename: `match 1 { "x#1" => .. }` was reported as
+/// `found the String literal "x"`, a quotation of something the source does
+/// not say (main quotes `"x#1"`). And the error a caller of the driver gets
+/// back was never respelled at all — it said `T#1`. Each path is pinned:
+/// a literal with no generic in the program; the same literal beside a binder
+/// the hygiene pass renamed (`fn f<T>` under `type A = T`); and the four
+/// diagnostics that print that renamed binder, by the report and by the error.
+#[test]
+fn a_diagnostic_names_a_renamed_parameter_as_written_and_quotes_the_source_verbatim() {
+    let quoted = [
+        (
+            "no generic, no rename",
+            "fn main() { match 1 { \"x#1\" => { print_int(1); } _ => { print_int(0); } } }",
+            "found the String literal `\"x#1\"`",
+        ),
+        (
+            "a renamed binder in the same program",
+            "struct T { n: i64 }\ntype A = T;\nfn f<T>(x: T, a: A) -> i64 { return a.n; }\n\
+             fn main() { print_int(f(1, T { n: 2 })); \
+             match 1 { \"T#1\" => { print_int(1); } _ => { print_int(0); } } }",
+            "found the String literal `\"T#1\"`",
+        ),
+    ];
+    for (shape, source, want) in quoted {
+        let report = printed(source, "quote_diag");
+        assert!(report.contains(want), "{}: {}", shape, report);
+        let error = refused(source, "quote_diag");
+        assert!(error.contains(want), "{}: {}", shape, error);
+    }
+    let renamed = [
+        (
+            "conflicting arguments of a generic fn",
+            "struct T { n: i64 } type A = T; fn f<T>(x: T, y: T) -> A { return T { n: 7 }; } \
+             fn main() { let a = f(1, true); print_int(a.n); }",
+            "Type parameter 'T' has conflicting types: 'i64' and 'bool'",
+        ),
+        (
+            "a struct parameter no field infers",
+            "struct T { n: i64 } type A = T; struct G<T> { a: A, v: i64 } \
+             fn main() { let g = G { a: T { n: 7 }, v: 1 }; print_int(g.v); }",
+            "Could not infer type parameter 'T' for struct 'G'",
+        ),
+        (
+            "a fn parameter no argument infers",
+            "struct T { n: i64 } type A = T; fn f<T>(a: A) -> i64 { return a.n; } \
+             fn main() { print_int(f(T { n: 7 })); }",
+            "Could not infer type parameter 'T' from function arguments",
+        ),
+        (
+            "conflicting fields of a generic struct",
+            "struct T { n: i64 } type A = T; struct G<T> { v: T, w: T, a: A } \
+             fn main() { let g = G { v: 1, w: true, a: T { n: 7 } }; print_int(g.v); }",
+            "Conflicting type constraints for type parameter 'T': Int vs Bool",
+        ),
+    ];
+    for (shape, source, want) in renamed {
+        let report = printed(source, "renamed_name");
+        assert!(
+            report.contains(want) && !report.contains("T#"),
+            "{}: {}",
+            shape,
+            report
+        );
+        let error = refused(source, "renamed_name");
+        assert!(
+            error.contains(want) && !error.contains("T#"),
+            "{}: {}",
+            shape,
+            error
+        );
+    }
+}
+
+/// AN ALIAS NESTED IN A WRITTEN TYPE NAMES THE VALUES DECLARED AS IT
+/// (review round 5, found by the four-consumer sweep of the fix above).
+///
+/// A type written in the source keeps an alias nested in a composite as its
+/// NAME — `[B; 2]` is an array of `B`, `&B` is `B` — while the alias at the top
+/// of an annotation is resolved; the structural comparison is M3's. main
+/// typed a generic's result as the name `B`, so `let arr: [B; 2] = [f(1),
+/// f(2)]` and `let p: &B = &r` compared a name with a name and ran. Since
+/// review round 1 that result is the tuple `B` names, declared as `B`
+/// (`DeclaredAs`), and both were refused as `expected [B; 2], found
+/// [(Int, Int); 2]`. The other direction is a generic struct's field: its
+/// written `[B; 2]` is instantiated to the tuple, a method's result is still
+/// the name, and `G { v: 1, a: [s.pair(), s.pair()] }` was refused as
+/// `expected [(Int, Int); 2], found [B; 2]`. Every program here ran on main
+/// with this output. A tuple LITERAL was declared as no alias, so the array of
+/// literals under `[B; 2]` stays refused, as it is on main
+/// (tests/xfail/alias_as_array_element.pd).
+#[test]
+fn an_alias_nested_in_a_written_type_admits_a_value_declared_as_it() {
+    let defs = "type B = (i64, i64);\nstruct S { n: i64 }\n\
+                impl S { fn pair(&self) -> B { return (4294967297, 8); } }\n\
+                fn g<X>(x: X) -> i64 { return x.0; }\n\
+                fn f<U>(x: U) -> B { return (4294967297, 8); }\n";
+    let rows = [
+        (
+            "an array annotation, discarded",
+            "",
+            "let arr: [B; 2] = [f(1), f(2)]; print_int(0);",
+            "RUN: 0\n",
+        ),
+        (
+            "an array annotation, an element forwarded",
+            "",
+            "let arr: [B; 2] = [f(1), f(2)]; let r = arr[0]; print_int(g(r));",
+            "RUN: 4294967297\n",
+        ),
+        (
+            "an array annotation beside an unused (i32, i32) alias",
+            "type A = (i32, i32);\n",
+            "let arr: [B; 2] = [f(1), f(2)]; let r = arr[0]; print_int(g(r));",
+            "RUN: 4294967297\n",
+        ),
+        (
+            "an array annotation walked by `for`",
+            "",
+            "let arr: [B; 2] = [f(1), f(2)]; let mut s = 0; for r in arr { s = s + g(r); } \
+             print_int(s); let r = arr[0]; print_int(g(r));",
+            "RUN: 8589934594\n4294967297\n",
+        ),
+        (
+            "a reference annotation",
+            "",
+            "let r0 = f(1); let p: &B = &r0; let r = *p; print_int(g(r));",
+            "RUN: 4294967297\n",
+        ),
+        (
+            "a generic struct's array field, from a method",
+            "struct G<T> { v: T, a: [B; 2] }\n",
+            "let s = S { n: 1 }; let gg = G { v: 1, a: [s.pair(), s.pair()] }; \
+             let r = gg.a[0]; print_int(g(r));",
+            "RUN: 4294967297\n",
+        ),
+    ];
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    for (shape, extra, body, out) in rows {
+        let program = format!("{}{}fn main() {{ {} }}\n", extra, defs, body);
+        got.push(format!("{}: {}", shape, outcome(&program, "nested_alias")));
+        want.push(format!("{}: {}", shape, out));
+    }
+    let literals = format!(
+        "{}fn main() {{ let arr: [B; 2] = [(1, 2), (3, 4)]; print_int(arr[0].0); }}\n",
+        defs
+    );
+    let verdict = outcome(&literals, "nested_alias");
+    got.push(format!(
+        "tuple literals under [B; 2]: {}",
+        if verdict.starts_with("REFUSED: ") {
+            "REFUSED"
+        } else {
+            &verdict
+        }
+    ));
+    want.push("tuple literals under [B; 2]: REFUSED".to_string());
+    assert_eq!(got, want);
+}
+
+/// A METHOD'S SIGNATURE NAMES AN ALIAS AS A FUNCTION'S SIGNATURE DOES
+/// (review round 5, found by measuring the method-result rows against main).
+///
+/// A function's signature resolves an alias it names at the top
+/// (`ast_type_to_checker_type`); a method's was only kinded, so `fn take(&self,
+/// b: X)` and `fn get(&self) -> X` kept the NAME `X`. main typed a generic's
+/// result as that name too, so the two met as `X` and `X`. Since review round
+/// 1 a generic's result is the type `X` names, and every place a method's
+/// signature met it was refused — `s.take(f(1))` as `expected X, found
+/// (Int, Int)`, `if c { s.get() } else { f(1) }`, `[s.get(), r]`, an
+/// assignment either way round — for a tuple, a scalar and a struct alias
+/// alike. Every program here ran on main with this output.
+#[test]
+fn a_method_signature_names_an_alias_as_a_function_signature_does() {
+    let kinds = [
+        ("a tuple alias", "type X = (i64, i64);\n", "(4294967297, 8)"),
+        ("a scalar alias", "type X = i64;\n", "4294967297"),
+        (
+            "a struct alias",
+            "struct T { n: i64 }\ntype X = T;\n",
+            "T { n: 4294967297 }",
+        ),
+    ];
+    let bodies = [
+        (
+            "a generic's result passed to the method",
+            "print_int(s.take(f(1))); let z = f(1);",
+            "RUN: 5\n3\n",
+        ),
+        (
+            "an `if` over the method's and the generic's result",
+            "let m = s.get(); let r = f(1); let c = false; let z = if c { m } else { r };",
+            "RUN: 3\n",
+        ),
+        (
+            "a `match` over the two",
+            "let m = s.get(); let r = f(1); let k = 2; let z = match k { 1 => r, _ => m };",
+            "RUN: 3\n",
+        ),
+        (
+            "an array of the two",
+            "let m = s.get(); let r = f(1); let xs = [m, r]; let z = xs[1];",
+            "RUN: 3\n",
+        ),
+        (
+            "the generic's result assigned over the method's",
+            "let mut z = s.get(); z = f(1);",
+            "RUN: 3\n",
+        ),
+        (
+            "the method's result assigned over the generic's",
+            "let mut z = f(1); z = s.get();",
+            "RUN: 3\n",
+        ),
+    ];
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    for (kind, decl, value) in kinds {
+        let defs = format!(
+            "{}struct S {{ n: i64 }}\n\
+             impl S {{ fn get(&self) -> X {{ return {v}; }} \
+             fn take(&self, b: X) -> i64 {{ return 5; }} }}\n\
+             fn g<Q>(q: Q) -> i64 {{ return 3; }}\n\
+             fn f<U>(x: U) -> X {{ return {v}; }}\n",
+            decl,
+            v = value
+        );
+        for (shape, body, out) in bodies {
+            let program = format!(
+                "{}fn main() {{ let s = S {{ n: 1 }}; {} print_int(g(z)); }}\n",
+                defs, body
+            );
+            let row = format!("{} / {}", kind, shape);
+            got.push(format!("{}: {}", row, outcome(&program, "method_alias")));
+            want.push(format!("{}: {}", row, out));
+        }
+    }
+    assert_eq!(got, want);
+}
+
+/// A WRITTEN ALIAS NAME ADMITS WHAT THE ALIAS NAMES, BEHIND A REFERENCE AND
+/// THROUGH AN ALIAS OF AN ALIAS (review round 5).
+///
+/// `let p: &X = &r` keeps `X` as its name, and so does a parameter `p: &X`.
+/// main typed a generic's result as the name, so `r = f(1)` met `X` as `X`
+/// and ran — for a scalar alias and a struct alias as for a tuple one. The
+/// result is now the type `X` names (`Int`, the struct `T`), and both were
+/// refused as `expected X, found Int`; once a method's result became the
+/// type its signature names, `h(&s.get())`-shaped calls, which ran, would have
+/// been refused the same way. `type B2 = B;` declares nothing new: a tuple
+/// returned as `B2` is declared as `B`, and the written `B2` names it.
+#[test]
+fn a_written_alias_name_admits_the_value_it_names_behind_a_reference() {
+    let kinds = [
+        ("a scalar alias", "type X = i64;\n", "4294967297"),
+        (
+            "a struct alias",
+            "struct T { n: i64 }\ntype X = T;\n",
+            "T { n: 4294967297 }",
+        ),
+    ];
+    let bodies = [
+        (
+            "a generic's result behind `&X`",
+            "let m = f(1); let p: &X = &m; let q = *p; print_int(g(q));",
+            "RUN: 3\n",
+        ),
+        (
+            "a method's result behind `&X`",
+            "let m = s.get(); let p: &X = &m; let q = *p; print_int(g(q));",
+            "RUN: 3\n",
+        ),
+        (
+            "a method's result passed as `&X`",
+            "let m = s.get(); print_int(h(&m));",
+            "RUN: 7\n",
+        ),
+        (
+            "a generic's result passed as `&X`",
+            "let m = f(1); print_int(h(&m));",
+            "RUN: 7\n",
+        ),
+    ];
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    for (kind, decl, value) in kinds {
+        let defs = format!(
+            "{}struct S {{ n: i64 }}\nimpl S {{ fn get(&self) -> X {{ return {v}; }} }}\n\
+             fn h(p: &X) -> i64 {{ return 7; }}\nfn g<Q>(q: Q) -> i64 {{ return 3; }}\n\
+             fn f<U>(x: U) -> X {{ return {v}; }}\n",
+            decl,
+            v = value
+        );
+        for (shape, body, out) in bodies {
+            let program = format!("{}fn main() {{ let s = S {{ n: 1 }}; {} }}\n", defs, body);
+            let row = format!("{} / {}", kind, shape);
+            got.push(format!("{}: {}", row, outcome(&program, "written_alias")));
+            want.push(format!("{}: {}", row, out));
+        }
+    }
+    let chain = "type B = (i64, i64);\ntype B2 = B;\nfn g<X>(x: X) -> i64 { return x.0; }\n\
+                 fn f<U>(x: U) -> B2 { return (4294967297, 8); }\n";
+    for (shape, body) in [
+        (
+            "an alias of an alias in an array annotation",
+            "let arr: [B2; 2] = [f(1), f(2)]; let r = arr[0]; print_int(g(r));",
+        ),
+        (
+            "an alias of an alias behind `&`",
+            "let r0 = f(1); let p: &B2 = &r0; let r = *p; print_int(g(r));",
+        ),
+    ] {
+        let program = format!("{}fn main() {{ {} }}\n", chain, body);
+        got.push(format!("{}: {}", shape, outcome(&program, "written_alias")));
+        want.push(format!("{}: RUN: 4294967297\n", shape));
+    }
+    assert_eq!(got, want);
+}
+
+/// A GENERIC'S PARAMETER WRITTEN WITH AN ALIAS INSIDE IT ADMITS WHAT THE ALIAS
+/// NAMES (review round 5).
+///
+/// `fn k<U>(u: U, t: (B, i64))` is instantiated with `B` kept as its name
+/// inside the tuple, as a written type keeps it. A method's result was that
+/// name, so `k(1, (s.pair(), 5))` compared `(B, Int)` with `(B, Int)` and ran
+/// on the reviewed tip (main sent it to gcc). Once a method's signature reads
+/// `B` as the tuple it names, the same call compared `(B, Int)` with
+/// `((Int, Int), Int)` and was refused — unless the instantiated parameter is
+/// read as what it is, a written type (`TypeChecker::written_admits`).
+#[test]
+fn a_generic_parameter_written_with_an_alias_inside_admits_what_it_names() {
+    let program = "type B = (i64, i64);\nstruct S { n: i64 }\n\
+                   impl S { fn pair(&self) -> B { return (4294967297, 8); } }\n\
+                   fn k<U>(u: U, t: (B, i64)) -> i64 { return t.1; }\n\
+                   fn main() { let s = S { n: 1 }; print_int(k(1, (s.pair(), 5))); }\n";
+    assert_eq!(outcome(program, "generic_written"), "RUN: 5\n");
+}
+
+/// A LITERAL IS NEVER ADMITTED THROUGH AN ALIAS NAME; WHAT MAIN TYPED BY THE
+/// NAME ALWAYS IS (review round 5).
+///
+/// `let xs: [N; 2] = [f(1), f(2)]` under `type N = i64` (a scalar, a struct
+/// or an enum alias alike) compared main's name `N` with the name and ran; so
+/// did `[s.get(), s.get()]`. Both results are now the type `N` names, which
+/// the written `N` admits. A literal is not: main gave `5`, `T { .. }`, `K::B`
+/// their structural types and refused them under the name — the very refusal
+/// tests/xfail/alias_nested_in_tuple_annotation.pd declares (`let e: Edge =
+/// (1, 2, 30)` with `type Edge = (NodeId, NodeId, i64)`), which is M3's to
+/// lift and stays refused.
+#[test]
+fn a_literal_is_never_admitted_through_an_alias_name() {
+    let kinds = [
+        ("a scalar alias", "type N = i64;\n", "4294967297"),
+        (
+            "a struct alias",
+            "struct T { n: i64 }\ntype N = T;\n",
+            "T { n: 4294967297 }",
+        ),
+        ("an enum alias", "enum K { A, B }\ntype N = K;\n", "K::B"),
+    ];
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    for (kind, decl, value) in kinds {
+        let defs = format!(
+            "{}struct S {{ n: i64 }}\nimpl S {{ fn get(&self) -> N {{ return {v}; }} }}\n\
+             fn g<Q>(q: Q) -> i64 {{ return 3; }}\nfn f<U>(x: U) -> N {{ return {v}; }}\n",
+            decl,
+            v = value
+        );
+        for (shape, bind, out) in [
+            (
+                "generic results in `[N; 2]`",
+                "let xs: [N; 2] = [f(1), f(2)];",
+                "RUN",
+            ),
+            (
+                "method results in `[N; 2]`",
+                "let xs: [N; 2] = [s.get(), s.get()];",
+                "RUN",
+            ),
+            (
+                "a generic result in `(N, i64)`",
+                "let t: (N, i64) = (f(1), 5);",
+                "RUN",
+            ),
+            (
+                "literals in `[N; 2]`",
+                &format!("let xs: [N; 2] = [{v}, {v}];", v = value) as &str,
+                "REFUSED",
+            ),
+            (
+                "a literal in `(N, i64)`",
+                &format!("let t: (N, i64) = ({}, 5);", value) as &str,
+                "REFUSED",
+            ),
+        ] {
+            let program = format!(
+                "{}fn main() {{ let s = S {{ n: 1 }}; {} print_int(g(s)); }}\n",
+                defs, bind
+            );
+            let verdict = outcome(&program, "alias_literal");
+            let class = if verdict.starts_with("RUN: ") {
+                "RUN"
+            } else if verdict.starts_with("REFUSED: ") {
+                "REFUSED"
+            } else {
+                "GCC"
+            };
+            got.push(format!("{} / {}: {}", kind, shape, class));
+            want.push(format!("{} / {}: {}", kind, shape, out));
+        }
+    }
+    let edge = "type NodeId = i64;\ntype Edge = (NodeId, NodeId, i64);\n\
+                fn main() { let e: Edge = (1, 2, 30); print_int(e.2); }\n";
+    let verdict = outcome(edge, "alias_literal");
+    got.push(format!(
+        "the xfail row's literal: {}",
+        &verdict[..verdict.len().min(8)]
+    ));
+    want.push("the xfail row's literal: REFUSED:".to_string());
+    assert_eq!(got, want);
+}

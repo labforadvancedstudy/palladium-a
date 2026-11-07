@@ -328,10 +328,16 @@ impl LanguageServer {
         parser.parse()
     }
 
-    /// Type check a document
+    /// Type check a document: the program the compiler's type checker is
+    /// given, so a binder an alias would capture is renamed first, as the
+    /// driver does (`crate::ast::with_captures_renamed`). The symbol index
+    /// keeps the document as written. Imports are not resolved here, so there
+    /// are no modules to rename against.
     fn typecheck_document(&self, ast: &crate::ast::Program) -> Result<TypeInfo> {
+        let mut program = ast.clone();
+        crate::ast::with_captures_renamed(&mut program, HashMap::new());
         let mut type_checker = crate::typeck::TypeChecker::new();
-        type_checker.check(ast)?;
+        type_checker.check(&program)?;
 
         // Extract type information
         // TODO: Implement type info extraction
@@ -504,4 +510,47 @@ impl LanguageServer {
         }
     }
     
+}
+
+#[cfg(test)]
+mod same_program_as_the_compiler_tests {
+    use super::LanguageServer;
+
+    /// The editor's messages for a document opened with `source`.
+    fn editor_says(source: &str) -> Vec<String> {
+        let mut server = LanguageServer::new();
+        let uri = "file:///same_program.pd".to_string();
+        server
+            .open_document(uri.clone(), 1, source.to_string())
+            .expect("open_document");
+        server.diagnostics[&uri]
+            .iter()
+            .map(|d| d.message.clone())
+            .collect()
+    }
+
+    /// THE EDITOR JUDGES THE PROGRAM THE COMPILER JUDGES (review round 5).
+    /// The driver renames a binder an alias would capture before its type
+    /// checker runs (`crate::ast::with_captures_renamed`); the language server
+    /// type-checked the parsed program as written, so the two were handed
+    /// different programs and told the user different things: the driver's
+    /// error named the parameter `T#1`, the editor's `T`. Each program below
+    /// is refused by the type checker, so no C is written.
+    #[test]
+    fn the_editor_and_the_compiler_say_the_same_thing() {
+        let programs = [
+            "struct T { n: i64 } type A = T; fn f<T>(x: T, y: T) -> A { return T { n: 7 }; } \
+             fn main() { let a = f(1, true); print_int(a.n); }",
+            "struct T { n: i64 } type A = T; struct G<T> { v: T, w: T, a: A } \
+             fn main() { let g = G { v: 1, w: true, a: T { n: 7 } }; print_int(g.v); }",
+            "fn main() { match 1 { \"x#1\" => { print_int(1); } _ => { print_int(0); } } }",
+        ];
+        for source in programs {
+            let compiler = crate::Driver::new()
+                .compile_string(source, "same_program.pd")
+                .expect_err("the compiler refuses this program")
+                .to_string();
+            assert_eq!(editor_says(source), vec![compiler], "{}", source);
+        }
+    }
 }

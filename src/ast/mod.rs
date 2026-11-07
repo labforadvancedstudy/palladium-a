@@ -2253,7 +2253,7 @@ fn expand_type(ty: &mut Type, aliases: &Aliases, bound: &[String], depth: usize)
 // rename is made only on such a collision, and before the type checker reads
 // the program, so the checker, the borrow checker and code generation see one
 // program. `#` cannot occur in a Palladium identifier, so no source can spell
-// the new name; `in_user_spelling` removes the `#n` from a diagnostic.
+// the new name; `user_spelling` gives a printed type the name the source wrote.
 
 /// The capture-finding visit: which of `binders` some alias written here
 /// brings back by name once it is expanded at the top level.
@@ -2381,7 +2381,7 @@ fn rename_captured(
             continue;
         }
         *fresh += 1;
-        let to = format!("{}#{}", from, fresh);
+        let to = format!("{}{}{}", from, RENAMED, fresh);
         walk(
             &mut Rename {
                 from: &from,
@@ -2434,25 +2434,26 @@ pub fn with_captures_renamed(
     modules
 }
 
-/// `text` with every renamed parameter spelled as the source spelled it:
-/// `T#1` back to `T`. A diagnostic names the parameter the user wrote.
-pub fn in_user_spelling(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let chars: Vec<char> = text.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        let after_name = i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_');
-        if chars[i] == '#' && after_name && chars.get(i + 1).is_some_and(|c| c.is_ascii_digit()) {
-            i += 1;
-            while chars.get(i).is_some_and(|c| c.is_ascii_digit()) {
-                i += 1;
-            }
-            continue;
-        }
-        out.push(chars[i]);
-        i += 1;
+/// What a renamed parameter's name carries after its source spelling: the
+/// rename pass names `T` `T#1` (`rename_captured`), and `#` cannot occur in a
+/// Palladium identifier, so a name the source wrote never contains it.
+const RENAMED: char = '#';
+
+/// The name `name` as the source spelled it: `T` for the `T#1` the rename
+/// pass made of it, and every other name as it is.
+///
+/// THIS IS FOR A NAME, NEVER FOR A MESSAGE (review round 5). It is applied
+/// where a type or a type parameter is printed — `CheckerType`'s `Display`
+/// and the type checker's diagnostics that print a parameter's name — so it
+/// sees nothing but names. Round 4 applied a text scan to the whole
+/// diagnostic instead, and removed `#<digits>` from a user's String literal
+/// too: `match 1 { "x#1" => .. }` was reported as `found the String literal
+/// "x"` in a program with no generic at all.
+pub fn user_spelling(name: &str) -> &str {
+    match name.split_once(RENAMED) {
+        Some((spelling, n)) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => spelling,
+        _ => name,
     }
-    out
 }
 
 fn rename_in_item(item: &mut Item, aliases: &Aliases, fresh: &mut usize) {
@@ -2997,10 +2998,8 @@ mod alias_expansion_tests {
             struct_fields(&p, "G"),
             vec![custom("T#2"), custom("T"), arr(custom("T#2"))]
         );
-        assert_eq!(
-            in_user_spelling("expected T#1, found [T#2; 2] in `G<T#2>` (#63)"),
-            "expected T, found [T; 2] in `G<T>` (#63)"
-        );
+        assert_eq!(user_spelling("T#2"), "T");
+        assert_eq!(user_spelling("T"), "T");
     }
 
     #[test]

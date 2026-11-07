@@ -570,7 +570,7 @@ implementation = "partial"
 milestone = "post-1.0"
 evidence = [
   "src: Cargo.toml:53 [[bin]] for pls",
-  "gate: cargo test --release --lib lsp:: -> \"76 passed\" -- the only executed evidence for pls anywhere in this repository",
+  "gate: cargo test --release --lib lsp:: -> \"77 passed\" -- the only executed evidence for pls anywhere in this repository",
   "cmd: ls src/lsp/ -> exit 0, 11 lines -- `completion.rs`, `diagnostics.rs`, `hover.rs`, `references.rs`, `symbols.rs`, `analysis.rs`, `handlers.rs`, `server.rs` and two test files",
 ]
 note = "No conformance or integration row covers it -- which is why the previous evidence, \"completion.rs, diagnostics.rs and their tests\", could understate the surface by six files and nothing noticed. The listing is now the measurement. It bounds the surface, not the behaviour: no gate runs pls, so what these files DO is unmeasured, and `partial` here means \"a server exists and is unproven\", not \"these features work\"."

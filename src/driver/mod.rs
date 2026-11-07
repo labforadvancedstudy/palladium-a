@@ -287,7 +287,7 @@ impl Driver {
             Ok(output) => Ok(output),
             Err(e) => {
                 // Convert error to diagnostic and report it
-                let diagnostic = e.to_diagnostic().in_user_spelling();
+                let diagnostic = e.to_diagnostic();
                 reporter.report(&diagnostic);
                 Err(e)
             }

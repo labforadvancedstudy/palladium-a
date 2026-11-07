@@ -1599,9 +1599,9 @@ fn test_the_whole_emitted_c_is_byte_stable() {
 /// Auditing codegen for what else could put the hash seed into the output
 /// turned up a second, independent source: monomorphized generic
 /// instantiations. `TypeChecker::get_instantiations` builds its `Vec` by
-/// iterating `self.instantiations.keys()` (`src/typeck/mod.rs:6545-6545`), which is a
+/// iterating `self.instantiations.keys()` (`src/typeck/mod.rs:6549-6549`), which is a
 /// `HashMap`, and `get_struct_instantiations` does the same
-/// (`src/typeck/mod.rs:6607-6607`). Codegen then emits in that Vec's order
+/// (`src/typeck/mod.rs:6611-6611`). Codegen then emits in that Vec's order
 /// (`src/codegen/mod.rs:2162-2162`, `src/codegen/mod.rs:2347-2347`).
 ///
 /// This program imports NOTHING, which is how the two sources were told apart:
@@ -1622,7 +1622,7 @@ fn test_the_whole_emitted_c_is_byte_stable() {
 /// `(name, type_args)`.
 ///
 /// NOT COVERED by any test: the sibling sort in `get_struct_instantiations`
-/// (`src/typeck/mod.rs:6607-6607`). Generic *structs* cannot be compiled at all right
+/// (`src/typeck/mod.rs:6611-6611`). Generic *structs* cannot be compiled at all right
 /// now — `struct Box<T> { v: T }` lowers to `void*` and gcc rejects
 /// "initializing 'void *' with an expression of incompatible type
 /// 'struct Box_alpha_i64'" — so there is no program whose output that ordering
