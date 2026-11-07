@@ -765,11 +765,11 @@ impl std::fmt::Display for CheckerType {
         match self {
             CheckerType::Unit => write!(f, "()"),
             CheckerType::Range => write!(f, "a range"),
-            CheckerType::String(_) => write!(f, "String"),
-            CheckerType::Int(_) => write!(f, "Int"),
-            CheckerType::Float(_) => write!(f, "Float"),
-            CheckerType::Bool(_) => write!(f, "Bool"),
-            CheckerType::Char(_) => write!(f, "Char"),
+            CheckerType::String(d) => write!(f, "{}", d.shown("String")),
+            CheckerType::Int(d) => write!(f, "{}", d.shown("Int")),
+            CheckerType::Float(d) => write!(f, "{}", d.shown("Float")),
+            CheckerType::Bool(d) => write!(f, "{}", d.shown("Bool")),
+            CheckerType::Char(d) => write!(f, "{}", d.shown("Char")),
             CheckerType::Array(elem_type, size) => match size {
                 ArraySizeValue::Literal(n) => write!(f, "[{}; {}]", elem_type, n),
                 ArraySizeValue::ConstParam(name) => write!(f, "[{}; {}]", elem_type, spelled(name)),
@@ -3452,8 +3452,8 @@ impl TypeChecker {
                         // Type check the value expression
                         let value_type = self.check_expression(value)?;
 
-                        // Check that types match (a written type: `written_admits`)
-                        if !self.written_admits(&var_type, &value_type, Some(value)) {
+                        // A written type admits it, or the binding's value meets it
+                        if !self.admits_or_meets(&var_type, &value_type, value) {
                             return Err(self.error_helper.type_mismatch(
                                 &var_type.to_string(),
                                 &value_type.to_string(),
@@ -3491,8 +3491,8 @@ impl TypeChecker {
                         // Type check the value expression
                         let value_type = self.check_expression(value)?;
 
-                        // Check that types match (a written type: `written_admits`)
-                        if !self.written_admits(&elem_type, &value_type, Some(value)) {
+                        // A written type admits it, or the element's value meets it
+                        if !self.admits_or_meets(&elem_type, &value_type, value) {
                             return Err(CompileError::TypeMismatch {
                                 expected: elem_type.to_string(),
                                 found: value_type.to_string(),
@@ -4237,7 +4237,7 @@ impl TypeChecker {
                     }
                     BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
                         // Comparison operations require same types
-                        if left_type != right_type {
+                        if self.merged(&left_type, &right_type).is_none() {
                             return Err(CompileError::TypeMismatch {
                                 expected: left_type.to_string(),
                                 found: right_type.to_string(),
@@ -4308,14 +4308,14 @@ impl TypeChecker {
                 // Check that all elements have the same type
                 for elem in &elements[1..] {
                     let elem_expr_type = self.check_expression(elem)?;
-                    if elem_expr_type != elem_type {
+                    let Some(merged) = self.merged(&elem_type, &elem_expr_type) else {
                         return Err(CompileError::TypeMismatch {
                             expected: elem_type.to_string(),
                             found: elem_expr_type.to_string(),
                             span: None,
                         });
-                    }
-                    elem_type = elem_type.agreeing(&elem_expr_type);
+                    };
+                    elem_type = merged;
                 }
 
                 Ok(CheckerType::Array(
@@ -4406,30 +4406,30 @@ impl TypeChecker {
                         if let crate::ast::Type::TypeParam(param_name) = field_type {
                             if generic_struct.type_params.contains(param_name) {
                                 // Check if we already have a constraint for this type parameter
-                                if let Some(existing_type) = type_substitutions.get(param_name) {
-                                    if *existing_type != provided_type {
-                                        return Err(CompileError::Generic(format!(
+                                let merged = match type_substitutions.get(param_name) {
+                                    Some(existing) => self.merged(existing, &provided_type).ok_or_else(|| {
+                                        CompileError::Generic(format!(
                                             "Conflicting type constraints for type parameter '{}': {} vs {}",
-                                            spelled(param_name), existing_type, provided_type
-                                        )));
-                                    }
-                                } else {
-                                    type_substitutions.insert(param_name.clone(), provided_type);
-                                }
+                                            spelled(param_name), existing, provided_type
+                                        ))
+                                    })?,
+                                    None => provided_type,
+                                };
+                                type_substitutions.insert(param_name.clone(), merged);
                             }
                         } else if let crate::ast::Type::Custom(type_name) = field_type {
                             // Check if it's a type parameter referenced as Custom type
                             if generic_struct.type_params.contains(type_name) {
-                                if let Some(existing_type) = type_substitutions.get(type_name) {
-                                    if *existing_type != provided_type {
-                                        return Err(CompileError::Generic(format!(
+                                let merged = match type_substitutions.get(type_name) {
+                                    Some(existing) => self.merged(existing, &provided_type).ok_or_else(|| {
+                                        CompileError::Generic(format!(
                                             "Conflicting type constraints for type parameter '{}': {} vs {}",
-                                            spelled(type_name), existing_type, provided_type
-                                        )));
-                                    }
-                                } else {
-                                    type_substitutions.insert(type_name.clone(), provided_type);
-                                }
+                                            spelled(type_name), existing, provided_type
+                                        ))
+                                    })?,
+                                    None => provided_type,
+                                };
+                                type_substitutions.insert(type_name.clone(), merged);
                             }
                         }
                         // TODO: Handle nested generic types like Box<T> where T needs to be inferred
@@ -4465,7 +4465,7 @@ impl TypeChecker {
                             })?;
 
                         // Substitute type parameters in the field type
-                        let concrete_checker_type = self.substitute_type_params(
+                        let concrete = self.substitute_type_params(
                             field_type,
                             &generic_struct.type_params,
                             &inferred_args,
@@ -4473,9 +4473,9 @@ impl TypeChecker {
 
                         // Type check the field with the concrete type
                         let provided_type = self.check_expression(provided_expr)?;
-                        if !self.is_or_names(&provided_type, &concrete_checker_type) {
+                        if !self.field_admits(&provided_type, &concrete, provided_expr) {
                             return Err(CompileError::TypeMismatch {
-                                expected: concrete_checker_type.to_string(),
+                                expected: concrete.to_string(),
                                 found: provided_type.to_string(),
                                 span: None,
                             });
@@ -5098,16 +5098,16 @@ impl TypeChecker {
                 // ONE TYPE, NOT TWO. The value is stored in a single
                 // hoisted temporary (see `src/codegen/mod.rs`), so branches
                 // that disagree have no C declaration to be given.
-                if then_type != else_type {
+                let Some(merged) = self.merged(&then_type, &else_type) else {
                     return Err(CompileError::TypeMismatch {
                         expected: format!("both branches of this `if` to have type {}", then_type),
                         found: format!("an `else` branch of type {}", else_type),
                         span: Some(*span),
                     }
                     .with_code(DiagnosticCode::ValueIfBranchesAgree));
-                }
+                };
 
-                Ok(then_type.agreeing(&else_type))
+                Ok(merged)
             }
             Expr::Block { stmts, value, span } => {
                 self.check_value_block(stmts, value.as_deref(), *span)
@@ -5269,10 +5269,10 @@ impl TypeChecker {
                     self.symbols.exit_scope();
                     let arm_type = arm_type?;
 
-                    match unified.take() {
+                    match unified.take().map(|u| (self.merged(&u, &arm_type), u)) {
                         None => unified = Some(arm_type),
-                        Some(u) if u == arm_type => unified = Some(u.agreeing(&arm_type)),
-                        Some(first) => {
+                        Some((Some(merged), _)) => unified = Some(merged),
+                        Some((None, first)) => {
                             return Err(CompileError::TypeMismatch {
                                 expected: format!(
                                     "every arm of this `match` to have type {}, as the first one \
@@ -5465,6 +5465,7 @@ impl TypeChecker {
     /// the type. The second is not a courtesy — the value is stored in ONE C
     /// temporary, so two types have no declaration to share.
     fn record_break_value(&mut self, value_type: CheckerType, span: Span) -> Result<()> {
+        let merged = self.merged_break(&value_type);
         match self.break_targets.last_mut() {
             None => Err(self.error_helper.control_flow_outside_loop("break")),
             Some(BreakTarget::Statement) => Err(CompileError::TypeMismatch {
@@ -5476,7 +5477,7 @@ impl TypeChecker {
             }
             .with_code(DiagnosticCode::LoopAndItsBreaksAgreeAboutAValue)),
             Some(BreakTarget::Value(slot)) => match slot {
-                Some(existing) if *existing != value_type => Err(CompileError::TypeMismatch {
+                Some(existing) if merged.is_none() => Err(CompileError::TypeMismatch {
                     expected: format!(
                         "every `break` out of this `loop` to carry a {}, as the first one does",
                         existing
@@ -5485,8 +5486,7 @@ impl TypeChecker {
                     span: Some(span),
                 }),
                 _ => {
-                    let first = slot.take().unwrap_or_else(|| value_type.clone());
-                    *slot = Some(first.agreeing(&value_type));
+                    *slot = merged;
                     Ok(())
                 }
             },
@@ -6202,7 +6202,7 @@ impl TypeChecker {
         generic_func: &GenericFunction,
         args: &[Expr],
     ) -> Result<Vec<String>> {
-        let mut type_map: HashMap<String, String> = HashMap::new();
+        let mut type_map: TypeArguments = HashMap::new();
 
         // Check argument count
         if args.len() != generic_func.params.len() {
@@ -6222,7 +6222,7 @@ impl TypeChecker {
         let mut type_args = Vec::new();
         for type_param in &generic_func.type_params {
             match type_map.get(type_param) {
-                Some(concrete_type) => type_args.push(concrete_type.clone()),
+                Some((concrete_type, _)) => type_args.push(concrete_type.clone()),
                 None => {
                     return Err(CompileError::Generic(format!(
                         "Could not infer type parameter '{}' from function arguments",
@@ -6240,23 +6240,23 @@ impl TypeChecker {
         &self,
         expr: &Expr,
         expected_type: &crate::ast::Type,
-        type_map: &mut HashMap<String, String>,
+        type_map: &mut TypeArguments,
     ) -> Result<()> {
         match expected_type {
             crate::ast::Type::TypeParam(param_name) => {
-                let expr_type = self.type_argument_of(expr)?;
-                // Check if we already have a mapping for this type parameter
-                if let Some(existing_type) = type_map.get(param_name) {
-                    if existing_type != &expr_type {
+                let (arg, value) = (self.type_argument_of(expr)?, self.argument_type(expr));
+                if let Some((existing_type, first)) = type_map.get(param_name) {
+                    if existing_type != &arg && !self.one_type(first, &value) {
                         return Err(CompileError::Generic(format!(
                             "Type parameter '{}' has conflicting types: '{}' and '{}'",
                             spelled(param_name),
                             existing_type,
-                            expr_type
+                            arg
                         )));
                     }
-                } else {
-                    type_map.insert(param_name.clone(), expr_type);
+                }
+                if !type_map.contains_key(param_name) || self.type_aliases.contains_key(&arg) {
+                    type_map.insert(param_name.clone(), (arg, value));
                 }
                 Ok(())
             }
@@ -7178,12 +7178,12 @@ impl TypeChecker {
     /// reported the consequence (`expected T, found Int`) instead of the
     /// cause. The message is the one the scalar path already gives.
     fn bind_type_argument(
-        type_map: &mut HashMap<String, String>,
+        type_map: &mut TypeArguments,
         param: &str,
         concrete: String,
     ) -> Result<()> {
         match type_map.get(param) {
-            Some(existing) if *existing != concrete => Err(CompileError::Generic(format!(
+            Some((existing, _)) if *existing != concrete => Err(CompileError::Generic(format!(
                 "Type parameter '{}' has conflicting types: '{}' and '{}'",
                 spelled(param),
                 existing,
@@ -7191,7 +7191,7 @@ impl TypeChecker {
             ))),
             Some(_) => Ok(()),
             None => {
-                type_map.insert(param.to_string(), concrete);
+                type_map.insert(param.to_string(), (concrete, None));
                 Ok(())
             }
         }
@@ -7234,7 +7234,9 @@ impl TypeChecker {
     /// main would have admitted it (`names`): an alias this checker erases
     /// (`type X = i32`) names only a type declared as it.
     fn is_or_names(&self, found: &CheckerType, expected: &CheckerType) -> bool {
-        if found == expected || self.names(found, expected) {
+        if (found == expected && !self.narrows_a_named(expected, found))
+            || self.names(found, expected)
+        {
             return true;
         }
         match (found, expected) {
@@ -7357,7 +7359,11 @@ impl TypeChecker {
                         .enumerate()
                         .all(|(i, (w, f))| self.written_admits(w, f, element(i)))
             }
-            _ => written == found,
+            _ => {
+                written == found
+                    && (value.is_some_and(Self::is_literal_value)
+                        || !self.narrows_a_named(written, found))
+            }
         }
     }
 
@@ -7413,12 +7419,22 @@ impl TypeChecker {
     /// (`DeclaredAs`) — a tuple, and since review round 6 any value main typed
     /// by the alias's name — and only by that one; anything else is spelled
     /// as `infer_expr_type` spells it.
+    ///
+    /// A REFERENCE alias carries its value wherever it was declared (review
+    /// round 7): this checker spells a reference as its referent, which is
+    /// never the C type of the value — `let r0: A = &m; g(r0)` under `type A
+    /// = &i64` instantiated `g` at `i64` and passed it a pointer, gcc on main
+    /// and on 1dad901, and once code generation passes such a value as main
+    /// did, every field, parameter or binding declared `A` handed to a
+    /// generic met the same instantiation.
     fn type_argument_of(&self, expr: &Expr) -> Result<String> {
         if let Expr::Ident(name) = expr {
             if let Some(ty) = self.symbols.lookup(name).map(|v| &v.ty) {
                 if let Some(alias) = ty.declared_as() {
-                    let tuple = matches!(ty, CheckerType::Tuple(..));
-                    if tuple || (ty.declared_by_name() && self.spelled_lossily(alias)) {
+                    let carried = matches!(ty, CheckerType::Tuple(..))
+                        || self.alias_is_reference(alias)
+                        || (ty.declared_by_name() && self.spelled_lossily(alias));
+                    if carried {
                         return Ok(alias.to_string());
                     }
                 }
@@ -7467,7 +7483,211 @@ impl TypeChecker {
             _ => expected,
         }
     }
+
+    /// The ONE type two values have where they meet in one — the branches of
+    /// an `if`, the arms of a `match`, a `loop`'s `break`s, an array's
+    /// elements, the operands of a comparison, the arguments a generic's type
+    /// parameter is inferred from — or `None` if they are not one type.
+    ///
+    /// AN ALIAS'S NAME MEETS A VALUE DECLARED AS THAT ALIAS (review round 7).
+    /// A written type keeps an alias nested in it as its NAME (`xs[0]` over
+    /// `let xs: [N; 2]`, `*p` over `p: &N`), while a generic's result, a
+    /// method's and a generic struct's field are since review round 1 the type
+    /// the alias names, declared as the alias (`DeclaredAs`). main typed both
+    /// as the name and ran `if c { xs[0] } else { f(3) }`, `[xs[0], s.get()]`,
+    /// `xs[0] == f(3)` ... (under `type N = u32`, `g(r)` printed `4294967288`);
+    /// each was compared by `!=` here and refused as `expected N, found Int`.
+    /// So a NAME that meets, at the same depth, a value declared as an alias of
+    /// the same type (`same_alias_type`) is read as that value's type, declared
+    /// as the alias by name — main's own type was the name — and the two then
+    /// agree as any two values do (`agreed`): the merged value keeps the alias,
+    /// and is carried to a generic by it, wherever both sides do. Nothing else
+    /// meets a name: a literal, an undeclared value and another alias's name
+    /// are refused as before, and as main refused them.
+    fn merged(&self, a: &CheckerType, b: &CheckerType) -> Option<CheckerType> {
+        let a = self.name_read_as_declared(a, b);
+        let b = self.name_read_as_declared(b, a.as_ref());
+        let one = *a == *b && !self.narrows_a_named(&a, &b) && !self.narrows_a_named(&b, &a);
+        one.then(|| self.agreed(a.into_owned(), &b))
+    }
+
+    /// `ty`, as the type it and `other` — which compares equal to it — have
+    /// together: a value keeps the alias it was declared as only where `other`
+    /// was declared as an alias of the same type, at every depth, and as
+    /// main's name only where both were. Two aliases of one type
+    /// (`same_alias_type`) agree on the first: the value is either's, and
+    /// dropping both would carry an `N = u32` to a generic as an `i64` (review
+    /// round 7; `CheckerType::agreeing` compared the two names, and had no
+    /// table to compare their types in).
+    fn agreed(&self, ty: CheckerType, other: &CheckerType) -> CheckerType {
+        let alias = match (ty.declared_as(), other.declared_as()) {
+            (Some(mine), Some(theirs)) if self.same_alias_type(mine, theirs) => {
+                Some(mine.to_string())
+            }
+            _ => None,
+        };
+        let by_name = ty.declared_by_name() && other.declared_by_name();
+        let ty = match (ty, other) {
+            (CheckerType::Tuple(mine, name), CheckerType::Tuple(theirs, _)) => {
+                let elements = mine.into_iter().zip(theirs).map(|(m, t)| self.agreed(m, t));
+                CheckerType::Tuple(elements.collect(), name)
+            }
+            (CheckerType::Array(mine, size), CheckerType::Array(theirs, _)) => {
+                CheckerType::Array(Box::new(self.agreed(*mine, theirs)), size)
+            }
+            (ty, _) => ty,
+        };
+        match alias {
+            Some(alias) => ty.undeclared().declared(&alias, by_name),
+            None => ty.undeclared(),
+        }
+    }
+
+    /// `ty`, with every alias NAME in it that meets — at the same depth of
+    /// `other` — a value declared as an alias of the same type replaced by
+    /// that value's type, declared as the alias by name (`merged`).
+    fn name_read_as_declared<'t>(
+        &self,
+        ty: &'t CheckerType,
+        other: &CheckerType,
+    ) -> std::borrow::Cow<'t, CheckerType> {
+        use std::borrow::Cow;
+        match (ty, other) {
+            (CheckerType::Struct(alias, _), _)
+                if self.type_aliases.contains_key(alias)
+                    && self.named_as(alias, other)
+                    && self.through_alias_name(ty) == *other =>
+            {
+                Cow::Owned(self.through_alias_name(ty).declared(alias, true))
+            }
+            (CheckerType::Array(elem, size), CheckerType::Array(theirs, _)) => {
+                match self.name_read_as_declared(elem, theirs) {
+                    Cow::Borrowed(_) => Cow::Borrowed(ty),
+                    Cow::Owned(elem) => {
+                        Cow::Owned(CheckerType::Array(Box::new(elem), size.clone()))
+                    }
+                }
+            }
+            (CheckerType::Tuple(mine, declared), CheckerType::Tuple(theirs, _))
+                if mine.len() == theirs.len() =>
+            {
+                let elements: Vec<_> = mine
+                    .iter()
+                    .zip(theirs)
+                    .map(|(m, t)| self.name_read_as_declared(m, t))
+                    .collect();
+                if elements.iter().all(|e| matches!(e, Cow::Borrowed(_))) {
+                    return Cow::Borrowed(ty);
+                }
+                let elements = elements.into_iter().map(Cow::into_owned).collect();
+                Cow::Owned(CheckerType::Tuple(elements, declared.clone()))
+            }
+            _ => Cow::Borrowed(ty),
+        }
+    }
+
+    /// Would a value of type `found` lose width or sign where `named` stands:
+    /// `named` declared by the NAME of an alias of a narrower or unsigned
+    /// integer, or of an `f32` (`alias_narrows`), and `found` not declared as
+    /// an alias of the same type, at some depth of an array or a tuple?
+    ///
+    /// ONE `Int` FOR EVERY WIDTH (review round 7). main typed a generic's
+    /// result, a method's and a generic struct's field by the alias's NAME
+    /// and refused any other value there or beside it (`expected N, found
+    /// Int`). Since review round 1 they are the type the alias names, which
+    /// this checker spells `Int` whatever the width, and an `i64` compared
+    /// equal: under `type N = u32`, `let k = 4294967297;` given to
+    /// `fn h<T>(t: T, x: N)`, a method's `x: N`, a generic struct's `n: N`,
+    /// returned from `fn h<T>(t: T) -> N`, assigned over `let mut r = f(1)`,
+    /// or beside `f(1)` in an `if` or an array, ran and printed `1` on
+    /// 1dad901. Refused here, as main refused it; a reference alias is not
+    /// this (its C type cannot be confused silently), nor a tuple's.
+    fn narrows_a_named(&self, named: &CheckerType, found: &CheckerType) -> bool {
+        match (named, found) {
+            (CheckerType::Array(named, _), CheckerType::Array(found, _)) => {
+                self.narrows_a_named(named, found)
+            }
+            (CheckerType::Tuple(named, _), CheckerType::Tuple(found, _)) => named
+                .iter()
+                .zip(found)
+                .any(|(n, f)| self.narrows_a_named(n, f)),
+            _ => {
+                named.declared_by_name()
+                    && named.declared_as().is_some_and(|alias| {
+                        self.alias_narrows(alias)
+                            && !found
+                                .declared_as()
+                                .is_some_and(|declared| self.same_alias_type(alias, declared))
+                    })
+            }
+        }
+    }
+
+    /// Is the alias `name` an `i32`, `u32`, `u64` or `f32` — a type whose
+    /// values this checker's `Int` or `Float` cannot be told from wider or
+    /// signed ones?
+    fn alias_narrows(&self, name: &str) -> bool {
+        use crate::ast::Type as T;
+        matches!(
+            self.alias_expansion(name),
+            Some(T::I32 | T::U32 | T::U64 | T::F32)
+        )
+    }
+
+    /// `is_or_names`, or a LITERAL of the field's type (`G { v: 1, n: 7 }`):
+    /// a generic struct's field reads a literal at its declared type, as an
+    /// annotation does, and only a VALUE declared otherwise is refused under
+    /// a narrowing alias (`narrows_a_named`).
+    fn field_admits(&self, found: &CheckerType, expected: &CheckerType, value: &Expr) -> bool {
+        self.is_or_names(found, expected) || (found == expected && Self::is_literal_value(value))
+    }
+
+    /// The type a value passed for a type parameter has, where this checker
+    /// can name it without checking the expression again: a binding's.
+    fn argument_type(&self, expr: &Expr) -> Option<CheckerType> {
+        match expr {
+            Expr::Ident(name) => self.symbols.lookup(name).map(|v| v.ty.clone()),
+            _ => None,
+        }
+    }
+
+    /// Are the values two arguments passed for one type parameter one type
+    /// (`merged`) — an alias's NAME and a value declared as it, which the
+    /// type-argument spellings tell apart where the alias's own spelling
+    /// loses nothing (`N` against `i64` under `type N = i64`)? The parameter
+    /// is then instantiated at the NAME, as main instantiated it for both.
+    fn one_type(&self, first: &Option<CheckerType>, value: &Option<CheckerType>) -> bool {
+        match (first, value) {
+            (Some(first), Some(value)) => self.merged(first, value).is_some(),
+            _ => false,
+        }
+    }
+
+    /// Does a place of type `place` — a binding, an array's element — take a
+    /// value of type `found`: as its written type admits it
+    /// (`written_admits`), or as the value already there meets it where two
+    /// values meet (`merged`)? `let mut r = f(1); r = xs[0];` over
+    /// `let xs: [N; 2]`, `type N = (i64, i64)`, assigns a name to a value
+    /// declared as it, which main ran (review round 7).
+    fn admits_or_meets(&self, place: &CheckerType, found: &CheckerType, value: &Expr) -> bool {
+        self.written_admits(place, found, Some(value)) || self.merged(place, found).is_some()
+    }
+
+    /// The type of the value the innermost value `loop` already carries,
+    /// merged with a `break`'s (`merged`) — or the `break`'s own, if it is the
+    /// first; `None` if the two are not one type.
+    fn merged_break(&self, value_type: &CheckerType) -> Option<CheckerType> {
+        match self.break_targets.last() {
+            Some(BreakTarget::Value(Some(existing))) => self.merged(existing, value_type),
+            _ => Some(value_type.clone()),
+        }
+    }
 }
+
+/// The type arguments a generic call's type parameters are inferred to, by
+/// parameter: the spelling each is instantiated at, and the type of the value
+/// that first gave it, where one is known (`TypeChecker::argument_type`).
+type TypeArguments = HashMap<String, (String, Option<CheckerType>)>;
 
 /// The tuple alias a value's declaration named it by: `B` for the result of
 /// `fn f<U>(x: U) -> B` under `type B = (i64, i64)`, for a binding annotated
@@ -7493,7 +7713,7 @@ impl TypeChecker {
 /// declared as, exactly as before, so this compares equal to every other
 /// `DeclaredAs`. Where two values meet in one (`if`, `match`, a `loop`'s
 /// `break`s, an array's elements) the name is kept only if they agree on it
-/// (`CheckerType::agreeing`). Where a WRITTEN type keeps the alias as its
+/// (`TypeChecker::agreed`). Where a WRITTEN type keeps the alias as its
 /// name (`[B; 2]`, `&B`), that name admits a tuple declared as it
 /// (`TypeChecker::written_admits`), as main's name admitted main's name.
 ///
@@ -7538,6 +7758,19 @@ pub struct DeclaredAs(pub Option<String>, pub bool);
 impl PartialEq for DeclaredAs {
     fn eq(&self, _: &Self) -> bool {
         true
+    }
+}
+
+impl DeclaredAs {
+    /// How a diagnostic names a value of the type `plain` declared so: by the
+    /// alias where main typed it by the NAME, as main named it — so a value
+    /// refused for its width reads `expected N, found Int`, not `expected
+    /// Int, found Int` (review round 7).
+    fn shown<'a>(&'a self, plain: &'a str) -> &'a str {
+        match self {
+            DeclaredAs(Some(alias), true) => spelled(alias),
+            _ => plain,
+        }
     }
 }
 
@@ -7622,29 +7855,6 @@ impl CheckerType {
             *slot = DeclaredAs(None, false);
         }
         self
-    }
-
-    /// `self`, as the type it and `other` — which compares equal to it —
-    /// have together: a value keeps the alias name it was declared as only
-    /// where `other` was declared as the same alias, at every depth, and as
-    /// main's name only where both were.
-    fn agreeing(self, other: &CheckerType) -> CheckerType {
-        let agreed = self.declared_as().is_some() && self.declared_as() == other.declared_as();
-        let by_name = self.declared_by_name() && other.declared_by_name();
-        let ty = match (self, other) {
-            (CheckerType::Tuple(mine, name), CheckerType::Tuple(theirs, _)) => {
-                let elements = mine.into_iter().zip(theirs).map(|(m, t)| m.agreeing(t));
-                CheckerType::Tuple(elements.collect(), name)
-            }
-            (CheckerType::Array(mine, size), CheckerType::Array(theirs, _)) => {
-                CheckerType::Array(Box::new(mine.agreeing(theirs)), size)
-            }
-            (ty, _) => ty,
-        };
-        match (agreed, ty.declared_as().map(str::to_string)) {
-            (true, Some(alias)) => ty.undeclared().declared(&alias, by_name),
-            _ => ty.undeclared(),
-        }
     }
 }
 

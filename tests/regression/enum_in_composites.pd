@@ -37,6 +37,18 @@
 // generic's result, runs as on main: it was refused as `expected B, found
 // (Int, Int)`, because the assignment compared with `!=` what the `let`
 // admits.
+//
+// Review round 7 added A NAME MEETS ITS VALUE and A REFERENCE ALIAS IS A
+// VALUE. An element of `[Wn; 2]` is the NAME `Wn`, a generic's result the
+// `u32` declared as `Wn`; main typed both as the name, so an `if`, an array
+// literal and a comparison over the two ran, and so did re-assigning an
+// element of `[Pair; 2]` to a binding of a generic's `Pair`. On 1dad901 each
+// was refused (`expected both branches of this `if` to have type Wn, found
+// an `else` branch of type Int`). And `type Rf = &i64`, passed to and
+// returned from a function and held in a struct's field, ran on main as a
+// pointer passed by value; on 1dad901 `return r0;` was emitted
+// `return (*r0);` (gcc refused it) and the field was refused as a reference
+// in a struct.
 
 enum K {
     A,
@@ -158,6 +170,16 @@ fn pfirst<X>(x: X) -> i64 {
     return x.0;
 }
 
+type Rf = &i64;
+
+fn rpass(r0: Rf) -> Rf {
+    return r0;
+}
+
+struct Holder {
+    p: Rf,
+}
+
 fn main() {
     // Both literal forms against an annotation.
     let xs: [K; 4] = [K::B; 4];
@@ -254,4 +276,30 @@ fn main() {
     print_int(wnot(ws));
     print_int(wnot(wz));
     print_int(pfirst(p0));
+
+    // An alias's name meets a value declared as it; a reference alias is a value.
+    let named: [Wn; 2] = [wmake(3), wmake(4)];
+    let wa = named[0];
+    let wb = wmake(5);
+    let wc = true;
+    let wm = if wc { wa } else { wb };
+    let wl = [wb, wa];
+    let wl1 = wl[1];
+    let wq = wa == wb;
+    let mut pr = pmake(4);
+    pr = pairs[1];
+    let big = 4294967297;
+    let rr = rpass(&big);
+    let rz: Rf = rr;
+    let hold = Holder { p: &big };
+    print("\nName meets value:");
+    print_int(wnot(wm));
+    print_int(wnot(wl1));
+    if wq {
+        print_int(1);
+    }
+    print_int(pfirst(pr));
+    print("\nReference alias:");
+    print_int(*rz);
+    print_int(*hold.p);
 }

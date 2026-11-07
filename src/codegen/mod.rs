@@ -2972,7 +2972,7 @@ impl CodeGenerator {
                 }
                 Type::Unit => "void",
                 Type::Custom(_name) => {
-                    // Use type_to_c to resolve type aliases
+                    self.register_tuple_type(field_type)?; // an alias kept by name
                     let resolved_type = self.type_to_c(field_type);
                     self.output
                         .push_str(&format!("{} {};\n", resolved_type, field_name));
@@ -3557,7 +3557,7 @@ impl CodeGenerator {
                 Type::I64 => "long long".to_string(),
                 Type::Char => "long long".to_string(),
                 Type::Bool => "int".to_string(),
-                Type::Custom(name) => name.clone(),
+                Type::Custom(name) => self.custom_c_type(name),
                 // Array parameters keep their dimensions, in the same encoding
                 // `self.variables` uses for locals ("long long[4]"). Recording
                 // the bare element type instead lost the length, which is what
@@ -5195,7 +5195,7 @@ impl CodeGenerator {
             Type::Array(element, _) => self.register_tuple_type(element)?,
             Type::Reference { inner, .. } => self.register_tuple_type(inner)?,
             Type::Future { output } => self.register_tuple_type(output)?,
-            _ => {}
+            ty => self.register_tuple_type_behind(ty)?,
         }
         Ok(())
     }
@@ -7084,9 +7084,88 @@ impl CodeGenerator {
     /// `crate::ast::expand_type_aliases` for why code generation never sees an
     /// alias: an alias emits no C, so every declarator has to be chosen from
     /// the aliased type, and `type IA = [i64; 2]; let xs: IA` printed
-    /// `long long[2] xs`.
+    /// `long long[2] xs`. A PUBLIC reference alias — one `type_to_c` resolves
+    /// by name — stays its name where it is the whole of a written type
+    /// (`crate::ast::expand_type_aliases_for_c`, review round 7).
     fn own_aliases_expanded(ast: &Program) -> Program {
-        crate::ast::expand_type_aliases(ast, &crate::ast::non_generic_aliases(ast))
+        let aliases = crate::ast::non_generic_aliases(ast);
+        let public = ast.items.iter().filter_map(|item| match item {
+            Item::TypeAlias(a) if matches!(a.visibility, crate::ast::Visibility::Public) => Some(a),
+            _ => None,
+        });
+        let opaque = Self::reference_aliases(public, &aliases);
+        crate::ast::expand_type_aliases_for_c(ast, &aliases, &opaque)
+    }
+
+    /// The C type a parameter declared as the named type `name` is recorded
+    /// under for inference: a struct's or an enum's name, as before — or, for
+    /// an alias code generation kept by NAME (`reference_aliases`), the C type
+    /// it names. Recorded as the name, `let r = x;` over `x: A`, `type A =
+    /// &i64`, was declared `A r = x;`, which no C declaration names (gcc on
+    /// main too, which kept every alias's name; review round 7).
+    fn custom_c_type(&self, name: &str) -> String {
+        match self.type_aliases.get(name) {
+            Some(aliased) => self.type_to_c(aliased),
+            None => name.to_string(),
+        }
+    }
+
+    /// `register_tuple_type` for an alias code generation kept by NAME
+    /// (`reference_aliases`, a generic struct's tuple field): every tuple shape
+    /// its type names, which no walk over the written types sees behind the
+    /// name — `fn h(p: A)` under `type A = &(i64, i64)` declared a pointer to
+    /// a tuple struct nothing defined. Anything else names no tuple.
+    fn register_tuple_type_behind(&mut self, ty: &Type) -> Result<()> {
+        if let Type::Custom(name) = ty {
+            if let Some(body) = self.type_aliases.get(name).cloned() {
+                return self.register_tuple_type(&body);
+            }
+        }
+        Ok(())
+    }
+
+    /// Which of the aliases `declared` code generation keeps by NAME where one
+    /// is the whole of a written type (review round 7): each whose type, with
+    /// every alias in it expanded, is a REFERENCE — and that `type_to_c`
+    /// resolves by name, so no generic one and none with a lifetime parameter
+    /// (the collection passes above skip both).
+    ///
+    /// main never expanded an alias, so a parameter, a result, a `let` or a
+    /// field written `A`, under `type A = &i64`, was the name `A` to every
+    /// rule below that asks whether a declared type is a reference: the
+    /// pointer was passed and returned as a value (`type_to_c` reads `A` as
+    /// `long long*`), and `type A = &i64; fn w(r0: A) -> A { return r0; }`,
+    /// called and dereferenced, ran and printed its value. Expanded, `A` was
+    /// `&i64` to those rules: `r0` became a reference parameter emitted
+    /// `return (*r0);` (gcc refused it), a field met "Reference types in
+    /// structs not yet supported" and `&(i64, i64)` "Unsupported type in
+    /// reference parameter". The alias-free spellings of those programs are
+    /// refused or gcc on main and still are: only the name is read as main
+    /// read it.
+    fn reference_aliases<'a>(
+        declared: impl Iterator<Item = &'a crate::ast::TypeAlias>,
+        aliases: &std::collections::HashMap<String, Type>,
+    ) -> std::collections::HashSet<String> {
+        Self::aliases_of(declared, aliases, |ty| matches!(ty, Type::Reference { .. }))
+    }
+
+    /// The aliases among `declared` that `type_to_c` resolves by name (no
+    /// type and no lifetime parameter) whose type, every alias in it
+    /// expanded, is `shape`.
+    fn aliases_of<'a>(
+        declared: impl Iterator<Item = &'a crate::ast::TypeAlias>,
+        aliases: &std::collections::HashMap<String, Type>,
+        shape: impl Fn(&Type) -> bool,
+    ) -> std::collections::HashSet<String> {
+        declared
+            .filter(|a| a.type_params.is_empty() && a.lifetime_params.is_empty())
+            .filter(|a| {
+                let mut ty = Type::Custom(a.name.clone());
+                crate::ast::expand_aliases_in_type(&mut ty, aliases, &[]);
+                shape(&ty)
+            })
+            .map(|a| a.name.clone())
+            .collect()
     }
 
     /// The program, and the generic templates the type checker handed over,
@@ -7095,6 +7174,8 @@ impl CodeGenerator {
     /// set `type_to_c` used to consult by name, read once here instead.
     fn with_aliases_expanded(&mut self, program: &Program) -> Program {
         let mut aliases: std::collections::HashMap<String, Type> = std::collections::HashMap::new();
+        let mut declared: std::collections::HashMap<String, crate::ast::TypeAlias> =
+            std::collections::HashMap::new();
         let mut modules: Vec<_> = self.imported_modules.values().collect();
         modules.sort_by(|a, b| a.path.cmp(&b.path));
         for info in modules {
@@ -7105,11 +7186,18 @@ impl CodeGenerator {
                         && !crate::ast::local_type_shadows_import(program, &a.name)
                     {
                         aliases.insert(a.name.clone(), a.ty.clone());
+                        declared.insert(a.name.clone(), a.clone());
                     }
                 }
             }
         }
         aliases.extend(crate::ast::non_generic_aliases(program));
+        for item in &program.items {
+            if let Item::TypeAlias(a) = item {
+                declared.insert(a.name.clone(), a.clone());
+            }
+        }
+        let opaque = Self::reference_aliases(declared.values(), &aliases);
         // A TEMPLATE'S OWN PARAMETERS ARE BOUND (round 2): a generic struct's
         // fields carry its parameters as `Custom`, so `type T = bool;` beside
         // `struct G<T> { v: T }` turned `G_i64.v` into an `int` and printed `1`
@@ -7117,20 +7205,37 @@ impl CodeGenerator {
         for (_, _, template) in &mut self.generic_instantiations {
             let bound = template.type_params.clone();
             for (_, ty) in &mut template.params {
-                crate::ast::expand_aliases_in_type(ty, &aliases, &bound);
+                crate::ast::expand_aliases_in_type_for_c(ty, &aliases, &opaque, &bound);
             }
             if let Some(ty) = &mut template.return_type {
-                crate::ast::expand_aliases_in_type(ty, &aliases, &bound);
+                crate::ast::expand_aliases_in_type_for_c(ty, &aliases, &opaque, &bound);
             }
-            crate::ast::expand_aliases_in_block(&mut template.body, &aliases, &bound);
+            crate::ast::expand_aliases_in_block_for_c(
+                &mut template.body,
+                &aliases,
+                &opaque,
+                &bound,
+            );
         }
+        // A generic struct's field keeps a TUPLE alias's name as well: a field
+        // written as a tuple is refused ("Tuple types in structs not yet
+        // supported"), and main, which never expanded an alias, declared
+        // `struct G<T> { v: T, n: N }` under `type N = (i64, i64)` with the
+        // tuple's struct and ran it. A monomorphised struct is emitted after
+        // the tuple structs (`compile_escaped`), so the name has a definition
+        // to refer to; a non-generic struct is emitted before them, and its
+        // tuple field stays refused by name.
+        let mut field_opaque = opaque.clone();
+        field_opaque.extend(Self::aliases_of(declared.values(), &aliases, |ty| {
+            matches!(ty, Type::Tuple(_))
+        }));
         for (_, _, template) in &mut self.generic_struct_instantiations {
             let bound = template.type_params.clone();
             for (_, ty) in &mut template.fields {
-                crate::ast::expand_aliases_in_type(ty, &aliases, &bound);
+                crate::ast::expand_aliases_in_type_for_c(ty, &aliases, &field_opaque, &bound);
             }
         }
-        crate::ast::expand_type_aliases(program, &aliases)
+        crate::ast::expand_type_aliases_for_c(program, &aliases, &opaque)
     }
 }
 

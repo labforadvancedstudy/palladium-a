@@ -713,26 +713,28 @@ fn an_alias_that_names_a_parameter_its_item_binds_means_the_global_type() {
     }
 }
 
-/// The three capture shapes that stay refused, each by the refusal its
-/// capture-free twin gets: a function cannot return an array at all; a struct
-/// field cannot be a tuple (`struct G { a: (i64, i64) }` is refused the same
-/// way on main); and an array literal cannot be passed directly as an argument
-/// (#62 — bind it to a `let` first, as the row above does).
+/// The two capture shapes that stay refused, each by the refusal its
+/// capture-free twin gets: a function cannot return an array at all; and an
+/// array literal cannot be passed directly as an argument (#62 — bind it to a
+/// `let` first, as the row above does).
+///
+/// A third, a GENERIC struct's field of a tuple alias, was refused here as
+/// its twin `struct G { a: (i64, i64) }` is ("Tuple types in structs not yet
+/// supported") until review round 7: a generic struct's field now keeps a
+/// tuple alias's name, as main kept it, and is declared with the tuple's
+/// struct, which a monomorphised struct is emitted after — main ran
+/// `struct G<T> { v: T, n: N }` under `type N = (i64, i64)`, and every
+/// round since round 1 refused it. The capture row runs with it (main
+/// refused it only because its tuple literal met the alias's NAME).
 #[test]
 fn an_alias_capture_that_meets_an_existing_refusal_is_refused_by_it() {
-    let rows: [(&str, &str, &str); 3] = [
+    let rows: [(&str, &str, &str); 2] = [
         (
             "array return",
             "struct T { n: i64 }\ntype A = [T; 2];\n\
              fn f<T>(x: T) -> A { return [T { n: 7 }, T { n: 8 }]; }\n\
              fn main() { let a = f(1); print_int(a[1].n); }",
             "Returning arrays from functions is not yet supported",
-        ),
-        (
-            "tuple body, struct field",
-            "struct T { n: i64 }\ntype A = (T, i64);\nstruct G<T> { v: T, a: A }\n\
-             fn main() { let g = G { v: 3, a: (T { n: 7 }, 8) }; print_int(g.a.1); print_int(g.v); }",
-            "Tuple types in structs not yet supported",
         ),
         (
             "array literal argument",
@@ -751,6 +753,9 @@ fn an_alias_capture_that_meets_an_existing_refusal_is_refused_by_it() {
             text
         );
     }
+    let tuple_field = "struct T { n: i64 }\ntype A = (T, i64);\nstruct G<T> { v: T, a: A }\n\
+         fn main() { let g = G { v: 3, a: (T { n: 7 }, 8) }; print_int(g.a.1); print_int(g.v); }";
+    assert_eq!(run(tuple_field, "alias_capture_tuple_field"), "8\n3\n");
 }
 
 /// The twins that must keep running: the same alias beside a parameter of
@@ -2029,6 +2034,225 @@ fn an_alias_the_checker_erases_admits_only_a_value_declared_as_it() {
             "{}: {}",
             shape,
             verdict_class(program, "erased_alias")
+        ));
+        want.push(format!("{}: {}", shape, out));
+    }
+    assert_eq!(got, want);
+}
+
+/// AN ALIAS'S NAME AND A VALUE DECLARED AS THAT ALIAS ARE ONE TYPE WHERE TWO
+/// VALUES MEET (review round 7).
+///
+/// A written type keeps an alias nested in it as its NAME: `xs[0]` over
+/// `let xs: [N; 2]`, `*pn` over `pn: &N`. A generic's result, a method's and
+/// a generic struct's field are, since review round 1, the type the alias
+/// names, declared as the alias. main typed both as the NAME, so an `if`, a
+/// `match`, a `loop`'s `break`s, an array literal, a re-assignment, a
+/// comparison and the two arguments of one type parameter met a name with a
+/// name and ran — under `type N = u32`, `g(r)` printed `4294967288`. Each
+/// was refused here as `expected N, found Int` (or `'N' and 'i64'`, the two
+/// type-argument spellings of one `type N = i64`). Every `RUN` row ran on
+/// main with this output, in both operand orders, for a scalar and a tuple
+/// alias. The `REFUSED` rows are main's refusals and stay refused: a literal,
+/// a value no declaration names, and another alias's NAME meet no name.
+#[test]
+fn an_alias_name_and_a_value_declared_as_it_are_one_type_where_they_meet() {
+    let head = |ty: &str, v: &str, op: &str| {
+        format!(
+            "type N = {ty};\nfn f<T>(t: T) -> N {{ return {v}; }}\n\
+             fn g<U>(u: U) -> i64 {{ {op} }}\nstruct S {{ n: i64 }}\n\
+             impl S {{ fn get(&self) -> N {{ return {v}; }} }}\n"
+        )
+    };
+    let u32 = head("u32", "7", "return ~u;");
+    let i64 = head("i64", "4294967297", "return ~u;");
+    let pair = head("(i64, i64)", "(4294967297, 1)", "return ~u.0 + u.1;");
+    let elem = "let xs: [N; 2] = [f(1), f(2)]; ";
+    let name_first = |b: &str| format!("{elem}let a = xs[0]; let b = {b}; ");
+    let name_second = |a: &str| format!("{elem}let a = {a}; let b = xs[0]; ");
+    let iff = "let c = true; let r = if c { a } else { b }; ";
+    let fwd = "print_int(g(r));";
+    let cmp = "let q = a == b; if q { print_int(1); } else { print_int(0); }";
+    let rows: Vec<(&str, &String, String, &str)> = vec![
+        ("u32, `if`: a name, then a generic's result", &u32, name_first("f(3)") + iff + fwd, "RUN: 4294967288\n"),
+        ("u32, `if`: a generic's result, then a name", &u32, name_second("f(3)") + iff + fwd, "RUN: 4294967288\n"),
+        ("u32, `match`: a name, then a method's result", &u32, name_first("s.get()") + "let k = 1; let r = match k { 1 => a, _ => b }; " + fwd, "RUN: 4294967288\n"),
+        ("u32, `match`: a method's result, then a name", &u32, name_second("s.get()") + "let k = 1; let r = match k { 1 => a, _ => b }; " + fwd, "RUN: 4294967288\n"),
+        ("u32, an array literal: a name, then a generic's result", &u32, name_first("f(3)") + "let vs = [a, b]; let r = vs[0]; " + fwd, "RUN: 4294967288\n"),
+        ("u32, an array literal: a generic's result, then a name", &u32, name_second("f(3)") + "let vs = [a, b]; let r = vs[0]; " + fwd, "RUN: 4294967288\n"),
+        ("u32, a `loop`'s `break`s: a name, then a method's result", &u32, name_first("s.get()") + "let c = true; let r = loop { if c { break a; } break b; }; " + fwd, "RUN: 4294967288\n"),
+        ("u32, a `loop`'s `break`s: a method's result, then a name", &u32, name_second("s.get()") + "let c = true; let r = loop { if c { break a; } break b; }; " + fwd, "RUN: 4294967288\n"),
+        ("u32, arrays of each: `[[a; 2], [b; 2]]`", &u32, name_first("f(3)") + "let vs = [[a; 2], [b; 2]]; let r = vs[0][1]; " + fwd, "RUN: 4294967288\n"),
+        ("u32, `if` over blocks: a generic's result, then a name", &u32, name_second("f(3)") + "let c = true; let r = if c { let t1 = a; t1 } else { let t2 = b; t2 }; " + fwd, "RUN: 4294967288\n"),
+        ("u32, `if`: a generic struct's field, then a name behind `&N`", &u32, "let n0 = f(1); let pn: &N = &n0; let gg = G { v: 1, n: f(4) }; let a = gg.n; let b = *pn; ".to_string() + iff + fwd, "RUN: 4294967288\n"),
+        ("u32, `if`, discarded", &u32, name_first("f(3)") + iff + "print_int(0);", "RUN: 0\n"),
+        ("u32, a comparison: a name, then a generic's result", &u32, name_first("f(3)") + cmp, "RUN: 1\n"),
+        ("i64, a comparison: a method's result, then a name", &i64, name_second("s.get()") + cmp, "RUN: 1\n"),
+        ("i64, `if`: a name, then a generic's result", &i64, name_first("f(3)") + iff + fwd, "RUN: -4294967298\n"),
+        ("i64, one type parameter's arguments: a name, then a generic's result", &i64, name_first("f(3)") + "let r = two(a, b); " + fwd, "RUN: -4294967298\n"),
+        ("i64, one type parameter's arguments: a generic's result, then a name", &i64, name_second("f(3)") + "let r = two(a, b); " + fwd, "RUN: -4294967298\n"),
+        ("(i64, i64), `if`: a name, then a generic's result", &pair, name_first("f(3)") + iff + fwd, "RUN: -4294967297\n"),
+        ("(i64, i64), `match`: a method's result, then a name", &pair, name_second("s.get()") + "let k = 1; let r = match k { 1 => a, _ => b }; " + fwd, "RUN: -4294967297\n"),
+        ("(i64, i64), re-assigned: a generic's result, then a name", &pair, name_second("f(3)") + "let mut r = a; r = b; " + fwd, "RUN: -4294967297\n"),
+        ("(i64, i64), an array literal, discarded", &pair, name_second("f(3)") + "let vs = [a, b]; let r = vs[0]; print_int(0);", "RUN: 0\n"),
+        ("u32, both names (as before)", &u32, name_first("xs[1]") + iff + fwd, "RUN: 4294967288\n"),
+        ("u32, both generic results (as before)", &u32, "let a = f(3); let b = f(5); ".to_string() + iff + fwd, "RUN: 4294967288\n"),
+        ("a name and a literal", &u32, "let xs: [N; 2] = [f(1), f(2)]; let a = xs[0]; let b = 7; ".to_string() + iff + fwd, "REFUSED"),
+        ("a name and a binding annotated `N` (main read it as `u32`)", &u32, "let xs: [N; 2] = [f(1), f(2)]; let a = xs[0]; let b: N = 7; ".to_string() + iff + fwd, "REFUSED"),
+        ("a name compared with a literal", &u32, "let xs: [N; 2] = [f(1), f(2)]; let a = xs[0]; let b = 7; ".to_string() + cmp, "REFUSED"),
+        ("a name and another alias's name", &u32, "let xs: [N; 2] = [f(1), f(2)]; let ys: [M; 2] = [h(1), h(2)]; let a = xs[0]; let b = ys[0]; ".to_string() + iff + fwd, "REFUSED"),
+    ];
+    let extra = "type M = u32;\nfn h<T>(t: T) -> M { return 7; }\nstruct G<T> { v: T, n: N }\n\
+                 fn two<T>(x: T, y: T) -> T { return y; }\n";
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    for (shape, defs, body, out) in &rows {
+        let program = format!("{defs}{extra}fn main() {{ let s = S {{ n: 0 }}; {body} }}\n");
+        got.push(format!(
+            "{}: {}",
+            shape,
+            verdict_class(&program, "alias_merge")
+        ));
+        want.push(format!("{}: {}", shape, out));
+    }
+    assert_eq!(got, want);
+}
+
+/// A REFERENCE ALIAS IS PASSED AS main PASSED IT (review round 7).
+///
+/// Since review round 1 every alias is expanded before code generation, so
+/// `type A = &i64` reached it as `&i64` wherever `A` was written — and a
+/// parameter `r0: A` became a reference parameter, dereferenced at every use
+/// (`return r0;` was emitted `return (*r0);`), a field `p: A` met "Reference
+/// types in structs not yet supported", and `&(i64, i64)` met "Unsupported
+/// type in reference parameter". main kept the alias as its NAME there and
+/// passed the pointer as a value, and every row but the last two ran on main
+/// with this output. The alias-free twins (`r0: &i64`) are refused or gcc on
+/// main and stay so: only the name is read as main read it.
+///
+/// The last two were gcc on main (and gcc or refused on 1dad901): a binding
+/// or a field declared `A` handed to a generic instantiated it at the
+/// referent, and the generic was given a pointer for a `long long`. A
+/// reference alias now carries its value to a generic wherever it was
+/// declared.
+#[test]
+fn a_reference_alias_is_passed_as_main_passed_it() {
+    let rows: [(&str, &str, &str); 14] = [
+        ("returned, bound under the alias, read", "type A = &i64;\nfn w(r0: A) -> A { return r0; }\nfn main() { let m = 4294967297; let r = w(&m); let z: A = r; print_int(*z); }\n", "RUN: 4294967297\n"),
+        ("returned, discarded", "type A = &i64;\nfn w(r0: A) -> A { return r0; }\nfn main() { let m = 4294967297; let r = w(&m); print_int(0); }\n", "RUN: 0\n"),
+        ("a struct's field, read", "type A = &i64;\nstruct H { p: A }\nfn main() { let m = 4294967297; let hh = H { p: &m }; let r = hh.p; print_int(*r); }\n", "RUN: 4294967297\n"),
+        ("a parameter bound under the alias, read", "type A = &i64;\nfn pk(r0: A) -> i64 { let x: A = r0; let r = x; return *r; }\nfn main() { let m = 4294967297; print_int(pk(&m)); }\n", "RUN: 4294967297\n"),
+        ("passed on to another function", "type A = &i64;\nfn kk(x: A) -> i64 { return *x; }\nfn main() { let m = 4294967297; let r0: A = &m; let r = r0; print_int(kk(r)); }\n", "RUN: 4294967297\n"),
+        ("`&mut i64`, returned, read", "type A = &mut i64;\nfn w(r0: A) -> A { return r0; }\nfn main() { let mut m = 4294967297; let r = w(&mut m); print_int(*r); }\n", "RUN: 4294967297\n"),
+        ("`&mut i64`, a struct's field, bound under the alias", "type A = &mut i64;\nstruct H { p: A }\nfn main() { let mut m = 4294967297; let hh = H { p: &mut m }; let r = hh.p; let z: A = r; print_int(*z); }\n", "RUN: 4294967297\n"),
+        ("`&(i64, i64)`, returned, read", "type A = &(i64, i64);\nfn w(r0: A) -> A { return r0; }\nfn main() { let m = (4294967297, 1); let r = w(&m); print_int((*r).0 + (*r).1); }\n", "RUN: 4294967298\n"),
+        ("`&T`, a struct's field, read", "type A = &T;\nstruct T { n: i64 }\nstruct H { p: A }\nfn main() { let m = T { n: 4294967297 }; let hh = H { p: &m }; let r = hh.p; print_int((*r).n); }\n", "RUN: 4294967297\n"),
+        ("`&bool`, a parameter bound under the alias", "type A = &bool;\nfn bi(b: bool) -> i64 { if b { return 1; } return 0; }\nfn pk(r0: A) -> i64 { let x: A = r0; let r = x; return bi(*r); }\nfn main() { let m = true; print_int(pk(&m)); }\n", "RUN: 1\n"),
+        ("a method's result through a generic's alias parameter", "type A = &i64;\nstruct S { n: i64 }\nfn g<U>(u: U) -> i64 { return *u + *u; }\nimpl S { fn get(&self) -> A { return &self.n; } }\nfn gk<T>(t: T, x: A) -> A { return x; }\nfn main() { let s = S { n: 4294967297 }; let y = gk(1, s.get()); let r = y; print_int(g(r)); }\n", "RUN: 8589934594\n"),
+        ("the alias-free twin, returned (gcc on main)", "fn w(r0: &i64) -> &i64 { return r0; }\nfn main() { let m = 4294967297; let r = w(&m); let z: &i64 = r; print_int(*z); }\n", "GCC"),
+        ("a binding annotated with it, handed to a generic (gcc on main)", "type A = &i64;\nfn g<U>(u: U) -> i64 { return *u + *u; }\nfn main() { let m = 4294967297; let r0: A = &m; print_int(g(r0)); }\n", "RUN: 8589934594\n"),
+        ("a struct's field of it, handed to a generic (gcc on main)", "type A = &T;\nstruct T { n: i64 }\nstruct H { p: A }\nfn g<U>(u: U) -> i64 { return (*u).n + 1; }\nfn main() { let m = T { n: 4294967297 }; let hh = H { p: &m }; let r = hh.p; print_int(g(r)); }\n", "RUN: 4294967298\n"),
+    ];
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    for (shape, program, out) in rows {
+        got.push(format!(
+            "{}: {}",
+            shape,
+            verdict_class(program, "ref_alias")
+        ));
+        want.push(format!("{}: {}", shape, out));
+    }
+    assert_eq!(got, want);
+}
+
+/// A VALUE main TYPED BY A NARROWING ALIAS'S NAME MEETS ONLY THAT ALIAS
+/// (review round 7).
+///
+/// main typed a generic's result, a method's and a generic struct's field by
+/// the alias's NAME, and refused any other value there or beside it:
+/// `expected N, found Int`. Since review round 1 they are the type the alias
+/// names, which this checker spells `Int` for every width — and an `i64`
+/// compared equal. Under `type N = u32`, an `i64` holding `4294967297` given
+/// to a generic's or a method's `x: N`, a generic struct's `n: N`, assigned
+/// over `let mut r = f(1)`, or meeting `f(1)` in an `if`, an array or a
+/// comparison, ran on 1dad901 and printed `1`: a silent narrowing, where
+/// main refused each by name. Refused again, in main's words. Kept: a
+/// literal read at a generic struct's or a generic's declared `N` (it is
+/// converted as an annotation converts it; it ran since review round 6), an
+/// `i64` alias (its values are this checker's `Int`), and a reference alias
+/// given a reference (its C type cannot be confused silently).
+#[test]
+fn a_value_typed_by_a_narrowing_alias_name_meets_only_that_alias() {
+    let n =
+        "type N = u32;\nfn f<T>(t: T) -> N { return 7; }\nfn g<U>(u: U) -> i64 { return ~u; }\n";
+    let rows: [(&str, String, &str); 13] = [
+        ("an `if`: a generic's result, then an i64", format!("{n}fn main() {{ let k = 4294967297; let c = false; let r = if c {{ f(1) }} else {{ k }}; print_int(r); }}\n"), "REFUSED"),
+        ("an array literal", format!("{n}fn main() {{ let k = 4294967297; let vs = [f(1), k]; print_int(vs[1]); }}\n"), "REFUSED"),
+        ("a comparison", format!("{n}fn main() {{ let k = 4294967297; let a = f(1); let q = a == k; if q {{ print_int(1); }} else {{ print_int(0); }} }}\n"), "REFUSED"),
+        ("assigned over a generic's result", format!("{n}fn main() {{ let k = 4294967297; let mut r = f(1); r = k; print_int(r); }}\n"), "REFUSED"),
+        ("assigned over a binding of it annotated `N`", format!("{n}fn main() {{ let k = 4294967297; let mut z: N = f(1); z = k; print_int(z); }}\n"), "REFUSED"),
+        ("a generic's `x: N`", format!("{n}fn h<T>(t: T, x: N) -> i64 {{ return x; }}\nfn main() {{ let k = 4294967297; print_int(h(1, k)); }}\n"), "REFUSED"),
+        ("a method's `x: N`", format!("{n}struct S {{ n: i64 }}\nimpl S {{ fn put(&self, x: N) -> i64 {{ return x; }} }}\nfn main() {{ let s = S {{ n: 0 }}; let k = 4294967297; print_int(s.put(k)); }}\n"), "REFUSED"),
+        ("a generic struct's `n: N`", format!("{n}struct G<T> {{ v: T, n: N }}\nfn main() {{ let k = 4294967297; let gg = G {{ v: 1, n: k }}; print_int(gg.n); }}\n"), "REFUSED"),
+        ("one type parameter's arguments", format!("{n}fn two<T>(x: T, y: T) -> T {{ return y; }}\nfn main() {{ let k = 4294967297; let a = f(1); let r = two(a, k); print_int(r); }}\n"), "REFUSED"),
+        ("a literal in a generic struct's `n: N` (since round 6)", format!("{n}struct G<T> {{ v: T, n: N }}\nfn main() {{ let gg = G {{ v: 1, n: 7 }}; let q = gg.n; print_int(g(q)); }}\n"), "RUN: 4294967288\n"),
+        ("a literal for a generic's `x: N` (since round 6)", format!("{n}fn h<T>(t: T, x: N) -> i64 {{ return x; }}\nfn main() {{ print_int(h(1, 7)); }}\n"), "RUN: 7\n"),
+        ("an i64 alias's value and an i64", "type M = i64;\nfn h<T>(t: T) -> M { return 7; }\nfn main() { let k = 4294967297; let c = false; let r = if c { h(1) } else { k }; print_int(r); }\n".to_string(), "RUN: 4294967297\n"),
+        ("a `&i64` alias's parameter given a reference", "type A = &i64;\nfn g<U>(u: U) -> i64 { return *u + *u; }\nfn gk<V>(t: V, x: A) -> A { return x; }\nfn main() { let m = 4294967297; let r = gk(1, &m); print_int(g(r)); }\n".to_string(), "RUN: 8589934594\n"),
+    ];
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    for (shape, program, out) in &rows {
+        got.push(format!(
+            "{}: {}",
+            shape,
+            verdict_class(program, "narrowing_alias")
+        ));
+        want.push(format!("{}: {}", shape, out));
+    }
+    assert_eq!(got, want);
+}
+
+/// A GENERIC STRUCT'S FIELD OF A TUPLE ALIAS IS DECLARED AS main DECLARED IT
+/// (review round 7).
+///
+/// Since review round 1 every alias reached code generation expanded, and a
+/// field written as a tuple is refused there ("Tuple types in structs not yet
+/// supported"). main never expanded an alias: `struct G<T> { v: T, n: N }`
+/// under `type N = (i64, i64)` declared `n` with the tuple's struct, and the
+/// generic struct's instantiation, emitted after the tuple structs, compiled
+/// and ran. A generic struct's field keeps a tuple alias's name again. A
+/// NON-generic struct is emitted before the tuple structs, so its tuple
+/// field stays refused by name, as its alias-free twin is.
+#[test]
+fn a_generic_structs_tuple_alias_field_is_declared_as_main_declared_it() {
+    let head = "type N = (i64, i64);\nfn f<T>(t: T) -> N { return (4294967297, 1); }\n\
+                fn g<U>(u: U) -> i64 { return ~u.0 + u.1; }\n";
+    let rows: [(&str, String, &str); 3] = [
+        (
+            "a generic struct's field, discarded",
+            format!("{head}struct G<T> {{ v: T, n: N }}\nfn main() {{ let gg = G {{ v: 1, n: f(4) }}; let b = gg.n; print_int(0); }}\n"),
+            "RUN: 0\n",
+        ),
+        (
+            "a generic struct's field, forwarded",
+            format!("{head}struct G<T> {{ v: T, n: N }}\nfn main() {{ let gg = G {{ v: 1, n: f(4) }}; let b = gg.n; print_int(g(b)); }}\n"),
+            "RUN: -4294967297\n",
+        ),
+        (
+            "a non-generic struct's field (refused by name, as its twin)",
+            format!("{head}struct H {{ n: N }}\nfn main() {{ let h = H {{ n: f(4) }}; let b = h.n; print_int(0); }}\n"),
+            "REFUSED",
+        ),
+    ];
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    for (shape, program, out) in &rows {
+        got.push(format!(
+            "{}: {}",
+            shape,
+            verdict_class(program, "tuple_alias_field")
         ));
         want.push(format!("{}: {}", shape, out));
     }

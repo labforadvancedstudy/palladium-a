@@ -2172,6 +2172,65 @@ pub fn expand_aliases_in_block(
     walk_block(stmts, bound, &mut Expand(aliases))
 }
 
+// A REFERENCE ALIAS IS NOT A REFERENCE PARAMETER (review round 7).
+//
+// Code generation decides how a value is passed from the type WRITTEN where
+// it is declared: a parameter written `&T` is a pointer it dereferences at
+// every use, a field written `&T` is refused ("Reference types in structs not
+// yet supported"), a parameter written `&(i64, i64)` is refused ("Unsupported
+// type in reference parameter"). Before this pass existed code generation saw
+// `type A = &i64` as the NAME `A` there and passed the pointer as a value
+// (`type_to_c` reads the name as `long long*`), so `fn w(r0: A) -> A { return
+// r0; }` was `return r0;` and the program main ran printed its value. Expanded
+// at every depth, `A` became `&i64` at those positions, and `return r0;` was
+// emitted `return (*r0);` — gcc refused it — while the field and the tuple
+// were refused by name: programs main ran, lost since review round 1.
+//
+// So code generation's expansion leaves an alias in `opaque` — the caller's
+// reference aliases, which `type_to_c` resolves by name (and, for a generic
+// struct's fields, its tuple aliases) — as its NAME where it is the WHOLE of
+// a written type: a parameter's, a result's, a `let`'s, a field's, a
+// payload's. Below the top it is expanded as before: inside a
+// tuple, an array or a generic argument the name is what round 1 removed (a
+// tuple declared with a field type C has never heard of), and `&A`, `[A; 2]`
+// are decided by their own top, which is not the alias. The type checker is
+// never given this: it reads every alias at every depth
+// (`expand_aliases_in_type`).
+
+/// `expand_type_aliases`, leaving each alias in `opaque` as its name where it
+/// is the whole of a written type.
+pub fn expand_type_aliases_for_c(
+    program: &Program,
+    aliases: &Aliases,
+    opaque: &std::collections::HashSet<String>,
+) -> Program {
+    let mut out = program.clone();
+    for item in &mut out.items {
+        walk_item(item, &mut ExpandForC(aliases, opaque));
+    }
+    out
+}
+
+/// `expand_aliases_in_type`, as `expand_type_aliases_for_c` expands.
+pub fn expand_aliases_in_type_for_c(
+    ty: &mut Type,
+    aliases: &Aliases,
+    opaque: &std::collections::HashSet<String>,
+    bound: &[String],
+) {
+    ExpandForC(aliases, opaque).visit(ty, bound)
+}
+
+/// `expand_aliases_in_block`, as `expand_type_aliases_for_c` expands.
+pub fn expand_aliases_in_block_for_c(
+    stmts: &mut [Stmt],
+    aliases: &Aliases,
+    opaque: &std::collections::HashSet<String>,
+    bound: &[String],
+) {
+    walk_block(stmts, bound, &mut ExpandForC(aliases, opaque))
+}
+
 type Aliases = std::collections::HashMap<String, Type>;
 
 // ONE WALK, THREE VISITS. Every position a type can be written in an item —
@@ -2192,6 +2251,19 @@ struct Expand<'a>(&'a Aliases);
 impl TypeVisit for Expand<'_> {
     fn visit(&mut self, ty: &mut Type, bound: &[String]) {
         expand_type(ty, self.0, bound, 0)
+    }
+}
+
+/// Code generation's expansion visit: `Expand`, except that an alias in `.1`
+/// that is the whole of the type stays its name (see above).
+struct ExpandForC<'a>(&'a Aliases, &'a std::collections::HashSet<String>);
+
+impl TypeVisit for ExpandForC<'_> {
+    fn visit(&mut self, ty: &mut Type, bound: &[String]) {
+        match ty {
+            Type::Custom(name) if self.1.contains(name) && !bound.contains(name) => {}
+            _ => expand_type(ty, self.0, bound, 0),
+        }
     }
 }
 
