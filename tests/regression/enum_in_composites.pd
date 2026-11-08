@@ -229,6 +229,21 @@ struct Narrow<X, Y> {
     p: Y,
 }
 
+// Review round 10: a generic struct's literal is of the instantiation the type
+// checker recorded for it, not of another literal's its values' C types match.
+type wz = u32;
+
+impl Seat {
+    fn wz(&self) -> wz {
+        return 7;
+    }
+}
+
+struct Own<X, Y> {
+    tag: X,
+    p: Y,
+}
+
 fn main() {
     // Both literal forms against an annotation.
     let xs: [K; 4] = [K::B; 4];
@@ -380,4 +395,16 @@ fn main() {
     print_int(rnot(tr1));
     print_int(pfirst(tp1));
     print_int(wnot(tn1));
+
+    // A literal is of its own instantiation: the unread `Own<i64, wz>` does not
+    // take the `u32` that is not typed by the alias's name.
+    let unread = Own { tag: 1, p: seat.wz() };
+    let ow: u32 = 7;
+    let owide = 4294967297;
+    let oc = false;
+    let own = if oc { Own { tag: 2, p: ow } } else { Own { tag: 3, p: owide } };
+    let og = Own { tag: 4, p: ow };
+    print("\nGeneric struct literal, its own instantiation:");
+    print_int(own.p);
+    print_int(~og.p);
 }

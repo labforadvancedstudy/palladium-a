@@ -810,11 +810,12 @@ fn an_alias_beside_a_parameter_of_another_name_still_runs() {
 /// types of the literal's values (review round 9), so a struct, an enum or a
 /// `bool` argument behind another field is picked and runs (the next test);
 /// what is left is an argument the type checker records with no name (an
-/// array, a tuple, a char, a float) and an integer the record keeps no width
-/// for, which no instantiation holds exactly.
+/// array, a tuple, a char, a float). An integer the record keeps no width for
+/// was refused here too until review round 10: the literal is now of its own
+/// record, `G<i64>`, which holds it as C converts it (the next test).
 #[test]
 fn a_generic_struct_literal_code_generation_cannot_instantiate_is_refused_by_name() {
-    let rows: [(&str, &str, &str); 6] = [
+    let rows: [(&str, &str, &str); 4] = [
         // The four argument kinds the type checker records with no name: the
         // refusal says so, and never prints the placeholder it records.
         (
@@ -839,20 +840,6 @@ fn a_generic_struct_literal_code_generation_cannot_instantiate_is_refused_by_nam
             "struct G<T> { v: T }\nfn main() { let g = G { v: 1.5 }; print_int(1); }",
             "has no name in the instantiation record",
         ),
-        // The record keeps no integer width: this program never writes
-        // `G<i64>`, and the refusal must not say it does.
-        (
-            "a u32 argument",
-            "struct G<T> { v: T }\n\
-             fn main() { let x: u32 = 5; let g = G { v: x }; print_int(1); }",
-            "The record keeps no integer width: i32, u32 and u64 all appear as `i64`.",
-        ),
-        (
-            "an i32 argument",
-            "struct G<T> { v: T }\n\
-             fn main() { let x: i32 = 5; let g = G { v: x }; print_int(1); }",
-            "The record keeps no integer width: i32, u32 and u64 all appear as `i64`.",
-        ),
     ];
     for (shape, source, want) in rows {
         let text = refused(source, "generic_literal");
@@ -874,10 +861,14 @@ fn a_generic_struct_literal_code_generation_cannot_instantiate_is_refused_by_nam
 /// argument behind an `i64` field and an `i64` one behind an enum field
 /// (the four were refused by name from review round 3, #63, and were gcc on
 /// main): the instantiation is the one whose fields of a type parameter are
-/// exactly the C types of the literal's values.
+/// exactly the C types of the literal's values. Since review round 10 the
+/// literal is of the instantiation recorded for it, so a `u32` or an `i32` the
+/// record spells `i64` is of `G<i64>`, as C converts it (refused by name on
+/// b0f9c32, gcc on main; `~` reads it as the `i64` the record says it is, as
+/// main read `G { tag: 1, p: v }`).
 #[test]
 fn a_generic_struct_literal_at_i64_bool_or_string_still_runs() {
-    let rows: [(&str, &str, &str); 11] = [
+    let rows: [(&str, &str, &str); 16] = [
         (
             "i64, bool and String",
             "struct G<T> { v: T }\nfn main() { let a = G { v: 4294967297 }; \
@@ -946,6 +937,37 @@ fn a_generic_struct_literal_at_i64_bool_or_string_still_runs() {
              fn main() { let a = G { v: Qq { n: 6 } }; let b = G { v: 7 }; let c = G { v: true }; \
              print_int(a.v.n); print_int(b.v); if c.v { print_int(1); } }",
             "6\n7\n1\n",
+        ),
+        (
+            "a u32 argument",
+            "struct G<T> { v: T }\n\
+             fn main() { let x: u32 = 5; let g = G { v: x }; print_int(1); }",
+            "1\n",
+        ),
+        (
+            "an i32 argument",
+            "struct G<T> { v: T }\n\
+             fn main() { let x: i32 = 5; let g = G { v: x }; print_int(1); }",
+            "1\n",
+        ),
+        (
+            "a u32 argument, read",
+            "struct G<T> { v: T }\n\
+             fn main() { let x: u32 = 5; let g = G { v: x }; print_int(~g.v); }",
+            "-6\n",
+        ),
+        (
+            "an i32 argument, read",
+            "struct G<T> { v: T }\n\
+             fn main() { let x: i32 = 5; let g = G { v: x }; print_int(~g.v); }",
+            "-6\n",
+        ),
+        (
+            "a u32 argument beside an i64 one",
+            "struct G<T> { v: T }\n\
+             fn main() { let x: u32 = 5; let g = G { v: x }; let h = G { v: 4294967297 }; \
+             print_int(~g.v); print_int(h.v); }",
+            "-6\n4294967297\n",
         ),
     ];
     for (shape, source, want) in rows {
@@ -2802,6 +2824,122 @@ fn a_generic_structs_type_argument_is_carried_by_the_alias_a_generic_functions_i
         ),
     ] {
         got.push(format!("{}: {}", shape, verdict_class(program, "gstruct_carrier")));
+        want.push(format!("{}: REFUSED", shape));
+    }
+    assert_eq!(got, want);
+}
+
+/// A GENERIC STRUCT'S LITERAL IS OF THE INSTANTIATION THE TYPE CHECKER
+/// RECORDED FOR IT (review round 10).
+///
+/// Round 9 had code generation pick, among ALL the recorded instantiations,
+/// the first whose fields were exactly the C types of a literal's values. So
+/// an unused `G { tag: 1, p: s.get() }` under `type z = u32`, recorded `G<i64,
+/// z>`, took `G { tag: 1, p: v }` with `let v: u32 = 7` — recorded `G<i64,
+/// i64>`, as `v` is not typed by the alias's name, but of C type `unsigned
+/// int` — and an `if`, `match`, `loop` or array that met it with `G { tag: 2,
+/// p: w }` (`w: i64`) put a `G_i64_i64` where a `G_i64_z` was declared: gcc,
+/// where main and 6c793f0 printed `4294967297`. The same unread literal turned
+/// `~gg.p` from main's `-8` into `4294967288`. The type checker now records
+/// the instantiation for each literal (`StructLiteralRecords`) and the literal
+/// is of that one; without the unused literal (the controls) nothing changes.
+///
+/// Two such literals meeting — `G<i64, z>` from a value typed by the alias's
+/// name and `G<i64, i64>` — in an `if`, a `match`, a `loop`, an array or an
+/// assignment compared equal in this checker and reached C as two structs
+/// (gcc on b0f9c32); they are refused, as main refused each.
+///
+/// Kept: a value typed by the alias's name is of `G<i64, z>` (main refused
+/// `~` of it); a plain `&i64`, which the record reads as its referent, is of
+/// the instantiation keeping the reference where one exists (main ran it
+/// there); an `i32` first field beside a `G<bool, i64>` (main chose that one;
+/// its own record holds the values as C converts them). Two rows are main's
+/// selector choosing another literal's instantiation and narrowing (`1`): a
+/// `bool` and an `i64` instantiation side by side (#76), and an unused `G<i64,
+/// A>` under `type A = u32`, which sorts before `i64`; each prints the value
+/// its literal holds, as its control without the other literal does on main.
+#[test]
+fn a_generic_struct_literal_is_of_the_instantiation_recorded_for_it() {
+    let z = "type z = u32;\nstruct S { n: i64 }\nimpl S { fn get(&self) -> z { return 7; } }\n\
+             struct G<X, Y> { tag: X, p: Y }\nfn id<T>(t: T) -> T { return t; }\n";
+    let a_ref =
+        "type A = &i64;\nstruct S { n: i64 }\nimpl S { fn get(&self) -> A { return &self.n; } }\n\
+                 struct G<X, Y> { tag: X, p: Y }\n";
+    let bare = "struct G<X, Y> { tag: X, p: Y }\n";
+    let a_u32 = "type A = u32;\nstruct S { n: i64 }\nimpl S { fn get(&self) -> A { return 7; } }\n\
+                 struct G<X, Y> { tag: X, p: Y }\nfn id<T>(t: T) -> T { return t; }\n";
+    let decoy = "let s = S { n: 0 }; let unused = G { tag: 1, p: s.get() }; ";
+    let vw = "let v: u32 = 7; let w: i64 = 4294967297; ";
+    let iff = "let c = false; let r = if c { G { tag: 1, p: v } } else { G { tag: 2, p: w } }; ";
+    let byname = "let s = S { n: 0 }; let v = s.get(); let w: i64 = 4294967297; ";
+    let rows: Vec<(&str, &str, String, &str)> = vec![
+        ("unused G<i64, z>, an `if`, the field read", z, format!("{decoy}{vw}{iff}print_int(r.p);"), "RUN: 4294967297\n"),
+        ("unused G<i64, z>, an `if`, discarded", z, format!("{decoy}{vw}{iff}print_int(0);"), "RUN: 0\n"),
+        ("unused G<i64, z>, an `if`, the field forwarded to a generic", z, format!("{decoy}{vw}{iff}let x = r.p; print_int(id(x));"), "RUN: 4294967297\n"),
+        ("unused G<i64, z>, an `if`, the field re-bound annotated", z, format!("{decoy}{vw}{iff}let x: i64 = r.p; print_int(x);"), "RUN: 4294967297\n"),
+        ("unused G<i64, z>, an array", z, format!("{decoy}{vw}let a = G {{ tag: 1, p: v }}; let b = G {{ tag: 2, p: w }}; let xs = [a, b]; print_int(xs[1].p);"), "RUN: 4294967297\n"),
+        ("unused G<i64, z>, a `match`", z, format!("{decoy}{vw}let c = 1; let r = match c {{ 0 => G {{ tag: 1, p: v }}, _ => G {{ tag: 2, p: w }} }}; print_int(r.p);"), "RUN: 4294967297\n"),
+        ("unused G<i64, z>, a `loop`", z, format!("{decoy}{vw}let c = false; let r = loop {{ if c {{ break G {{ tag: 1, p: v }}; }} break G {{ tag: 2, p: w }}; }}; print_int(r.p);"), "RUN: 4294967297\n"),
+        ("unused G<i64, z> after the `if`", z, format!("{vw}{iff}{decoy}print_int(r.p);"), "RUN: 4294967297\n"),
+        ("unused G<String, z>, a `String` tag", z, format!("let s = S {{ n: 0 }}; let unused = G {{ tag: \"x\", p: s.get() }}; {vw}let c = false; let r = if c {{ G {{ tag: \"x\", p: v }} }} else {{ G {{ tag: \"y\", p: w }} }}; print_int(r.p);"), "RUN: 4294967297\n"),
+        ("unused G<i64, z>, `~` of a u32 the checker records as i64", z, format!("{decoy}let v: u32 = 7; let gg = G {{ tag: 1, p: v }}; print_int(~gg.p);"), "RUN: -8\n"),
+        ("no unused literal, an `if` (control)", z, format!("{vw}{iff}print_int(r.p);"), "RUN: 4294967297\n"),
+        ("no unused literal, `~` of the u32 (control)", z, "let v: u32 = 7; let gg = G { tag: 1, p: v }; print_int(~gg.p);".to_string(), "RUN: -8\n"),
+        ("a by-name z value is of G<i64, z> (refused on main)", z, "let s = S { n: 0 }; let v = s.get(); let gg = G { tag: 1, p: v }; print_int(~gg.p);".to_string(), "RUN: 4294967288\n"),
+        ("a plain &i64 beside an unused G<i64, A>", a_ref, "let s = S { n: 5 }; let unused = G { tag: 1, p: s.get() }; let m: i64 = 4294967297; let g = G { tag: 2, p: &m }; print_int(*g.p);".to_string(), "RUN: 4294967297\n"),
+        ("an i32 first field beside a G<bool, i64>", bare, "let d = G { tag: true, p: 5 }; let k: i32 = 3; let w: i64 = 4294967297; let g = G { tag: k, p: w }; print_int(g.p);".to_string(), "RUN: 4294967297\n"),
+        ("a bool and an i64 instantiation (main: 1, #76)", bare, "let a = G { tag: 1, p: true }; let b = G { tag: 2, p: 4294967297 }; print_int(b.p);".to_string(), "RUN: 4294967297\n"),
+        ("an unused G<i64, A> under `type A = u32` (main: 1)", a_u32, format!("{decoy}{vw}{iff}print_int(r.p);"), "RUN: 4294967297\n"),
+        ("two by-name z values met in an `if` (refused on main)", z, format!("{byname}let s2 = S {{ n: 1 }}; let v2 = s2.get(); let c = true; let r = if c {{ G {{ tag: 1, p: v }} }} else {{ G {{ tag: 2, p: v2 }} }}; print_int(~r.p);"), "RUN: 4294967288\n"),
+    ];
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    for (shape, head, body, out) in &rows {
+        let program = format!("{head}fn main() {{ {body} }}\n");
+        got.push(format!(
+            "{}: {}",
+            shape,
+            outcome(&program, "literal_record")
+        ));
+        want.push(format!("{}: {}", shape, out));
+    }
+    // A value typed by the alias's name (`G<i64, z>`) meeting an `i64` one
+    // (`G<i64, i64>`) is two C structs: refused, as main refused each (gcc on
+    // b0f9c32, which compared the two equal).
+    for (shape, meet) in [
+        ("an `if`", "let c = true; let r = if c { G { tag: 1, p: v } } else { G { tag: 2, p: w } };"),
+        ("a `match`", "let c = 0; let r = match c { 0 => G { tag: 1, p: v }, _ => G { tag: 2, p: w } };"),
+        ("a `loop`", "let c = true; let r = loop { if c { break G { tag: 1, p: v }; } break G { tag: 2, p: w }; };"),
+        ("an array", "let a = G { tag: 1, p: v }; let b = G { tag: 2, p: w }; let xs = [a, b]; let r = xs[0];"),
+        ("an assignment", "let mut r = G { tag: 2, p: w }; r = G { tag: 1, p: v };"),
+        ("an assignment the other way", "let mut r = G { tag: 1, p: v }; r = G { tag: 2, p: w };"),
+    ] {
+        let program = format!("{z}fn main() {{ {byname}{meet} print_int(r.p); }}\n");
+        got.push(format!("by-name z and i64 in {}: {}", shape, verdict_class(&program, "literal_record")));
+        want.push(format!("by-name z and i64 in {}: REFUSED", shape));
+    }
+    // A plain reference no instantiation keeps is still refused by name, never
+    // put in a `long long` field (gcc on main), with or without another
+    // literal's scalar instantiation beside it.
+    for (shape, program) in [
+        (
+            "a plain &i64 alone",
+            "struct G<X, Y> { tag: X, p: Y }\n\
+             fn main() { let m: i64 = 7; let g = G { tag: 2, p: &m }; print_int(*g.p); }\n",
+        ),
+        (
+            "a plain &i64 beside an unused G<i64, z>",
+            "type z = u32;\nstruct S { n: i64 }\nimpl S { fn get(&self) -> z { return 7; } }\n\
+             struct G<X, Y> { tag: X, p: Y }\n\
+             fn main() { let s = S { n: 0 }; let unused = G { tag: 1, p: s.get() }; \
+             let m: i64 = 7; let g = G { tag: 2, p: &m }; print_int(*g.p); }\n",
+        ),
+    ] {
+        got.push(format!(
+            "{}: {}",
+            shape,
+            verdict_class(program, "literal_record")
+        ));
         want.push(format!("{}: REFUSED", shape));
     }
     assert_eq!(got, want);

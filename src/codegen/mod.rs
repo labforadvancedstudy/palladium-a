@@ -238,8 +238,7 @@ pub struct CodeGenerator {
     /// Filled in `compile_escaped` from the ESCAPED program, because the layout
     /// is keyed by type name and `escape_reserved_names` can rename one.
     recursive_layout: crate::typeck::RecursiveLayout,
-    /// Every distinct TUPLE SHAPE this translation unit needs, in the order it
-    /// must be defined (N4-12).
+    /// Every distinct TUPLE SHAPE this translation unit needs, in definition order (N4-12).
     ///
     /// C has no tuple, so each shape becomes a struct. The key is the mangled
     /// name and the value is the element C types, which is also what
@@ -248,13 +247,11 @@ pub struct CodeGenerator {
     /// `.0`. Insertion order is definition order, and a nested shape registers
     /// its inner shapes first because its own element types ARE those names.
     tuple_shapes: indexmap_lite::OrderedMap,
-    /// Variant constructors, held back until every type definition has been
-    /// emitted. They are the only output that needs a payload type COMPLETE,
-    /// and for a terminating mutual recursion no ordering of the definitions
-    /// can give them that in place.
+    /// Variant constructors, held back until every type definition has been emitted. They are the
+    /// only output that needs a payload type COMPLETE, and for a terminating mutual recursion no
+    /// ordering of the definitions can give them that in place.
     enum_constructors: String,
-    /// Statements hoisted out of the expression currently being generated, to
-    /// be spliced in front of the statement that contains it.
+    /// Statements hoisted out of the expression being generated, spliced in front of its statement.
     ///
     /// C HAS NO EXPRESSION WITH A BLOCK IN IT. `let x = if c { 1 } else { 2 };`
     /// has to become a declaration, an `if` statement that assigns it, and a
@@ -283,21 +280,20 @@ pub struct CodeGenerator {
     /// type is recorded as each assignment is emitted — the one moment the
     /// bindings still exist — and read back afterwards.
     hoist_types: std::collections::HashMap<String, String>,
-    /// Temporaries currently being lowered into, so `Stmt::Assign` knows which
-    /// assignments to record a type for. Membership, not a name prefix: the
-    /// prefix is reserved, but a set says what is true rather than what is
-    /// merely conventional.
+    /// Temporaries currently being lowered into, so `Stmt::Assign` knows which assignments to
+    /// record a type for. Membership, not a name prefix: the prefix is reserved, but a set says
+    /// what is true rather than what is merely conventional.
     open_hoists: std::collections::HashSet<String>,
-    /// One frame per enclosing loop, innermost last: the temporary a
-    /// value-carrying `break` assigns, or `None` for a loop written for its
-    /// effect. Mirrors `BreakTarget` in the type checker — same rule ("a
-    /// `break` binds to the innermost loop"), same shape.
+    /// One frame per enclosing loop, innermost last: the temporary a value-carrying `break`
+    /// assigns, or `None` for a loop written for its effect. Mirrors `BreakTarget` in the type
+    /// checker — same rule ("a `break` binds to the innermost loop"), same shape.
     break_temps: Vec<Option<String>>,
-    /// Serial number for hoisted temporaries. Function-scoped names would be
-    /// enough for C, but a single counter over the whole translation unit costs
-    /// nothing and makes every emitted name unique in the file, which is what a
-    /// reader diffing generated C wants.
+    /// Serial number for hoisted temporaries. Function-scoped names would be enough for C, but a
+    /// single counter over the whole translation unit costs nothing and makes every emitted name
+    /// unique in the file, which is what a reader diffing generated C wants.
     hoist_counter: usize,
+    /// The instantiation each generic struct literal is of (`StructLiterals`, review round 10).
+    struct_literals: StructLiterals,
 }
 
 /// Where a payload sub-pattern applies: the C lvalue that holds it, and the C
@@ -344,6 +340,7 @@ impl CodeGenerator {
             hoist_types: std::collections::HashMap::new(),
             open_hoists: std::collections::HashSet::new(),
             break_temps: Vec::new(),
+            struct_literals: StructLiterals::default(),
         })
     }
 
@@ -394,11 +391,14 @@ impl CodeGenerator {
 
     /// Set generic struct instantiations for code generation
     ///
-    /// See `set_generic_instantiations` — same source, same bypass, same fix.
+    /// See `set_generic_instantiations` — same source, same bypass, same fix. `literals`, the
+    /// instantiation each literal is of, is keyed by span and holds no name to escape.
     pub fn set_generic_struct_instantiations(
         &mut self,
         instantiations: Vec<(String, Vec<String>, crate::typeck::GenericStruct)>,
+        literals: crate::typeck::StructLiteralRecords,
     ) {
+        self.struct_literals.records = literals;
         self.generic_struct_instantiations = instantiations
             .into_iter()
             .map(|(name, type_args, s)| {
@@ -570,11 +570,11 @@ impl CodeGenerator {
             Expr::Char(_) => Some("long long".to_string()),
             Expr::String(_) => Some("const char*".to_string()),
             Expr::Bool(_) => Some("int".to_string()),
-            Expr::StructLiteral { name, fields, .. } => {
-                // A generic struct's literal is of the instantiation its values' C
-                // types pick (`literal_instantiation`), by the rule the emitter follows
-                // for the literal itself, so a `let` it initialises is declared as the
-                // struct the emitter builds.
+            Expr::StructLiteral { name, fields, span } => {
+                // A generic struct's literal is of the instantiation the type checker
+                // recorded for IT (`literal_instantiation`, review round 10), by the rule
+                // the emitter follows for the literal itself, so a `let` it initialises is
+                // declared as the struct the emitter builds.
                 //
                 // This asked the C type of the first field's SPELLING — a literal's
                 // own, and `long long` for every other expression — and matched it
@@ -582,19 +582,19 @@ impl CodeGenerator {
                 // where the emitter asked the type inferred for the value. Under `type
                 // A = &i64`, `let gg = G { tag: 1, p: a }` was declared as the first
                 // instantiation with an `i64` argument, whatever `p`'s was, and a
-                // pointer matched an `i64` argument too (review round 9).
+                // pointer matched an `i64` argument too (review round 9). Then both
+                // asked the values' C types of ALL the instantiations, and another
+                // literal's could answer (review round 10).
                 //
-                // A value this pass cannot type rules no instantiation out. Failing an
-                // exact one, the literal is of the first the old rule matched by its
-                // first field, where every field holds its value as C converts it — an
-                // integer of one width into another, as the record keeps no width
-                // (`StructInstantiation`) — and never a pointer into a scalar.
-                //
-                // The instantiations are recorded by the type checker, one per list of
-                // type arguments, and emitted before any body (`generate_struct` keeps
-                // each one's fields in `structs`), so every literal in a body is matched
-                // against all of them.
-                let Some(mangled) = self.literal_instantiation(name, fields, locals) else {
+                // Of the literal's own records: one holding every value exactly, else one
+                // holding them as C converts an integer of one width into another (the
+                // record keeps no width, `StructInstantiation`), never a pointer into a
+                // scalar; a plain reference, recorded as its referent, is of its record
+                // with the reference kept. A literal the type checker never checked (a
+                // monomorphized generic body) has no record, and is matched against every
+                // instantiation as before (`generate_struct` keeps each one's fields in
+                // `structs`).
+                let Some(mangled) = self.literal_instantiation(name, fields, *span, locals) else {
                     // A non-generic struct's literal is of the struct; a generic one no
                     // recorded instantiation holds keeps the struct's own name here, and
                     // the emitter refuses it by name (`instantiation_matched`).
@@ -2343,7 +2343,7 @@ impl CodeGenerator {
         // Generate monomorphized versions of generic functions AFTER structs
         if !self.generic_instantiations.is_empty() {
             self.output.push_str("// Monomorphized generic functions\n");
-
+            self.struct_literals.scope = LiteralScope::Unrecorded;
             for (func_name, type_args, generic_func) in &self.generic_instantiations.clone() {
                 // Create a concrete function from the generic template
                 let concrete_func =
@@ -2352,7 +2352,7 @@ impl CodeGenerator {
             }
             self.output.push('\n');
         }
-
+        self.struct_literals.scope = LiteralScope::Imported;
         // Generate functions from imported modules, off the SAME SORTED LOCAL as
         // above — `imported_modules` here is a sorted Vec, not the HashMap this
         // loop used to walk with `.values()`, because HashMap order put the hash
@@ -2387,7 +2387,7 @@ impl CodeGenerator {
                 }
             }
         }
-
+        self.struct_literals.scope = LiteralScope::Program;
         // Generate functions from main program
         for item in &program.items {
             match item {
@@ -6344,27 +6344,27 @@ impl CodeGenerator {
                 self.generate_expression(index)?;
                 self.output.push(']');
             }
-            Expr::StructLiteral { name, fields, .. } => {
+            Expr::StructLiteral { name, fields, span } => {
                 // Generate struct literal: (StructName){.field1 = value1, .field2 = value2}
                 //
-                // A generic struct's literal is of the instantiation its values' C types
-                // pick (`literal_instantiation`), the rule the declaration of a `let` it
-                // initialises follows too (`try_infer_expr_type_in`), so the two agree;
-                // a literal no recorded instantiation holds is refused by name
-                // (`instantiation_matched`) rather than emitted.
+                // A generic struct's literal is of the instantiation the type checker
+                // recorded for IT (`literal_instantiation`, `StructLiterals`, review round
+                // 10), the rule the declaration of a `let` it initialises follows too
+                // (`try_infer_expr_type_in`), so the two agree; a literal no instantiation
+                // of its own holds is refused by name (`instantiation_matched`).
                 //
                 // It picked the first instantiation with ANY argument matching the C type
                 // of the FIRST field, by substring: `"long long*".contains("long long")`,
                 // so a pointer chose an `i64` instantiation and initialised a `long long`
-                // field from it (review round 9), and `G { tag: 1, p: a }` chose by `tag`
-                // alone between `G<i64, A>` and `G<i64, i64>`, whichever sorted first.
-                // Under `type A = &i64` the type checker now records `A` for a value of
-                // it (`struct_type_argument`), so the instantiation is `G_i64_A`, whose
-                // `p` is a `long long*`, and it is the one this literal holds. A plain
-                // `&i64` is still recorded as `i64` (the type checker reads a reference
-                // as its referent), and is now refused here, where it was emitted into
-                // a `long long` field and refused by gcc (`G { v: &m }`, on main and on
-                // 6c793f0).
+                // field from it; then (review round 9) the first of ALL instantiations its
+                // values' C types matched exactly, so an unused literal's `G<i64, z>` took
+                // a `u32` value recorded as `G<i64, i64>`, and an `if` meeting it with an
+                // `i64` one assigned `G_i64_i64` to a `G_i64_z` (gcc; main ran it). Under
+                // `type A = &i64` the type checker records `A` for a value of it, so the
+                // literal is of `G_i64_A`, whose `p` is a `long long*`. A plain `&i64` is
+                // recorded as `i64` (a reference is read as its referent): it is of the
+                // instantiation keeping the reference where one exists, and refused by
+                // name where none does (`G { v: &m }`, gcc on main and on 6c793f0).
                 //
                 // A literal of a generic struct always has a field: every type parameter
                 // is inferred from one, and the type checker refuses an uninferred one, so
@@ -6373,7 +6373,7 @@ impl CodeGenerator {
                     self.generic_struct_instantiation_map.get(name)
                 {
                     let found =
-                        self.literal_instantiation(name, fields, &std::collections::HashMap::new());
+                        self.literal_instantiation(name, fields, *span, &Default::default());
                     Self::instantiation_matched(name, found.as_deref(), instantiations)?.to_string()
                 } else {
                     // Use the original name for non-generic structs
@@ -6946,52 +6946,55 @@ impl CodeGenerator {
         }
     }
 
-    /// The instantiation a generic struct literal was matched to, or a refusal
-    /// by name when the match found none (WT-01 W2a review round 3).
+    /// The instantiation of the generic struct `name` the literal at `span`
+    /// with these `fields` builds — or `None`: `name` is not a generic struct,
+    /// or no instantiation holds these values.
     ///
-    /// The match reads the C type of the literal's FIRST field and accepts an
-    /// instantiation with an `i64` (`long long`), `bool` (`int`) or `String`
-    /// (`char*`) argument, and nothing else. Every other literal — a struct or
-    /// enum argument, a `u32`, an array, a tuple, or a `bool` argument behind
-    /// an `i64` first field — fell back to the uninstantiated `struct G`,
-    /// which no generic struct ever defines, and gcc refused the program:
-    /// `incomplete type 'struct G'`, or, for an argument the type checker
-    /// records with no name (an array, a tuple, a char, a float), `incomplete
-    /// type 'struct Unknown'` one definition earlier. That is #63, measured as
-    /// 42 of the 50 programs main refused and the round-2 build sent to gcc.
-    /// Refused here, before any C exists.
-    /// Two neighbours are NOT this refusal: `infer_expr_type` keeps a second
-    /// copy of the match that reads the first field's expression KIND, so an
-    /// unannotated `let g = G { v: s }` over a `String` or `bool` VARIABLE
-    /// still declares `struct G g`; and an annotated `let g: G<i64>` is
-    /// lowered as `void*` (#74). Both still reach gcc.
-    /// The instantiation of the generic struct `name` a literal of it with
-    /// these `fields` builds — or `None`: `name` is not a generic struct, or
-    /// no instantiation the type checker recorded holds these values.
+    /// A literal is of the instantiation the type checker RECORDED FOR IT
+    /// (`StructLiterals`, review round 10). Each recorded instantiation is a
+    /// struct whose fields have C types (`generate_struct` keeps them in
+    /// `structs`), and the literal's values for the fields written with a type
+    /// parameter have C types where this pass can say what they are (a field
+    /// written without one is the same in every instantiation). Of the
+    /// literal's own records: the first whose fields hold every such value
+    /// EXACTLY — under `type A = &i64`, `G { tag: 1, p: a }` is of `G<i64, A>`,
+    /// whose `p` is a `long long*` — or else the first whose fields hold them
+    /// as C converts an integer of one width into another, as the record keeps
+    /// no width (an integer carried by no alias is recorded as `i64`): `G {
+    /// tag: 1, p: v }` with `let v: u32 = 7` is of `G<i64, i64>`.
     ///
-    /// Each recorded instantiation is a struct whose fields have C types
-    /// (`generate_struct` keeps them in `structs`), and the literal's values
-    /// for the fields written with a type parameter have C types where this
-    /// pass can say what they are (a field written without one is the same in
-    /// every instantiation, and tells none apart). The literal is of the first
-    /// instantiation every such value is EXACTLY the field of — so under `type
-    /// A = &i64`, `G { tag: 1, p: a }` is of `G<i64, A>`, whose `p` is a
-    /// `long long*`, and `P2 { x: a, y: b }` of `P2<A>`.
+    /// Review round 9 picked the first of ALL the instantiations that held the
+    /// values exactly, so another literal's chose: beside an unused `G { tag:
+    /// 1, p: s.get() }` under `type z = u32`, that `v` was emitted as `G_i64_z`
+    /// (its C type is `unsigned int`), an `if` meeting it with `G { tag: 2, p:
+    /// w }` (`w: i64`, `G_i64_i64`) assigned one struct to the other and gcc
+    /// refused what main ran; and an unread `G<i64, z>` turned `~gg.p` from
+    /// main's `-8` into `4294967288`.
     ///
-    /// Failing that, as before: the first instantiation with an argument
-    /// matching the first field's C type — `i64` for a `long long` (signed or
-    /// not), `bool` for an `int`, `String` for a `char*` — as the record keeps
-    /// no integer width (an integer carried by no alias is recorded as `i64`).
-    /// But only one whose every such field holds its value as C converts it,
-    /// an integer of one width into another: the first field was matched by
-    /// substring, so `"long long*".contains("long long")` chose an `i64`
-    /// instantiation for a pointer, a `long long` field was initialised from
-    /// it, and gcc refused the program (review round 9) — a value no
-    /// instantiation holds is refused by name instead.
+    /// One record says less than its value: the type checker reads a
+    /// reference as its referent, so `G { tag: 2, p: &m }` is recorded as
+    /// `G<i64, i64>`, whose `long long p` holds no pointer. Such a literal is
+    /// of the instantiation that is its record with the reference kept — the
+    /// same arguments, but at a parameter whose value is a pointer the record's
+    /// field is not, an argument whose field holds that pointer exactly (`A`,
+    /// `type A = &i64`, where one exists: main ran it there) — and refused by
+    /// name where none is. A value no record holds is never put in a field of
+    /// another type: no pointer, struct or tuple into a scalar, and no `?`
+    /// instantiation (the record of an argument the type checker cannot name).
+    ///
+    /// A literal the type checker never checked — in a generic function's
+    /// body, which is monomorphized and never walked — has no record, and is
+    /// matched as before review round 10: the first of all the instantiations
+    /// that holds its values exactly, or else the first with an argument
+    /// matching its first field's C type — `i64` for a `long long` (signed or
+    /// not), `bool` for an `int`, `String` for a `char*` — whose every field
+    /// holds its value as C converts it (`"long long*".contains("long long")`
+    /// once chose an `i64` field for a pointer, review round 9).
     fn literal_instantiation(
         &self,
         name: &str,
         fields: &[(String, Expr)],
+        span: Span,
         locals: &std::collections::HashMap<String, String>,
     ) -> Option<String> {
         // An instantiation the type checker recorded with the placeholder for an
@@ -7030,11 +7033,6 @@ impl CodeGenerator {
                 field_type(mangled, field).is_some_and(|c| Self::same_c_type(&c, value))
             })
         };
-        if !values.is_empty() {
-            if let Some((_, mangled)) = instantiations.iter().find(|(_, m)| exactly(m)) {
-                return Some(mangled.clone());
-            }
-        }
         let converts = |mangled: &String| {
             values.iter().all(|(field, value)| {
                 field_type(mangled, field).is_some_and(|c| {
@@ -7043,6 +7041,58 @@ impl CodeGenerator {
                 })
             })
         };
+        if let Some(own) = self.struct_literals.own(span) {
+            let of_own: Vec<&(Vec<String>, String)> = instantiations
+                .iter()
+                .copied()
+                .filter(|(args, _)| own.contains(args))
+                .collect();
+            let held = of_own.iter().find(|(_, m)| exactly(m));
+            if let Some((_, mangled)) = held.or_else(|| of_own.iter().find(|(_, m)| converts(m))) {
+                return Some(mangled.clone());
+            }
+            // The parameter a field is written as, where it is written as one.
+            let parameter = |field: &String| {
+                let (_, ty) = template.fields.iter().find(|(f, _)| f == field)?;
+                let (Type::TypeParam(p) | Type::Custom(p)) = ty else {
+                    return None;
+                };
+                template.type_params.iter().position(|q| q == p)
+            };
+            // The parameters at which a record erased a reference: a value is a
+            // pointer, and the record's field for it is not.
+            let erased = |mangled: &String| -> Vec<usize> {
+                values
+                    .iter()
+                    .filter(|(field, value)| {
+                        value.ends_with('*')
+                            && field_type(mangled, field).is_some_and(|c| !c.ends_with('*'))
+                    })
+                    .filter_map(|(field, _)| parameter(field))
+                    .collect()
+            };
+            return instantiations
+                .iter()
+                .find(|(args, mangled)| {
+                    converts(mangled)
+                        && of_own.iter().any(|(own_args, own_mangled)| {
+                            let erased = erased(own_mangled);
+                            !erased.is_empty()
+                                && args.len() == own_args.len()
+                                && args
+                                    .iter()
+                                    .zip(own_args)
+                                    .enumerate()
+                                    .all(|(i, (arg, own))| arg == own || erased.contains(&i))
+                        })
+                })
+                .map(|(_, mangled)| mangled.clone());
+        }
+        if !values.is_empty() {
+            if let Some((_, mangled)) = instantiations.iter().find(|(_, m)| exactly(m)) {
+                return Some(mangled.clone());
+            }
+        }
         let (_, first) = fields.first()?;
         let first = self
             .try_infer_expr_type_in(first, locals)
@@ -7094,6 +7144,28 @@ impl CodeGenerator {
         )
     }
 
+    /// The instantiation a generic struct literal was matched to, or a refusal
+    /// by name when the match found none (WT-01 W2a review round 3).
+    ///
+    /// The match read the C type of the literal's FIRST field and accepted an
+    /// instantiation with an `i64` (`long long`), `bool` (`int`) or `String`
+    /// (`char*`) argument, and nothing else. Every other literal — a struct or
+    /// enum argument, a `u32`, an array, a tuple, or a `bool` argument behind
+    /// an `i64` first field — fell back to the uninstantiated `struct G`,
+    /// which no generic struct ever defines, and gcc refused the program:
+    /// `incomplete type 'struct G'`, or, for an argument the type checker
+    /// records with no name (an array, a tuple, a char, a float), `incomplete
+    /// type 'struct Unknown'` one definition earlier. That is #63, measured as
+    /// 42 of the 50 programs main refused and the round-2 build sent to gcc.
+    /// Refused here, before any C exists; since review rounds 9 and 10 the
+    /// match is `literal_instantiation`'s, and what it refuses is a literal
+    /// none of whose own records holds its values.
+    /// An annotated `let g: G<i64>` is not this refusal: it is lowered as
+    /// `void*` (#74), and still reaches gcc. (The `let` declaration kept a
+    /// second copy of the match, reading the first field's expression KIND,
+    /// which declared `struct G g` over a `String` or `bool` VARIABLE; it asks
+    /// `literal_instantiation` since review round 9, and `let s: String =
+    /// "hi"; let g = G { v: s };` runs.)
     fn instantiation_matched<'m>(
         name: &str,
         found: Option<&'m str>,
@@ -7146,11 +7218,11 @@ impl CodeGenerator {
             CompileError::CodegenError {
                 message: format!(
                     "`{} {{ .. }}` is a literal of the generic struct `{}`, and code generation \
-                     picks a literal's instantiation by the C types of its values: one whose \
-                     fields of a type parameter they are exactly, or else one with an `i64`, \
-                     `bool` or `String` argument matching its first field's, whose fields take \
-                     the values as C converts them; none holds these values.{} Write a \
-                     non-generic struct for this argument",
+                     emits a literal as the instantiation the type checker recorded for it, \
+                     whose fields of a type parameter hold its values exactly or as C converts \
+                     an integer of one width into another (a reference the record reads as its \
+                     referent, where an instantiation keeps it); none holds these values.{} \
+                     Write a non-generic struct for this argument",
                     name, name, record
                 ),
             }
@@ -7405,6 +7477,44 @@ impl CodeGenerator {
             }
         }
         crate::ast::expand_type_aliases_for_c(program, &aliases, &opaque)
+    }
+}
+
+/// The instantiation each generic struct literal is of: the type checker's
+/// record for it (`crate::typeck::StructLiteralRecords`, keyed by span), and
+/// whose body is being emitted, as a span is an offset into one file (review
+/// round 10). `literal_instantiation` reads both.
+#[derive(Debug, Default)]
+struct StructLiterals {
+    records: crate::typeck::StructLiteralRecords,
+    scope: LiteralScope,
+}
+
+/// Whose function bodies `compile_escaped` is emitting, in its order: the
+/// monomorphized generic functions, the imported modules' functions, then
+/// the program's own (and its `const`/`static` items, emitted first).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum LiteralScope {
+    /// The program's own bodies: their literals' records are its own.
+    #[default]
+    Program,
+    /// An imported module's bodies, recorded apart from the program's.
+    Imported,
+    /// Monomorphized generic bodies, which the type checker never walks: no
+    /// literal there has a record, and a program literal's at the same span
+    /// is not its.
+    Unrecorded,
+}
+
+impl StructLiterals {
+    /// The type arguments the type checker recorded for the literal at `span`
+    /// in the body being emitted, or `None`: it recorded none.
+    fn own(&self, span: Span) -> Option<&[Vec<String>]> {
+        match self.scope {
+            LiteralScope::Program => self.records.of(false, span),
+            LiteralScope::Imported => self.records.of(true, span),
+            LiteralScope::Unrecorded => None,
+        }
     }
 }
 

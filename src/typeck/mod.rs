@@ -1126,6 +1126,8 @@ pub struct TypeChecker {
     trait_resolver: TraitResolver,
     /// Instantiated generic structs
     struct_instantiations: HashMap<StructInstantiation, CheckerType>,
+    /// Each generic struct literal's own record (`StructLiteralRecords`, review round 10).
+    struct_literal_records: StructLiteralRecords,
     /// Enum definitions with their variants
     enums: HashMap<String, Vec<EnumVariant>>,
     /// EVERY name declared by an `enum` item, local or imported, filled before
@@ -1152,8 +1154,7 @@ pub struct TypeChecker {
     imported_modules: HashMap<String, crate::resolver::ModuleInfo>,
     /// Loop depth counter (for break/continue validation)
     loop_depth: usize,
-    /// One frame per enclosing loop, innermost last — the type a `break` may
-    /// carry out of it.
+    /// One frame per enclosing loop, innermost last — the type a `break` may carry out of it.
     ///
     /// A `break` has no label, so its target is "the innermost loop", and this
     /// stack is that rule made walkable. A frame is `BreakTarget::Value` only
@@ -1182,10 +1183,9 @@ pub struct TypeChecker {
     /// before that callee's body is walked -- a method may call one declared after it, so
     /// reading the form off the method being checked would make the rule order-dependent.
     impl_method_receiver: HashMap<String, SelfReceiver>,
-    /// Every top-level `const` or `static` found in an IMPORTED module, with
-    /// the module it came from. Recorded here and raised by `check`, because
-    /// `set_imported_modules` has no fallible signature — the same shape the
-    /// async deferrals above use, and for the same reason.
+    /// Every top-level `const` or `static` found in an IMPORTED module, with the module it came
+    /// from. Recorded here and raised by `check`, because `set_imported_modules` has no fallible
+    /// signature — the same shape the async deferrals above use, and for the same reason.
     deferred_imported_globals: Vec<(String, String)>,
     /// The top-level `const` and `static` names (N3-09, N3-10), with the span
     /// of the declaration.
@@ -1234,6 +1234,7 @@ impl TypeChecker {
             generic_structs: HashMap::new(),
             trait_resolver: TraitResolver::new(),
             struct_instantiations: HashMap::new(),
+            struct_literal_records: StructLiteralRecords::default(),
             enums: HashMap::new(),
             enum_names: HashSet::new(),
             generic_enums: HashMap::new(),
@@ -1256,8 +1257,7 @@ impl TypeChecker {
 
     /// Names of every function signature this pass knows.
     ///
-    /// On a freshly constructed checker this is exactly the built-in set, which is
-    /// what the drift test in `crate::builtins` asserts against.
+    /// A fresh checker's set is exactly the built-ins, which `crate::builtins`' drift test asserts.
     #[allow(dead_code)] // used by the drift tests in crate::builtins
     pub(crate) fn registered_function_names(&self) -> std::collections::BTreeSet<String> {
         self.functions.keys().cloned().collect()
@@ -2874,8 +2874,7 @@ impl TypeChecker {
         // `pub fn broken() -> i64 { let s = "x"; return s; }` in a module printed
         // "Compilation successful" and then died in gcc with "incompatible pointer
         // to integer conversion returning 'const char *'" — a C diagnostic against
-        // code the user never wrote, which is the class of failure this pass exists
-        // to remove.
+        // code the user never wrote, which is the class of failure this pass exists to remove.
         //
         // GENERICS ARE SKIPPED HERE, and the reason changed under this pass.
         // It used to say "no generic guard needed: `check_function` already
@@ -2890,12 +2889,12 @@ impl TypeChecker {
         // end of this function, which filters on `self.instantiations` and so
         // fires only for the ones that become C.
         //
-        // Module order is sorted for the same reason `set_imported_modules` sorts:
-        // when two modules both fail, WHICH error the user is shown must not depend
-        // on the hash seed.
+        // Module order is sorted for the same reason `set_imported_modules` sorts: when two modules
+        // both fail, WHICH error the user is shown must not depend on the hash seed.
         let modules = std::mem::take(&mut self.imported_modules);
         let mut module_names: Vec<&String> = modules.keys().collect();
         module_names.sort();
+        self.struct_literal_records.imported = true;
         for module_name in module_names {
             for item in &modules[module_name].ast.items {
                 if let Item::Function(func) = item {
@@ -2921,6 +2920,7 @@ impl TypeChecker {
                 }
             }
         }
+        self.struct_literal_records.imported = false;
         self.imported_modules = modules;
 
         // AN IMPORTED GENERIC THAT WAS INSTANTIATED IS PART OF THE EMITTED
@@ -4368,7 +4368,7 @@ impl TypeChecker {
                     ))),
                 }
             }
-            Expr::StructLiteral { name, fields, .. } => {
+            Expr::StructLiteral { name, fields, span } => {
                 // First check if this is a generic struct
                 if let Some(generic_struct) = self.generic_structs.get(name).cloned() {
                     // For generic structs, we need to infer type parameters from field values
@@ -4484,11 +4484,11 @@ impl TypeChecker {
 
                     // Track this instantiation for code generation (an Enum argument was "Unknown"),
                     // each argument by the alias its value is carried by where a generic FUNCTION's
-                    // argument is (`struct_type_argument`, `carrier`; review round 9). Spelled from
-                    // this checker's type alone, a value of `type A = &i64` given to `struct G<X, Y>
-                    // { tag: X, p: Y }` as `G { tag: 1, p: s.get() }` was recorded as `G<i64, i64>`
-                    // and its `p` declared `long long` for a pointer, and one of `type A = (i64,
-                    // i64)` as `G<i64, ?>`: gcc, where main recorded `G<i64, A>` and printed it.
+                    // argument is (`struct_type_argument`, `carrier`; review round 9): under `type A
+                    // = &i64`, `G { tag: 1, p: s.get() }` was recorded `G<i64, i64>` (`p` a `long
+                    // long` for a pointer), under `type A = (i64, i64)` `G<i64, ?>`: gcc, where main
+                    // ran it. It is recorded for THIS literal too, by its span, as the instantiation
+                    // code generation emits it as (`struct_literal_records`, review round 10).
                     let type_arg_strings: Vec<String> = inferred_args
                         .iter()
                         .map(|ct| match ct {
@@ -4517,7 +4517,6 @@ impl TypeChecker {
                             _ => self.struct_type_argument(ct),
                         })
                         .collect();
-
                     let instantiation = StructInstantiation {
                         name: name.clone(),
                         type_args: type_arg_strings,
@@ -4531,6 +4530,7 @@ impl TypeChecker {
                             .collect(),
                     };
 
+                    self.struct_literal_records.record(*span, &instantiation);
                     self.struct_instantiations
                         .insert(instantiation, instantiated_type.clone());
 
@@ -6650,6 +6650,13 @@ impl TypeChecker {
         result
     }
 
+    /// The instantiation this checker recorded for each generic struct
+    /// literal it checked, by the literal (`StructLiteralRecords`), which code
+    /// generation emits the literal as (review round 10).
+    pub fn struct_literal_records(&self) -> StructLiteralRecords {
+        self.struct_literal_records.clone()
+    }
+
     /// Get all available variable names for suggestions
     fn get_available_variables(&self) -> Vec<String> {
         let mut vars = Vec::new();
@@ -7374,6 +7381,16 @@ impl TypeChecker {
                         .enumerate()
                         .all(|(i, (w, f))| self.written_admits(w, f, element(i)))
             }
+            // A generic struct's place takes only a value of the instantiation it
+            // holds (review round 10): `let mut r = G { tag: 2, p: w };` then `r =
+            // G { tag: 1, p: s.get() }` under `type z = u32` assigned a `G_i64_z`
+            // to a `G_i64_i64` (gcc), where main refused `expected G<Int, Int>,
+            // found G<Int, z>` — either way round, as where two values meet.
+            (CheckerType::Generic { .. }, CheckerType::Generic { .. }) => {
+                written == found
+                    && !self.names_another_type(written, found)
+                    && !self.names_another_type(found, written)
+            }
             // A place main typed by an alias's NAME takes only a value of the
             // type the alias names in the source (`misnamed`) — a literal too,
             // read as the type this checker spells it (review round 8: `z = 3`
@@ -7650,8 +7667,8 @@ impl TypeChecker {
     /// Is `found` another type than `named` where `named` stands: `named`
     /// declared by the NAME of an alias (main's own type was the name), and
     /// the type that alias names in the SOURCE's spelling (`lossless`) not
-    /// `found`'s, at some depth of an array or a tuple — or two tuples
-    /// declared as aliases of two types?
+    /// `found`'s, at some depth of an array, a tuple or a generic struct's
+    /// type arguments — or two tuples declared as aliases of two types?
     ///
     /// ONE `Int` FOR EVERY WIDTH AND FOR EVERY POINTER (review rounds 7 and
     /// 8). main typed a generic's result, a method's and a generic struct's
@@ -7684,6 +7701,22 @@ impl TypeChecker {
                         .zip(found_elements)
                         .any(|(n, f)| self.names_another_type(n, f))
             }
+            // A generic struct's value is of the instantiation its arguments were
+            // recorded as (review round 10), so `G { tag: 1, p: s.get() }` under
+            // `type z = u32` (`G<i64, z>`) and `G { tag: 2, p: w }` (`G<i64, i64>`)
+            // are two C structs: met in an `if`, a `match`, a `loop`, an array or
+            // an assignment they compared equal and gcc refused one assigned to
+            // the other, where main refused the program (`expected G<Int, z>, found
+            // G<Int, Int>`).
+            (
+                CheckerType::Generic { args, .. },
+                CheckerType::Generic {
+                    args: found_args, ..
+                },
+            ) => args.iter().zip(found_args).any(|pair| {
+                matches!(pair, (GenericArgValue::Type(n), GenericArgValue::Type(f))
+                    if self.names_another_type(n, f))
+            }),
             _ => self.misnamed(named, self.lossless(found)),
         }
     }
@@ -8072,6 +8105,62 @@ fn shown_argument<'a>(spelling: &'a str, value: &'a Option<CheckerType>) -> &'a 
 /// apart. `?` cannot occur in any type the record spells, so a test for it
 /// is a test for the placeholder and for nothing else (review round 4).
 pub const UNNAMED_TYPE_ARGUMENT: &str = "?";
+
+/// THE INSTANTIATION THE TYPE CHECKER DECIDED FOR EACH GENERIC STRUCT LITERAL
+/// (review round 10): the type arguments it recorded for the literal (the
+/// `StructInstantiation` the literal adds), by the literal's span.
+///
+/// Code generation had only the set of instantiations, and chose a literal's
+/// by the C types of its values among ALL of them. Beside an unused `G { tag:
+/// 1, p: s.get() }` under `type z = u32` (recorded `G<i64, z>`), the literal
+/// `G { tag: 1, p: v }` with `let v: u32 = 7` — recorded `G<i64, i64>`, as `v`
+/// is not typed by the alias's name — was emitted as `G_i64_z`, because `v`'s
+/// C type is `unsigned int`: one type to this checker, two C structs, and an
+/// `if` that met it with `G { tag: 2, p: w }` (`w: i64`) assigned one to the
+/// other and gcc refused the program main and 6c793f0 ran (`4294967297`).
+/// With the record, a literal is of the instantiation recorded for IT.
+///
+/// Keyed by the span and by whether the literal is in an imported module's
+/// body (`imported`, set while `check` walks them): a span is an offset into
+/// one file, and two files' literals may share one. A literal checked more
+/// than once keeps every record it was given; one this checker never checks
+/// (a generic function's body: monomorphized, never walked) has none.
+#[derive(Debug, Clone, Default)]
+pub struct StructLiteralRecords {
+    records: HashMap<LiteralSite, Vec<Vec<String>>>,
+    imported: bool,
+}
+
+/// Where a literal is: in an imported module's body or not, and its span's
+/// start, end, line and column.
+type LiteralSite = (bool, usize, usize, usize, usize);
+
+impl StructLiteralRecords {
+    fn key(imported: bool, span: Span) -> LiteralSite {
+        (imported, span.start, span.end, span.line, span.column)
+    }
+
+    /// Record `instantiation`'s type arguments for the literal at `span`, in
+    /// the body being checked.
+    fn record(&mut self, span: Span, instantiation: &StructInstantiation) {
+        let records = self
+            .records
+            .entry(Self::key(self.imported, span))
+            .or_default();
+        if !records.contains(&instantiation.type_args) {
+            records.push(instantiation.type_args.clone());
+        }
+    }
+
+    /// The type arguments recorded for the literal at `span` — in an imported
+    /// module's body or in the program's — or `None`: no literal there was
+    /// checked.
+    pub fn of(&self, imported: bool, span: Span) -> Option<&[Vec<String>]> {
+        self.records
+            .get(&Self::key(imported, span))
+            .map(Vec::as_slice)
+    }
+}
 
 #[cfg(test)]
 mod tests {

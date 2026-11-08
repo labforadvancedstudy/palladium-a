@@ -229,10 +229,10 @@ impl Driver {
             if !instantiations.is_empty() {
                 codegen.set_generic_instantiations(instantiations);
             }
-
-            // Pass generic struct instantiations to code generator
+            // Pass generic struct instantiations, and the one each literal is of, to code generator
             if !struct_instantiations.is_empty() {
-                codegen.set_generic_struct_instantiations(struct_instantiations);
+                let literals = type_checker.struct_literal_records();
+                codegen.set_generic_struct_instantiations(struct_instantiations, literals);
             }
 
             codegen.compile(&ast)?;
