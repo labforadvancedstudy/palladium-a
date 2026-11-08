@@ -87,10 +87,12 @@ fold() {
 
 # --self-test: THE LATTICE, EXERCISED WHERE THE REAL RUN CANNOT REACH IT.
 #
-# On this tree no inventory returns NO_VERDICT, so the whole OWED-vs-NO_VERDICT
-# precedence is dead code during a real run — measured: inverting `fold` so that
-# NO_VERDICT dominates changed nothing about `make m2-exit`, which still said
-# `M2_EXIT_RESULT 1 OWED`. A rule no run exercises is a rule with no control, and
+# On this tree no two inventories disagree — measured when the tree's verdict was
+# OWED: inverting `fold` so that NO_VERDICT dominates changed nothing about `make
+# m2-exit`, which still said `M2_EXIT_RESULT 1 OWED`. Since 2026-11-08 M2 owes no
+# row and the real verdict is inventory four's abstention alone, `M2_EXIT_RESULT 2
+# NO_VERDICT`, so the OWED-vs-NO_VERDICT precedence is still dead code on a real
+# run, now from the other side. A rule no run exercises is a rule with no control, and
 # that is the defect this file was rewritten to remove, one level in. So the fold
 # is driven over all 81 combinations of four tri-state inventories and compared
 # against the lattice stated in the header: max(OWED > NO_VERDICT > CLEAR).

@@ -54,6 +54,14 @@ UNOWNED count three -> two. The ownership did not move — finding 1 below — a
 one defect beside the construct that the witness does not use: `==` between two values of a user
 enum type-checks and gcc refuses the C (row 4).
 
+**The UNOWNED count fell two -> zero on 2026-11-08, and no line of `json_parser.pd` code changed.**
+The owner decided issue #46 and M2's exit together. Each of the five UNOWNED findings got a row —
+N4-24, N9-10 and N6-12 born `satisfied` for the three this witness already applied, N4-25 and
+N14-18 born `owed` for the two it still works around — and the two bare `// WORKAROUND UNOWNED`
+markers name those two rows now. The live count stays three, the transcript is untouched, and WT-01
+moved from M2 to M8, because none of the three is M2's to pay (the arena waits on N14-09,
+M8). Moving a row is not paying it, and WT-01 is still `owed`.
+
 ## The shape it would have
 
 ```palladium
@@ -128,22 +136,22 @@ exists and the row is history.
 | 1 | `enum Json { Array(Vec<Json>) }` — a recursive type | **none — closed at `cfa7e7f` for the recursion mechanism, as measured over `Custom`, `Array` and `Tuple` payload slots.** `enum V { Leaf(i64), Pair(V, V) }` compiles, links and runs (a self-recursive `depth` returns 3 for `Pair(Leaf, Pair(Leaf, Leaf))`), and a cycle with no `enum` payload slot to stop at is now refused by name: ``recursive type `J` has no layout: it stores itself by value (J -> J), and nothing on that cycle can stop. …`` Both probes are replayable as tests, in the 940-line suite that commit landed: `tests/m2_recursive_data_types.rs::a_match_arm_binds_a_subtree_and_recurses_on_it` is the depth-3 run, `tests/m2_recursive_data_types.rs::recursion_through_an_array_is_refused_rather_than_guessed_at` is the named refusal. **What was measured is not this row's own spelling.** `Vec<Json>` is a *generic* payload, and the layout rule never sees a generic cycle: `enum J { Num(i64), Arr(Vec<J>) }` reaches exit 0 through `void*` without the layout rule ever seeing the cycle. The row is counted closed because the recursion mechanism is what its workaround needed — the generic-payload case is untested residual, carried in full by the first bullet of *What is better than the roadmap assumes* below | none needed for the recursion; the arena stays for rows 2 and 3 | **closed** (was UNOWNED) |
 | 2 | `Vec<Json>` | — | fixed capacity 192 | N14-09 (M8) |
 | 3 | `Vec<(String, Json)>` for object members | `Expected ')' after expression, but found ','` | a `key: [String; 192]` array parallel to the nodes | N4-12 (M2) |
-| 4 | `[Kind; N]` — an array of a user `enum` | **closed, and APPLIED** at `fafe870` (2026-11-08). Measured before: `Type mismatch: expected [K; 4], found [K; 4]` for **both** `[K::A; 4]` and `[K::A, K::A, K::A, K::A]` — the type checker read the `K` inside a composite type as a struct while every `K::A` was an enum. W2a (`af5d6ac`, on `main` at `fafe870`) keeps an enum an enum inside every composite, witnessed by `tests/regression/enum_in_composites.pd`. Re-probed with `pdc run`: both spellings run, and so do a `[K; 192]` struct field beside `[i64; 192]` and `[String; 192]` ones, a write through `&mut self`, reads through `&self` (discarded, forwarded to a function, bound with and without an annotation, read twice), an enum parameter forwarded to another method, and `match` on an element as a statement and as an expression. Two things beside it do not work, and the witness uses neither. `[K; CAP]` with a `const` length is refused for every element type, `[i64; CAP]` included (`expected [Int; CAP], found [Int; 4]`), because an array length is an integer literal, so the column is `[Kind; 192]` like its neighbours. And `==`/`!=` between two values of a user enum — or of a struct — passes the type checker, and gcc refuses the C it emits with `invalid operands to binary expression ('struct K' and 'struct K')`; N5-10 ("Arithmetic and comparison operators", `satisfied`) names `tests/02_types_primitives.pd` as its evidence, which contains no comparison operator at all, and no row says whether `==` is defined on a user type | none. It was kinds stored as `i64`, named by seven zero-arg functions `k_null()` .. `k_object()`. It is `enum Kind` and `kind: [Kind; 192]`, and every dispatch on a kind is a `match`. `render` and `kind_name` name every variant, so a new one is `Non-exhaustive match: missing patterns Kind::…` at both (measured), where a new code fell through to "object"; `member` and `element` are guards with a `_` arm. `json_parser.expected` is byte-identical | **closed by capability, ownership still UNOWNED** — N4-09 is `satisfied` and still states it is witnessed for `[i64; N]`/`[String; N]` only, and no row was amended to claim `[EnumType; N]` (finding 1 below) |
-| 5 | `fn peek(ref self)` / `fn walk(p: ref Json)` — a shared borrow that can be **forwarded** | **closed, and APPLIED — in the `&` spelling.** Re-measured at `cece734` (2026-10-07): the diagnostic this row quoted — `fn a(p: &P) -> i64 { return b(p); }` emitting `b((*p))` and dying in gcc on `passing 'const struct P' to parameter of incompatible type 'const struct P *'` — is stale since su2 (`b54502b`), which made the call site and the declaration ask one predicate. That program runs and prints, and `tests/linker_diagnostics.rs::forwarding_a_shared_reference_compiles_links_and_runs` is its witness. In the witness's own emitted C, `peek` is `return __pd_Json_at(self, self->pos);` and `(*self)` occurs zero times. The `ref` spelling is still a parse error (`fn b(p: ref P)` is `Expected ')' (Expected ')'), but found identifier 'P'`) | none. It was `mut j: Json` on every function, readers included; every reader is a `&self` method now, and the one nested call in `main` that needed a temp under two `mut` borrows needs none | **closed by capability, ownership still UNOWNED** for the implemented `&` spelling (finding 2 below); N9-01/N9-02/N4-13 (M7) own `ref T` |
+| 4 | `[Kind; N]` — an array of a user `enum` | **closed, and APPLIED** at `fafe870` (2026-11-08). Measured before: `Type mismatch: expected [K; 4], found [K; 4]` for **both** `[K::A; 4]` and `[K::A, K::A, K::A, K::A]` — the type checker read the `K` inside a composite type as a struct while every `K::A` was an enum. W2a (`af5d6ac`, on `main` at `fafe870`) keeps an enum an enum inside every composite, witnessed by `tests/regression/enum_in_composites.pd`. Re-probed with `pdc run`: both spellings run, and so do a `[K; 192]` struct field beside `[i64; 192]` and `[String; 192]` ones, a write through `&mut self`, reads through `&self` (discarded, forwarded to a function, bound with and without an annotation, read twice), an enum parameter forwarded to another method, and `match` on an element as a statement and as an expression. Two things beside it do not work, and the witness uses neither. `[K; CAP]` with a `const` length is refused for every element type, `[i64; CAP]` included (`expected [Int; CAP], found [Int; 4]`), because an array length is an integer literal, so the column is `[Kind; 192]` like its neighbours. And `==`/`!=` between two values of a user enum — or of a struct — passes the type checker, and gcc refuses the C it emits with `invalid operands to binary expression ('struct K' and 'struct K')`; N5-10 ("Arithmetic and comparison operators", `satisfied`) names `tests/02_types_primitives.pd` as its evidence, which contains no comparison operator at all, and no row says whether `==` is defined on a user type | none. It was kinds stored as `i64`, named by seven zero-arg functions `k_null()` .. `k_object()`. It is `enum Kind` and `kind: [Kind; 192]`, and every dispatch on a kind is a `match`. `render` and `kind_name` name every variant, so a new one is `Non-exhaustive match: missing patterns Kind::…` at both (measured), where a new code fell through to "object"; `member` and `element` are guards with a `_` arm. `json_parser.expected` is byte-identical | **closed** — N4-24 (M2), `satisfied`, added 2026-11-08 from issue #46. Until then it was closed by capability and owned by no row: N4-09 states it is witnessed for `[i64; N]`/`[String; N]` only (finding 1 below) |
+| 5 | `fn peek(ref self)` / `fn walk(p: ref Json)` — a shared borrow that can be **forwarded** | **closed, and APPLIED — in the `&` spelling.** Re-measured at `cece734` (2026-10-07): the diagnostic this row quoted — `fn a(p: &P) -> i64 { return b(p); }` emitting `b((*p))` and dying in gcc on `passing 'const struct P' to parameter of incompatible type 'const struct P *'` — is stale since su2 (`b54502b`), which made the call site and the declaration ask one predicate. That program runs and prints, and `tests/linker_diagnostics.rs::forwarding_a_shared_reference_compiles_links_and_runs` is its witness. In the witness's own emitted C, `peek` is `return __pd_Json_at(self, self->pos);` and `(*self)` occurs zero times. The `ref` spelling is still a parse error (`fn b(p: ref P)` is `Expected ')' (Expected ')'), but found identifier 'P'`) | none. It was `mut j: Json` on every function, readers included; every reader is a `&self` method now, and the one nested call in `main` that needed a temp under two `mut` borrows needs none | **closed** — N9-10 (M2), `satisfied`, added 2026-11-08 from issue #46 for the implemented `&` spelling, which no row named until then (finding 2 below); N9-01/N9-02/N4-13 (M7) own `ref T` |
 | 6 | `j.peek()` | **closed, and APPLIED** at `cece734` (2026-10-07). `&self` is a shared borrow, so calling it twice is not a move, and a `&mut self` method writes its receiver and the caller observes it — both since su2 (`b54502b`), witnessed by `tests/04_self_place.pd`. Applying it to this parser found two borrow-checker defects no fixture had. A `self.<field>` read was a MOVE — `Use of moved value: self.pos` for `self.err_pos = self.pos;` then `let start: i64 = self.pos;` — because the checker walked the method with `self: &Self` and `Self` has no fields, so an `i64` field could not be seen to be Copy; W1c (`d159139`, `ad63231`) resolves `Self` there, witnessed by `tests/04_self_field_reads.pd`. And a projection's move leaked from one function body into the next; W1d (merged at `cece734`) scopes it, witnessed by `tests/regression/projection_move_scope.pd`. The witness compiling on `cece734` is the end-to-end receipt for both | none. It was free functions `js_*(j, …)`; the cursor and the parser are methods on `Json` now, in seven `impl Json` blocks beside their sections, and `json_parser.expected` is byte-identical | **closed** — N5-17 (M2) `satisfied`. The `ref mut self` spelling is still refused (`fn get(ref self)` is `Expected ':' (Expected ':' after parameter name), but found 'self'`) and still adjacent to N9-02 (M7) + N10-06 (M3) rather than owned by either, as before |
 | 7 | `match self.peek() { Some('n') => … }` as an **expression** | **closed, and APPLIED.** `value`'s dispatch (`js_value` until the cursor round) IS a `match` expression now: `let node: i64 = match c { '\0' => { … } 'n' => { … } … _ => { … } };`. N5-04 was never the blocker and always measured so; row 9 was, and row 9 closed. The local is no longer `mut` and no arm assigns | none. It was `let mut node: i64 = -1;` and one assignment per branch | **closed** — the capability landed in the char-pattern round; N5-04 (M2) `satisfied` throughout |
 | 8 | `'n'`, `'"'`, `'\t'` — char literals | **closed.** `let c: i64 = 'a';` compiles (rc=0), and so do `c == 'a'` and `c >= '0' && c <= '9'`. Char literals are expressions now; what still fails is a char literal in *pattern* position, which is row 9 | none. Twenty-nine of the 31 zero-arg byte-code functions are deleted; `ch_backspace` and `ch_formfeed` stay because `'\b'` and `'\f'` are outside the closed escape set and are correctly refused — the set behaving as specified, not a workaround | N2-04 (M2), `satisfied` |
-| 9 | literal patterns in the arms | **closed, and APPLIED.** A char literal is a pattern: `'\0'`, `'n'`, `'t'`, `'f'`, `'"'`, `'['`, `'{'` and `'-'` are arms in `value`, and `'!'`-style literals are pinned by `tests/06_char_patterns.pd`. Measured before: `'n' => …` was `Expected pattern, but found char 'n'`. The lowering is numeric — `== 110 /* 'n' */` — not a C character constant, pinned by `tests/m2_char_patterns.rs` | none | **closed by capability, ownership still UNOWNED** — N6-02's words remain "Literal patterns (integer, string, bool)" and no row was amended to claim `char`; parked as issue #46 |
-| 10 | `Some(' ') \| Some('\t') \| …` — or-patterns | **closed, and APPLIED.** `js_is_ws` is `match c { ' ' \| '\t' \| '\n' \| '\r' => { true } _ => { false } }`, and `value` carries the mixed form `'-' \| '0'..='9'`. N6-07 was never the blocker — or-patterns over an `i64` always compiled — row 9 was | none. It was four `==` tests joined by `\|\|` | **closed** — N6-07 (M2), `satisfied` throughout; the char half is issue #46 |
-| 11 | `'0'..='9'` — a range pattern | **closed, and APPLIED.** `js_is_digit` is `match c { '0'..='9' => { true } _ => { false } }`. A char range is ordered by CODE POINT and lowers to two numeric comparisons (`>= 48 /* '0' */ && <= 57 /* '9' */`). N6-03 was never the blocker; row 9 was. An empty char range and a mixed-kind range are refused by name, pinned by `tests/reject/char_range_pattern_empty.pd` and `tests/reject/range_pattern_mixed_endpoints.pd` | none. It was `c >= '0' && c <= '9'` | **closed** — N6-03 (M2), `satisfied` throughout; the char half is issue #46 |
+| 9 | literal patterns in the arms | **closed, and APPLIED.** A char literal is a pattern: `'\0'`, `'n'`, `'t'`, `'f'`, `'"'`, `'['`, `'{'` and `'-'` are arms in `value`, and `'!'`-style literals are pinned by `tests/06_char_patterns.pd`. Measured before: `'n' => …` was `Expected pattern, but found char 'n'`. The lowering is numeric — `== 110 /* 'n' */` — not a C character constant, pinned by `tests/m2_char_patterns.rs` | none | **closed** — N6-12 (M2), `satisfied`, added 2026-11-08 from issue #46. N6-02's words remain "Literal patterns (integer, string, bool)"; the char pattern is a row of its own rather than an amendment |
+| 10 | `Some(' ') \| Some('\t') \| …` — or-patterns | **closed, and APPLIED.** `js_is_ws` is `match c { ' ' \| '\t' \| '\n' \| '\r' => { true } _ => { false } }`, and `value` carries the mixed form `'-' \| '0'..='9'`. N6-07 was never the blocker — or-patterns over an `i64` always compiled — row 9 was | none. It was four `==` tests joined by `\|\|` | **closed** — N6-07 (M2), `satisfied` throughout; the char half is N6-12 (M2), added 2026-11-08 from issue #46 |
+| 11 | `'0'..='9'` — a range pattern | **closed, and APPLIED.** `js_is_digit` is `match c { '0'..='9' => { true } _ => { false } }`. A char range is ordered by CODE POINT and lowers to two numeric comparisons (`>= 48 /* '0' */ && <= 57 /* '9' */`). N6-03 was never the blocker; row 9 was. An empty char range and a mixed-kind range are refused by name, pinned by `tests/reject/char_range_pattern_empty.pd` and `tests/reject/range_pattern_mixed_endpoints.pd` | none. It was `c >= '0' && c <= '9'` | **closed** — N6-03 (M2), `satisfied` throughout; the char half is N6-12 (M2), added 2026-11-08 from issue #46 |
 | 12 | `else if` | **closed, and APPLIED.** The witness now carries 12 chained arms across 6 chains (`grep -cE '^[[:space:]]*\} else if ' tests/witness/json_parser.pd` is 12; it was 19 across 7 until `js_value`'s chain became a `match`), and **no `else` block in the file opens with an `if` as its first statement** — the shape the workaround had. The deepest chain, `js_value`, went from eight nested `else` blocks with its last branch eight levels deep to one `if`, seven chained arms and one `else` at a single indent | none. `json_parser.expected` is byte-identical across the rewrite | **closed** — N5-06 (M2), `satisfied` |
 | 13 | `loop { … }` | **closed, and APPLIED.** `grep -cE '^[[:space:]]*loop \{' tests/witness/json_parser.pd` is 4 and `grep -cE '^[[:space:]]*while true \{'` is 0; the only surviving `while true` in the file is the header sentence describing this change | none | **closed** — N5-07 (M2), `satisfied` |
 | 14 | `self.pos += 1` | **the compound assignment is closed and APPLIED, at every site.** `grep -cE '^[[:space:]]*[a-z_.]+ [-+]= ' tests/witness/json_parser.pd` is 11, `self.pos += 1;` among them, where the file once carried none. Ten were applied in the round that closed this row; the eleventh, `literal`'s cursor advance, was missed then and stayed `self.pos = self.pos + n;` through the cursor rewrite, until review caught it and it became `self.pos += n;`. No read-modify-write is left: `perl -ne 'print if /^\s*([a-z_.]+) = \1 [-+] /' tests/witness/json_parser.pd` prints nothing, where it printed that one line before. `self.pos` is writable too since su2, through `&mut self` — row 6 | none | **closed** — N5-13 (M2), `satisfied`. The `self.` half of this row's own spelling is row 6, also closed |
 | 15 | `(v << 4) \| d`, `cp >> 6`, `cp & 63` | **closed, and APPLIED at both sites.** The hex accumulator is `v = (v << 4) \| d;` and the UTF-8 encoder is written in `>>` and `&` throughout (`(224 \| (cp >> 12)) as char`, `(128 \| ((cp >> 6) & 63))`). This is the row that used to carry the file's only duplicate marker; both sites are discharged, so no marker string repeats any more | none | **closed** — N5-12 (M2), `satisfied` |
-| 16 | `Number(f64)` | **not float arithmetic — the numeric↔text boundary, in both directions.** `let x: f64 = 1.5;`, `x + 2.25` and `y > 3.0` all compile (rc=0), so N4-02 is not the missing piece. Nothing carries a float across the text boundary either way: `src/builtins.rs` declares no `string_to_float` and no `parse_float`, so a parsed lexeme cannot become a value, and no `float_to_string` and no `print_float`, so a computed value cannot be printed — `print_float(x)` is `Undefined function: 'print_float'. Did you mean 'print_int'?` | integer numbers carry a value; non-integers carry only their source lexeme, and an `exact` flag says which | **UNOWNED** (N4-02 is `f32 f64` and is `satisfied`; no row owns either direction of the boundary) |
+| 16 | `Number(f64)` | **not float arithmetic — the numeric↔text boundary, in both directions.** `let x: f64 = 1.5;`, `x + 2.25` and `y > 3.0` all compile (rc=0), so N4-02 is not the missing piece. Nothing carries a float across the text boundary either way: `src/builtins.rs` declares no `string_to_float` and no `parse_float`, so a parsed lexeme cannot become a value, and no `float_to_string` and no `print_float`, so a computed value cannot be printed — `print_float(x)` is `Undefined function: 'print_float'. Did you mean 'print_int'?` | integer numbers carry a value; non-integers carry only their source lexeme, and an `exact` flag says which | **N14-18** (M8), `owed`, added 2026-11-08 from issue #46. It was **UNOWNED** until then: N4-02 is `f32 f64` and is `satisfied`, and no row owned either direction of the boundary |
 | 17 | `const CAP: usize = 192;` | **closed.** Top-level `const` and `static` items landed with M2 item 9. The witness now writes `const CAP_NODES: i64 = 192;` and `const MAX_DEPTH: i64 = 24;` and reads them by name; the emitted C is `static const long long CAP_NODES = 192;`. `usize` is still not a type, so the row's own spelling remains unavailable and the witness uses `i64` — which is what N4's OPEN `str`/`usize` question owns, not this row | none. The two zero-arg functions are deleted | **closed** — N3-09 / N3-10 (M2), both `satisfied` |
 | 18 | `"\\t"` — a backslash followed by `t` | **closed.** Measured now: `"\\t"` → bytes `92 116`, `"\\n"` → `92 110`, `"\\"` → the single byte `92`, and `"[\"tab\\there\"]"` → exactly the 13 bytes of `["tab\there"]`. The `String::replace` chain this row described is gone — `grep -rn 'replace(' src/lexer/` is empty; escapes are lexed against the closed set `\n \t \r \" \\ \'` and anything outside it is a compile error carrying the offending character (`LexError::UnknownEscape`) | none. `bs()` is deleted and the three renderer sites emit the literal | N2-09 (M2), `satisfied` |
-| 19 | a JSON document containing `\u0000` | — | refused with a named reason; `String` is a NUL-terminated `char*` (`__pd_string_from_char` writes `result[1] = '\0'`) so the byte cannot be carried | **UNOWNED** (N4-05 is the single word `String`, and is `satisfied`) |
+| 19 | a JSON document containing `\u0000` | — | refused with a named reason; `String` is a NUL-terminated `char*` (`__pd_string_from_char` writes `result[1] = '\0'`) so the byte cannot be carried | **N4-25** (M8), `owed`, added 2026-11-08 from issue #46. It was **UNOWNED** until then: N4-05 is the single word `String`, and is `satisfied` |
 
 Rows 1–19 above are 19 wants, **of which rows 1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17 and
 18 are closed**; the file carries **three** live `// WORKAROUND` comments — three distinct, one per
@@ -170,7 +178,7 @@ The arena marker names **three** owners, not two — `// WORKAROUND N14-09 + N4-
 third is why row 2's single line of the table is not the whole bill. `Vec<Json>` needs `Vec`, which
 the closed builtin set does not have (N14-09, M8; `Vec::new()` is `Undefined enum type: Vec` today),
 *and* it needs the mechanism underneath `Vec<T>`: named generic types `Name<A, B>`, monomorphised,
-which is N4-15 (`docs/contributing/1.0-requirements.tsv:188`, M3, `owed`). `(String, Json)` for the
+which is N4-15 (the row of that id in `docs/contributing/1.0-requirements.tsv`, M3, `owed`; it was cited as line 188, which had stopped holding it before the ownership round and moved again in it, so it is spelled by id now). `(String, Json)` for the
 member pairs needs tuples, N4-12 (M2). The gap list gives N4-15 no row of its own because it is not
 a separate *want* of this parser — row 2's want already **is** a named generic instantiation, so
 the table counts the want once and the marker names every row that has to land before that want
@@ -185,10 +193,11 @@ grep -E '^[[:space:]]*// WORKAROUND ' tests/witness/json_parser.pd \
   | sort | uniq -c | sort -rn
 ```
 
-It prints **6** marker strings over the 7 comments:
+It prints **7** marker strings over the 7 comments:
 
 ```
-   2 UNOWNED
+   1 N4-25
+   1 N14-18
    1 N14-09 + N4-12 + N4-15
    1 DISCHARGED (was UNOWNED)
    1 DISCHARGED (was UNOWNED (codegen) + N9-01)
@@ -196,9 +205,10 @@ It prints **6** marker strings over the 7 comments:
    1 DISCHARGED (N3-09, N3-10)
 ```
 
-One of those strings stands for more than one workaround, and does so on purpose. Bare `UNOWNED` is
-a word rather than an id, and its two sites are two *different* gaps — rows 16 and 19 —
-distinguished by site and not by string. It had a third site, row 4's node kinds, until the
+No string stands for more than one workaround now. Until 2026-11-08 one did, on purpose: bare
+`UNOWNED` was a word rather than an id, and its two sites were two *different* gaps — rows 16 and
+19 — distinguished by site and not by string. Issue #46 gave each gap a row, N14-18 and N4-25, and
+each marker names its own; the code did not change. It had a third site, row 4's node kinds, until the
 node-kind round; that marker is `DISCHARGED (was UNOWNED)` now, the one record whose parentheses
 keep a string that is still live elsewhere, which is why it is a line of its own here and not a
 third `UNOWNED`. The `UNOWNED (char pattern)` string that used to head this
@@ -206,15 +216,17 @@ list is gone: it was the opposite case, three sites over one gap, and the gap cl
 `UNOWNED (codegen) + N9-01` and `UNAPPLIED (su2 removed the blocker; the rewrite is owed)`, the two
 cursor markers: each is a `DISCHARGED (was …)` record now, keeping the string it discharged inside
 its parentheses so the history reads off this same pipeline. Subtract the four `DISCHARGED` lines,
-which are history rather than workarounds: 2 live strings + 1 (the extra bare-`UNOWNED` gap) =
-**3 distinct workarounds across 3 live comments**, one per comment. No marker
+which are history rather than workarounds: **3 live strings, 3 distinct workarounds across 3 live
+comments**, one per comment. (It read "2 live strings + 1 (the extra bare-`UNOWNED` gap)" while the
+two UNOWNED gaps shared one string.) No marker
 string repeats an id: `grep -cE '^[[:space:]]*// WORKAROUND [^:]* again:' tests/witness/json_parser.pd`
 is **0**, where it used to be 1 and named N5-12, whose two sites are both discharged. The UNOWNED
-site count of **2** is the second anchored grep below, not this pipeline — bare `UNOWNED` matches
-it, and the arena marker and the four `DISCHARGED` records do not: a record that keeps `UNOWNED`
-inside its parentheses, after `was`, is invisible to an anchor that wants `UNOWNED` first. It was
-**3** until the node-kind round, when the bare `UNOWNED` at the node kinds still matched, and **4**
-until the cursor round, when `UNOWNED (codegen) + N9-01` did too.
+site count of **0** is the second anchored grep below, not this pipeline — a bare `UNOWNED` would
+match it, and the arena marker, the two row markers and the four `DISCHARGED` records do not: a
+record that keeps `UNOWNED` inside its parentheses, after `was`, is invisible to an anchor that wants
+`UNOWNED` first. It was **2** until the ownership round (2026-11-08), when rows 16 and 19 still
+carried a bare `UNOWNED`, **3** until the node-kind round, when the bare `UNOWNED` at the node kinds
+still matched, and **4** until the cursor round, when `UNOWNED (codegen) + N9-01` did too.
 
 ## The five UNOWNED findings, which are the point of the exercise
 
@@ -226,10 +238,14 @@ which is `satisfied`, so the tag was wrong, and the thing actually missing there
 Item 4 arrived the same way and is the largest of the five by site count: four rows in the gap list were
 filed under `satisfied` N5/N6 rows, all four of those rows measure as satisfied, and every one of
 them was hiding the same missing thing. Three of the five — items 1, 2 and 4 — are closed as
-capabilities now and applied in the witness, and not one of the three is closed as a row.
+capabilities now and applied in the witness, and not one of the three was closed as a row until
+**2026-11-08, when all five got rows** on the owner's decision of issue #46: N4-24, N9-10 and N6-12,
+born `satisfied`, for items 1, 2 and 4, and N4-25 and N14-18, born `owed`, for items 3 and 5. The
+section keeps its name because the findings, not the rows, are the point: they are what a
+requirement filter cannot see until someone writes the program.
 
 1. **`[EnumType; N]` is not constructible, and says so wrongly. — CLOSED as a capability by W2a,
-   APPLIED here, STILL UNOWNED as a row.** As written it read: `Type mismatch: expected [K; 4],
+   APPLIED here, and OWNED by N4-24 since 2026-11-08.** As written it read: `Type mismatch: expected [K; 4],
    found [K; 4]` — the same type on both sides, in both the repeat and the literal spelling. N4-09
    is `satisfied` and is careful to say it is an instance claim over `[i64; N]` and `[String; N]`;
    the general case is therefore owned by nobody, and it was the reason this parser stored kinds as
@@ -245,9 +261,10 @@ capabilities now and applied in the witness, and not one of the three is closed 
    an instance claim over `[i64; N]` and `[String; N]`, its evidence is still
    `tests/02_types_arrays.pd`, and no row was amended or added to claim an array of a user enum. W2a's
    fixture `tests/regression/enum_in_composites.pd` runs in the corpus and would catch a regression;
-   the requirement inventory would not, because no row names what it witnesses. Whether N4-09 is
+   the requirement inventory would not have, because no row named what it witnesses. Whether N4-09 is
    amended or a row is added is the owner's call, not this file's, and it is the same call issue #46
-   parks for the char pattern.
+   parks for the char pattern. **The call was a row** (2026-11-08): N4-24 claims a user enum in
+   every composite position, with that fixture as its evidence, and N4-09's text is unchanged.
 2. **A `&T` parameter cannot be forwarded — CLOSED by su2**, and it closed for a reason worth
    recording rather than a fix aimed at it. As written it read: `fn a(p: &P) -> i64 { return b(p); }`
    emits `b((*p))` — a dereference into a pointer parameter — silently, and gcc catches it; recursive
@@ -260,9 +277,9 @@ capabilities now and applied in the witness, and not one of the three is closed 
    receiver and the forwarding case together. Measured after: that exact program compiles, links,
    runs and prints `4`, and `tests/linker_diagnostics.rs::forwarding_a_shared_reference_compiles_links_and_runs`
    is now its witness — the same program that was the subject of a REFUSAL test there before.
-   **This does not make the row owned.** Nothing in `docs/contributing/1.0-requirements.tsv` names
-   the `&` spelling still, so the finding's point stands: the inventory could not see this, and did
-   not see it being fixed either. **How this one has to be probed is itself a finding.** A probe that
+   **That did not make the row owned.** Nothing in `docs/contributing/1.0-requirements.tsv` named
+   the `&` spelling until N9-10 was added on 2026-11-08 (issue #46), so the finding's point stood:
+   the inventory could not see this, and did not see it being fixed either. **How this one has to be probed is itself a finding.** A probe that
    stops at `pdc compile` reports this case as COMPILING, because the front end approves it and the
    defect is in the C that comes out; only `pdc run` reaches gcc and returns rc=3 with
    `passing 'const struct P' to parameter of incompatible type 'const struct P *'`. An earlier pass
@@ -277,13 +294,14 @@ capabilities now and applied in the witness, and not one of the three is closed 
    small programs was not the artefact under test either: a `self.<field>` read was a move, because
    the checker typed `self` as a `Self` with no fields (fixed by W1c, `d159139`/`ad63231`), and a
    projection's move leaked into the next function body (fixed by W1d, merged at `cece734`). Each
-   has its own fixture, named in row 6 above. The `&` spelling is still declared by no row.
+   has its own fixture, named in row 6 above. The `&` spelling was declared by no row until N9-10.
 3. **`String` has no declared byte-level meaning.** N4-05 is one word and is `satisfied`. In the
    implementation it is a NUL-terminated C `char*`, so `\u0000` is not representable — a
-   conformance question for any parser of a format that permits it, decided today by an
-   implementation detail rather than by a row.
+   conformance question for any parser of a format that permits it, decided by an implementation
+   detail rather than by a row. **OWNED since 2026-11-08 by N4-25** (issue #46), born `owed`: a
+   `String` carries every byte value, U+0000 included. The marker at the site names it now.
 4. **A char literal is not a pattern, so no `match` in this parser can dispatch. — CLOSED as a
-   capability, STILL UNOWNED as a row.** The four rows this was filed under are all `satisfied` and
+   capability, and OWNED by N6-12 since 2026-11-08.** The four rows this was filed under are all `satisfied` and
    all always measured so over an `i64` scrutinee: `match c { 1 => 10, _ => 20 }` in expression
    position prints 10 (N5-04), `1 | 2 => …` prints (N6-07), `48..=57 => …` prints (N6-03), and
    integer arms are patterns (N6-02). Changing the scrutinee to `char` used to make every one of
@@ -300,8 +318,10 @@ capabilities now and applied in the witness, and not one of the three is closed 
    (integer, string, bool)", no row was amended to claim `char`, and no new row was added, so the
    construct the witness now depends on is declared by nothing in
    `docs/contributing/1.0-requirements.tsv` — exactly the condition that made this an UNOWNED
-   finding. It is parked as issue #46 for the owner. This is the same shape as N4-09's instance
-   claim putting `[EnumType; N]` outside item 1: the code moved, the manifest did not.
+   finding. It was parked as issue #46 for the owner, and the answer (2026-11-08) was a row of its
+   own, N6-12, with `tests/06_char_patterns.pd` as its evidence. This is the same shape as N4-09's
+   instance claim putting `[EnumType; N]` outside item 1: the code moved, and the manifest did not
+   until it was told to.
    The subset clause that used to record the gap is at
    `docs/specification/grammar.ebnf:478` and now reads "INTEGER OR `char` LITERALS"; the
    `375-379` citation this finding used to carry pointed at the tuple-index passage after the
@@ -312,7 +332,9 @@ capabilities now and applied in the witness, and not one of the three is closed 
    has already validated cannot become a value. Outward, it declares no `float_to_string` and no
    `print_float` — `print_float(x)` is `Undefined function: 'print_float'. Did you mean
    'print_int'?` — so a value the language can compute cannot be printed. Grepping that file for
-   `float` returns nothing at all, and no row owns *either* direction.
+   `float` returns nothing at all, and no row owned *either* direction until **N14-18** was added on
+   2026-11-08 (issue #46), born `owed`. Paying it amends N14-01's closed count of 34 builtins in the
+   same change, because both directions are builtins the closed set does not hold.
 
 ## What is *better* than the roadmap assumes
 
@@ -416,7 +438,8 @@ node-kind rounds included:
 Evidence for leaving it `owed`, as two commands rather than as this paragraph:
 `grep -cE '^[[:space:]]*// WORKAROUND ' tests/witness/json_parser.pd` is **7** (the anchor excludes
 the self-references in the file's own header; 3 live plus four `WORKAROUND DISCHARGED` records)
-and `grep -cE '^[[:space:]]*// WORKAROUND UNOWNED' tests/witness/json_parser.pd` is **2**. The second
+and `grep -cE '^[[:space:]]*// WORKAROUND UNOWNED' tests/witness/json_parser.pd` is **0** (it was 2
+until the ownership round below). The second
 is anchored too, and deliberately: the unanchored `grep -c 'WORKAROUND UNOWNED'` also counts prose
 that merely quotes the pattern, so it can be inflated by editing a comment. Both figures in the row
 text and in the conformance-manifest note are therefore checkable by command rather than by reading
@@ -439,11 +462,18 @@ stayed 7. Exactly one of the four workarounds that round left was owned outright
 the three surviving workarounds — the arena, `N14-09 + N4-12 + N4-15` — is owned outright; the other
 two are UNOWNED.** A roadmap filter that drives M2 to zero-owed therefore moves this witness by
 nothing at all from here, which is what the row is for — and note that three capabilities it now
-leans on are owned by no row either: char patterns (issue #46), the `&self`/`&T` spelling (finding
+leans on were owned by no row either: char patterns (issue #46), the `&self`/`&T` spelling (finding
 2), and an array of a user enum (finding 1).
 
-A second recommendation, offered rather than made: the five UNOWNED findings want **five new
-rows**, because the M2 filter can reach zero-owed while nothing declares what this witness either
+**And to zero in the ownership round, 2026-11-08, with no code change.** The UNOWNED count went
+2 → 0 and the live count stayed 3 when issue #46 was decided: the two bare `UNOWNED` markers name
+N4-25 and N14-18 now, and the three capabilities above are N4-24, N9-10 and N6-12. **All three
+surviving workarounds are owned, and none by M2**: the arena by `N14-09 + N4-12 + N4-15`, where
+N14-09 is M8's, and the other two by the rows just added. So WT-01 moved from M2 to M8 in
+the same change, and it is still `owed`.
+
+A second recommendation was offered rather than made, and the owner ADOPTED it on 2026-11-08
+(issue #46) — it is kept as written: the five UNOWNED findings want **five new rows**, because the M2 filter can reach zero-owed while nothing declares what this witness either
 lacks or depends on. Three of the five closed as capabilities and are applied here — the
 `[EnumType; N]` array (finding 1), the `&T` forward (finding 2) and the char pattern (finding 4) —
 with no row behind any of them, so the requirement inventory would not see one of them regress. The

@@ -1,4 +1,6 @@
-// Regression test: a user enum inside every composite (N4-09, N4-10).
+// Regression test: a user enum inside every composite (N4-24; N4-09 and N4-10
+// are instance claims beside it). This fixture is N4-24's evidence: the row was
+// added 2026-11-08 from issue #46, because no row named what this file runs.
 // An array of an enum as a local (both literal forms), a parameter, a
 // reference parameter, a struct field, nested, walked by `for` and written
 // through an index; a tuple and a reference carrying one; a method signature

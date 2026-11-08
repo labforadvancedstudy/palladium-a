@@ -13,9 +13,11 @@
 // shorter `// <row> DISCHARGED` note for the same reason. `<row>` is the
 // requirement id that owns the missing construct, or the word UNOWNED, which
 // means the construct that would remove the workaround is declared by NOTHING in
-// docs/contributing/1.0-requirements.tsv. TWO of the three are UNOWNED, over
-// two distinct gaps, and those are the ones a roadmap reading of N5/N6 cannot
-// see. Exactly one of the three — the arena — is owned outright.
+// docs/contributing/1.0-requirements.tsv. None of the three is UNOWNED now.
+// Two of them were, over two distinct gaps that a roadmap reading of N5/N6
+// cannot see, and on 2026-11-08 issue #46 gave each a row: N4-25 (the NUL byte)
+// and N14-18 (the float<->text boundary). The arena is the third, and it was
+// always owned.
 //
 // The count has moved nine times, and every move is a fact about the compiler
 // rather than a rewording here. `cfa7e7f` gave recursive types a layout and a
@@ -103,14 +105,23 @@
 // done: `enum Kind`, a `[Kind; 192]` column, and every dispatch on a kind a
 // `match`. The count fell four -> three, the UNOWNED count three ->
 // two, and the transcript did not change by one byte. The ownership did not
-// move: N4-09 still claims `[i64; N]` and `[String; N]` and nothing else.
+// move then: N4-09 still claims `[i64; N]` and `[String; N]` and nothing else,
+// and the enum array was owned by no row until issue #46 added N4-24.
+//
+// THE UNOWNED COUNT FELL TWO -> ZERO ON 2026-11-08 WITHOUT A LINE OF CODE
+// CHANGING, and it is recorded as that rather than as a discharge. Issue #46
+// gave the five UNOWNED findings rows: N4-24, N6-12 and N9-10 are born
+// `satisfied` for the three constructs this file already applied, and N4-25 and
+// N14-18 are born `owed` for the two it still works around. Those two markers
+// name their rows now. The live count stays three, and WT-01 stays `owed`.
 //
 // The shape this file would have if nothing were missing is written out in
 // tests/witness/json_parser.no-workarounds.md, beside a per-workaround diff, so
 // that when the remaining rows land the claim "the workarounds are gone" can be
 // CHECKED rather than re-derived. Items 3, 4 and 9 have landed, and so have the
 // char patterns, the method receivers and the enum array; WT-01 stays `owed`
-// because three workarounds remain, two of them UNOWNED.
+// because three workarounds remain, none of them UNOWNED and none of them
+// M2's to pay.
 //
 // What it does: parses one JSON document into a flat arena, re-serialises it
 // canonically, answers structural queries against it, and refuses fifteen
@@ -486,11 +497,12 @@ impl Json {
             return "";
         }
         if hi == 0 {
-            // WORKAROUND UNOWNED: `String` is a NUL-terminated C `char*`
+            // WORKAROUND N4-25: `String` is a NUL-terminated C `char*`
             // (`__pd_string_from_char` writes `result[0] = (char)c; result[1] = '\0';`),
             // so a document containing \u0000 cannot be represented, only refused.
-            // No requirement row says what `String` is at the byte level; N4-05 is
-            // one word, `String`, and is marked satisfied.
+            // N4-05 is one word, `String`, and is marked satisfied; what `String`
+            // is at the byte level was declared by no row until issue #46 added
+            // N4-25 on 2026-11-08, and N4-25 is `owed`.
             self.fail("\\u0000 is not representable in a NUL-terminated String");
             return "";
         }
@@ -600,13 +612,14 @@ impl Json {
         if node < 0 { return -1; }
         let lexeme: String = string_substring(self.src, start, self.pos);
         self.text[node] = lexeme;
-        // WORKAROUND UNOWNED: `f64` EXISTS. N4-02 is `satisfied` in
+        // WORKAROUND N14-18: `f64` EXISTS. N4-02 is `satisfied` in
         // docs/contributing/1.0-requirements.tsv, and `let x: f64 = 1.5;` with
         // arithmetic and comparisons on it compiles. What is missing is any way to
         // move a float ACROSS the text boundary: `src/builtins.rs` declares no
         // `string_to_float` and no `float_to_string` — grep for `float` in that
-        // file matches nothing at all — and N14's builtin set is closed, so NO
-        // requirement row owns them. So a non-integral number has no value in this
+        // file matches nothing at all — and N14's builtin set is closed, so no
+        // requirement row owned them until issue #46 added N14-18 on 2026-11-08,
+        // which is `owed`. So a non-integral number has no value in this
         // program, only its source lexeme, which is what `render` prints. `exact`
         // records which is which, so a query for a numeric value can refuse rather
         // than return the truncated integer part.
@@ -965,7 +978,7 @@ fn main() {
     print(string_concat("n              ", int_to_string(j.num[n])));
     let ratio: i64 = j.member(doc, "ratio");
     print(string_concat("ratio lexeme   ", j.text[ratio]));
-    // The UNOWNED float↔text boundary gap again, as an observable: only text, no
+    // The float↔text boundary gap again (N14-18), as an observable: only text, no
     // value. Nothing turns the lexeme "0.5" into an f64, and nothing would print
     // one back out, so `exact` is 0 and the lexeme is all this program can carry.
     print(string_concat("ratio exact    ", int_to_string(j.exact[ratio])));

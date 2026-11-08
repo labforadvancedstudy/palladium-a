@@ -293,6 +293,15 @@ REQ_TSV=$REPO/docs/contributing/1.0-requirements.tsv
 want_rows=$(awk -F'\t' 'NF==9 && $1 !~ /^#/' "$REQ_TSV" | wc -l | tr -d ' ')
 want_m2=$(awk -F'\t' 'NF==9 && $2=="M2"' "$REQ_TSV" | wc -l | tr -d ' ')
 want_owed=$(awk -F'\t' 'NF==9 && $2=="M2" && $7!="satisfied"' "$REQ_TSV" | wc -l | tr -d ' ')
+# THE VERDICT THE MANIFEST PREDICTS, derived here rather than written down. It was
+# a literal `M2_EXIT_RESULT 1 OWED` until 2026-11-08, true for as long as M2 owned
+# an owed row; WT-01 was the last, and it moved to M8. With none owed, inventory
+# four abstains — every M2 row is `satisfied` but steps 3 and 4 of the
+# specification do not run — and that abstention is the whole verdict, because
+# the other three inventories are clean on this tree. A literal would have had to
+# be re-edited on the day the fact moved, which is the drift this file exists to
+# make impossible; the planted cases above keep OWED proved on every run.
+if [ "$want_owed" -gt 0 ]; then want_code=1; want_name=OWED; else want_code=2; want_name=NO_VERDICT; fi
 
 CONF_MANIFEST=$REPO/tests/conformance-manifest.txt
 cls() { awk -F'\t' -v c="$1" '!/^#/ && NF>=2 && $2==c' "$CONF_MANIFEST" | wc -l | tr -d ' '; }
@@ -313,23 +322,27 @@ want_ignored=$((want_debt_owed + want_slow))
 LAST=$(printf '%s\n' "$M2OUT" | tail -1)
 
 start "lattice: the aggregation itself is exercised where a real run cannot reach it"
-# On this tree no inventory returns NO_VERDICT, so OWED-vs-NO_VERDICT precedence
-# is dead code during a real run — measured: inverting the fold changed nothing
-# about `make m2-exit`. The rule needs its own driver, and this is it.
+# On this tree inventory four is the only one that can return NO_VERDICT and no
+# inventory returns OWED, so OWED-vs-NO_VERDICT precedence is dead code during a
+# real run — measured, when the tree's verdict was OWED: inverting the fold
+# changed nothing about `make m2-exit`. The rule needs its own driver, and this is
+# it.
 OUT=$(cd "$REPO" && bash scripts/m2-exit.sh --self-test 2>&1); RC=$?
 expect_rc 0 && expect_out "81 four-inventory combinations" && ok
 
 start "verdict: make m2-exit publishes a machine-readable verdict on its LAST stdout line"
 case "$LAST" in M2_EXIT_RESULT\ *) ok ;; *) bad "last stdout line was '$LAST'" ;; esac
 
-start "verdict: it is OWED (1), not NO_VERDICT — the truth is a MEASUREMENT"
+start "verdict: it is the one the manifest predicts — OWED while M2 owes a row, NO_VERDICT once none"
 # THE DEFECT THIS REPLACES, measured on the first version of this target:
 #   REQ_MILESTONE=M2 python3 scripts/requirements.py  -> 1  (OWED)
 #   make m2-exit                                      -> 2  (NO_VERDICT)
 # `|| rc=1` folded NO_VERDICT into OWED on the way in and Make folded every
 # nonzero to 2 on the way out, so the target announced "nothing may be inferred"
-# about a milestone it had just measured 43 outstanding rows of.
-case "$LAST" in "M2_EXIT_RESULT 1 OWED") ok ;; *) bad "verdict line was '$LAST'" ;; esac
+# about a milestone it had just measured 43 outstanding rows of. The expected
+# line is derived from the manifest above, so this check fails in either
+# direction: an OWED folded away, or an abstention reported as a measured debt.
+case "$LAST" in "M2_EXIT_RESULT $want_code $want_name") ok ;; *) bad "verdict line was '$LAST', the manifest predicts 'M2_EXIT_RESULT $want_code $want_name' ($want_owed owed of $want_m2)" ;; esac
 
 start "verdict: the line is on STDOUT, never on stderr"
 case "$M2ERR" in *M2_EXIT_RESULT*) OUT=$M2ERR; bad "the verdict line leaked to stderr" ;; *) ok ;; esac
@@ -338,7 +351,7 @@ start "verdict: the script's own exit code carries the same three-valued state"
 # This is the number Make erases, so it has to be read from the script itself.
 (cd "$REPO" && bash scripts/m2-exit.sh >/dev/null 2>&1); SRC=$?
 OUT="scripts/m2-exit.sh exited $SRC"
-if [ "$SRC" -eq 1 ]; then ok; else bad "expected 1 (OWED), got $SRC"; fi
+if [ "$SRC" -eq "$want_code" ]; then ok; else bad "expected $want_code ($want_name), got $SRC"; fi
 
 start "verdict: make itself is nonzero, so no zero-or-not consumer is made worse"
 OUT="make m2-exit exited $M2RC"

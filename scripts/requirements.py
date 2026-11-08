@@ -128,7 +128,13 @@ MILESTONE_ROSTER = {
         "N4-22", "N4-23", "N5-03", "N5-04",
         "N5-05", "N5-06", "N5-07", "N5-12", "N5-13", "N5-14", "N5-15",
         "N5-16", "N5-17", "N6-02", "N6-03", "N6-05", "N6-07", "N6-08",
-        "N6-09", "N6-10", "N6-11", "WT-01",
+        "N6-09", "N6-10", "N6-11",
+        # WT-01 left for M8 on 2026-11-08, retagged and not paid; see the
+        # manifest header and the M8 entry below.
+        # Added 2026-11-08 from issue #46, each born `satisfied`: the three
+        # UNOWNED witness findings that were closed as capabilities and owned
+        # by no row. See the manifest header.
+        "N4-24", "N6-12", "N9-10",
     ),
     "M3": (
         "N10-01", "N10-02", "N10-03", "N10-04", "N10-05", "N10-06", "N10-07",
@@ -166,6 +172,10 @@ MILESTONE_ROSTER = {
         "FFI-01", "FFI-02", "FFI-03", "N14-06", "N14-07", "N14-08", "N14-09",
         "N14-10", "N14-11", "N14-12", "N14-13", "N14-14", "N14-15", "N14-16",
         "N4-17",
+        # Arrived 2026-11-08 by the owner's decision on issue #46 and M2's exit:
+        # WT-01 from M2 (retagged, still owed -- none of its three live
+        # workarounds is M2's to pay), and the two rows #46 added `owed`.
+        "WT-01", "N4-25", "N14-18",
     ),
     "M9": (
         "D1-01", "GI-10", "N1-01", "N1-02", "N1-03", "SH-02", "SH-03",
@@ -687,19 +697,29 @@ def self_test():
 
     # 12. AND THE ROSTER CAN FAIL, in each of its three directions. A pin nobody
     #     has watched fail is the thing this whole file exists to complain about.
+    #     The victim is the FIRST OWED ROW OF ANY MILESTONE, not of M2: these
+    #     checks read "M2" until 2026-11-08, when WT-01 left M2 and M2 had no
+    #     owed row left to pick, and `next()` over an empty generator stopped the
+    #     self-test with a traceback rather than a named failure. What is being
+    #     proved is that the ROSTER sees a deleted or retagged owed row, and
+    #     which milestone owns that row has nothing to do with it.
     _fake = [dict(r) for r in rows]
-    _m2 = next(r for r in _fake if r["milestone"] == "M2" and r["status"] == "owed")
-    _dropped = [r for r in _fake if r["id"] != _m2["id"]]
-    check("deleting an owed M2 row is ROSTER drift",
-          any(_m2["id"] in d and "NOT IN THE MANIFEST" in d
+    _owed = next((r for r in _fake if r["status"] == "owed"), None)
+    check("the real manifest has an owed row for the roster checks to use",
+          _owed is not None, True)
+    if _owed is None:
+        _owed = dict(_fake[0], id="ZZ-98")
+    _dropped = [r for r in _fake if r["id"] != _owed["id"]]
+    check("deleting an owed row is ROSTER drift",
+          any(_owed["id"] in d and "NOT IN THE MANIFEST" in d
               for d in roster_drift(_dropped)), True)
-    _retagged = [dict(r, milestone="-") if r["id"] == _m2["id"] else r for r in _fake]
-    check("retagging an owed M2 row to `-` is ROSTER drift",
-          any(_m2["id"] in d and "RETAGGED" in d
+    _retagged = [dict(r, milestone="-") if r["id"] == _owed["id"] else r for r in _fake]
+    check("retagging an owed row to `-` is ROSTER drift",
+          any(_owed["id"] in d and "RETAGGED" in d
               for d in roster_drift(_retagged)), True)
     check("a brand-new id is ROSTER drift",
           any("ZZ-99" in d and "NOT IN THE ROSTER" in d for d in
-              roster_drift(_fake + [dict(_m2, id="ZZ-99")])), True)
+              roster_drift(_fake + [dict(_owed, id="ZZ-99")])), True)
 
     # 13. THE STATUS LEDGER. Derived, and the document has to agree.
     import io as _io
@@ -707,7 +727,7 @@ def self_test():
     check("the status ledger agrees with the manifest",
           report_ledger(rows, out=_buf), EXIT_CLEAR)
     check("...and it can fail: a wrong count is named",
-          report_ledger([r for r in rows if r["id"] != _m2["id"]],
+          report_ledger([r for r in rows if r["id"] != _owed["id"]],
                         out=_io.StringIO()), EXIT_OWED)
 
     # 14. WIRING, AND THIS IS A SHAPE CHECK — SAID OUT LOUD. `make -n` proves a
@@ -734,7 +754,7 @@ def self_test():
         for f in failures:
             print("  " + f, file=sys.stderr)
         return False
-    print("self-test: 31 checks green (owed and blocked are RED and named, the "
+    print("self-test: 32 checks green (owed and blocked are RED and named, the "
           "owner filter is a filter, all-satisfied is NO_VERDICT rather than "
           "green because steps 3 and 4 did not run, every structural column "
           "check incl. mandatory-column emptiness, the thesis-reject fingerprint "

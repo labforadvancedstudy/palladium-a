@@ -1,6 +1,6 @@
 # Milestones
 
-**Updated**: 2026-10-06 · **Released**: v0.3.0 (M1) · **Target**: 1.0.0 = `make thesis-exit`
+**Updated**: 2026-11-08 · **Released**: v0.3.0 and v0.4.0 (both M1) · **Target**: 1.0.0 = `make thesis-exit`
 
 Ordered by what unblocks what, not by theme. Every milestone exits on one command that covers its
 whole goal, and every milestone ships.
@@ -244,7 +244,7 @@ does not become the definition of the language.
 
 ### What the requirement manifest is now for
 
-[`1.0-requirements.tsv`](1.0-requirements.tsv) — **197 rows, 79 satisfied · 110 owed · 8 blocked**
+[`1.0-requirements.tsv`](1.0-requirements.tsv) — **202 rows, 82 satisfied · 112 owed · 8 blocked**
 — stays, and it is still closed, still reconciled against both debt inventories. Its role changed:
 **it enumerates, it does not gate.** Every row carries a `disposition`:
 
@@ -267,7 +267,7 @@ command has been re-run.)*
 | Disposition | Count | Meaning |
 |---|---|---|
 | `thesis` | 26 = 23 scored + `D1-01` (the aggregate) + GI-11 and GI-12 (preconditions) | `make thesis-exit` reads it directly. These rows *are* the definition, and the id set is pinned in the gate: adding, removing or retyping one is a harness error |
-| `1.0` | 165 | the witnesses exercise it, or a `thesis` row rests on it |
+| `1.0` | 170 | the witnesses exercise it, or a `thesis` row rests on it |
 | `post-1.0` | 6 | enumerated and **explicitly deferred**, owner `P1` |
 
 Nothing is dropped silently. A requirement the thesis does not exercise is marked `post-1.0` in
@@ -321,20 +321,26 @@ Both statements are true about different questions, and the sequencing one gover
 
 | Milestone | Version | What it is | What it waits on, and why it moved |
 |---|---|---|---|
-| M1 ✅ | v0.3.0 | The compiler stops lying | — |
-| M2 | v0.4.0 | The surface, and M1's unpaid debt | M1. Unchanged: everything is written in this surface, and M1's debt is a live miscompile |
-| M3 | v0.5.0 | **Traits and generics** | M2 → **C0**. *Moved from 6th to 2nd*: the effect system needs signatures that carry bounds, and the thesis needs a compiler that can grow |
-| M4 | v0.6.0 | **Modules** | C0. *Split out of the old M6*: the bootstrap compiler and the library both become multi-file here |
-| M5 | v0.7.0 | **Effects, static half** · differentiator 1 | C0, C2. *Moved later by two*: not because it cannot be built earlier, but because building it earlier means building it twice |
-| M6 | v0.8.0 | **Totality** · differentiator 2 | C2, C3, C0. *Moved later, and un-split*: with generics already present, generic structural recursion (N8-07) lands here too instead of waiting |
-| M7 | v0.9.0 | **Reference typing and region inference** · differentiator 3 | **C1**. *Moved later*: it is the deepest single capability, and nothing before it needs it |
-| M8 | v0.10.0 | The standard library, and C FFI | M3, M4, M7 |
+| M1 ✅ | v0.3.0 · v0.4.0 | The compiler stops lying | — |
+| M2 | v0.5.0 | The surface, and M1's unpaid debt | M1. Unchanged: everything is written in this surface, and M1's debt is a live miscompile |
+| M3 | v0.6.0 | **Traits and generics** | M2 → **C0**. *Moved from 6th to 2nd*: the effect system needs signatures that carry bounds, and the thesis needs a compiler that can grow |
+| M4 | v0.7.0 | **Modules** | C0. *Split out of the old M6*: the bootstrap compiler and the library both become multi-file here |
+| M5 | v0.8.0 | **Effects, static half** · differentiator 1 | C0, C2. *Moved later by two*: not because it cannot be built earlier, but because building it earlier means building it twice |
+| M6 | v0.9.0 | **Totality** · differentiator 2 | C2, C3, C0. *Moved later, and un-split*: with generics already present, generic structural recursion (N8-07) lands here too instead of waiting |
+| M7 | v0.10.0 | **Reference typing and region inference** · differentiator 3 | **C1**. *Moved later*: it is the deepest single capability, and nothing before it needs it |
+| M8 | v0.11.0 | The standard library, and C FFI | M3, M4, M7 |
 | M9 | **1.0.0** | **The thesis** — the bootstrap compiler in the dialect | everything. `make thesis-exit` green |
 | P1 | post-1.0 | Parallel by default, structured concurrency | C4, **decision D2** |
 
-**Versioning.** M1 shipped as `v0.3.0`; every milestone ships one release; every `0.x` is a
-prerelease. **M9 ships as 1.0.0** rather than as a further `0.x`, because M9's exit criterion *is*
-the definition of 1.0. v0.10.0 is therefore the last prerelease.
+**Versioning.** Every milestone ships one release and every `0.x` is a prerelease — and M1 shipped
+TWO. `v0.3.0` (2026-08-22) went out under M1's name while `make m1-exit` was RED (item 8 of M2 and
+[F2](#f2-m1-shipped-three-of-its-own-declared-failures-and-its-exit-command-could-not-see-them));
+`v0.4.0` (2026-08-23, `acda322`, "M1 passes its own exit criterion") is the release cut when
+`m1-exit` first reached 0. This table went on mapping M2 to `v0.4.0` for eleven weeks after that tag
+was published, so the M2 release had no name it could take: a published tag is not moved. **Every
+milestone from M2 on moved one minor up on 2026-11-08**, by the owner's decision, and nothing else
+in the table changed. **M9 ships as 1.0.0** rather than as a further `0.x`, because M9's exit
+criterion *is* the definition of 1.0. v0.11.0 is therefore the last prerelease.
 
 **Self-hosting is a floor throughout.** `make selfhost` stays green at every commit, and PBS-1 grows
 with each milestone whose constructs the bootstrap compiler must consume. **`src/` is not retired.**
@@ -376,7 +382,7 @@ reverting either guard alone now fails a fixture of its own; then `feat/m2-types
 | Declared failures | 43 `xfail` + 1 `slow`, none passing; 43 of 43 failing for their DECLARED diagnostic (WT-01 W2a round 1 paid two M3 alias rows: aliases are expanded before C is named) | `make test-xfail` |
 | `stdlib/` | 0 of 21 files compile; 34 builtins accounted, the registry is exactly N14's normative 34, and no builtin is registered-and-refused (was 6) | `make stdlib-gate` |
 | Traits · generics · effects · async · unsafe · modules | conformance coverage is **zero** for each | `make conformance` |
-| 1.0 requirements | 79 satisfied · 110 owed · 8 blocked, over 197 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
+| 1.0 requirements | 82 satisfied · 112 owed · 8 blocked, over 202 rows | [`1.0-requirements.tsv`](1.0-requirements.tsv) |
 | `bootstrap/pdc.pd` | 991 lines, and it cannot abstract — which is why M3 moved to the front | `wc -l bootstrap/pdc.pd` |
 
 ## The inventories the manifest was derived from
@@ -512,7 +518,7 @@ stay as fast pre-checks; the manifest decides; and **1.0 is decided by neither �
 
 ## Completed
 
-### M1 — The compiler stops lying (v0.3.0, released 2026-08-22)
+### M1 — The compiler stops lying (v0.3.0, released 2026-08-22; v0.4.0, 2026-08-23)
 
 Every other kind of work was slower while the compiler could accept a program and emit wrong code.
 M1 converted silent wrongness into diagnostics, and — the part that outlives it — made the gates
@@ -539,12 +545,12 @@ Not paid, and re-owned by M2: three M1 `#[ignore]` rows
 
 ---
 
-## M2 — The surface, and M1's unpaid debt (v0.4.0)
+## M2 — The surface, and M1's unpaid debt (v0.5.0)
 
 **Waits on**: M1. **Delivers**: the surface everything else is written in, **C3**, the attribute
 token N8 sits below, and the first witness program.
 
-**Owns 49 requirement rows, 1 of them still owed**, **no** `#[ignore]` row still tagged M2, and
+**Owns 51 requirement rows, 0 of them still owed**, **no** `#[ignore]` row still tagged M2, and
 **no vacuous fixture** — `tests/02_types_enums.pd` was M2's last one and item 9 turned it
 into a `run` fixture that constructs and destructures a unit, a tuple and a struct variant.
 *(It read "seventeen … (fourteen tagged M2, three
@@ -565,7 +571,7 @@ was written to M4 on a stale sibling's precedent until the milestone table turne
 contract, C1, as M7. Only the final tally is quoted here, because an intermediate one recorded
 inline is just the next stale figure: re-measure with the same command and it reads M3 4, M4 34,
 M5 1, M7 1, unscheduled 5, and no M2 line at all — M2's remaining debt is entirely in the
-requirements TSV (WT-01 and GI-12 when this was measured; WT-01 alone since GI-12 closed). NONE of the four was paid; all four were retagged, and the
+requirements TSV (WT-01 and GI-12 when this was measured; WT-01 alone since GI-12 closed; none since WT-01 moved to M8 on 2026-11-08, which is a retag of exactly this kind and is recorded as one under item 7). NONE of the four was paid; all four were retagged, and the
 distinction matters: a milestone whose debt reaches zero by retagging has finished nothing, it has
 only stopped being the wrong address.)* *(It read "45
 rows" while GI-06 was `owed`; GI-06, GI-09 and N14-01 are now `satisfied`, and 46 was the count of
@@ -789,7 +795,18 @@ enum-owned method is unreachable by its path form. Each row carries a
    `char` type and belongs to item 4; nothing about the six builtins bears on it. Corrected rather
    than quietly dropped.)*
 7. **Witness 1** (WT-01): a JSON parser written with no workarounds, added to the corpus. It becomes
-   the thesis gate's second witness at M9.
+   the thesis gate's second witness at M9. **MOVED M2 -> M8 ON 2026-11-08, by the owner's
+   decision, and NOT PAID.** The parser runs and is in the corpus; what keeps the row `owed` is three
+   live workarounds, and none of them is M2's: the arena waits on `Vec<T>` (N14-09, M8) and on named
+   generic types (N4-15, M3), and the other two — a `String` that carries U+0000 and a float that
+   crosses the text boundary — are N4-25 and N14-18, rows added the same day from issue #46, owned
+   by M8. Every construct the witness could apply inside M2 it did apply: the char patterns,
+   the `&self` receivers and the enum array were each landed and then written into the parser,
+   transcript byte-identical each time (`tests/witness/json_parser.no-workarounds.md`). Issue #46
+   added three more rows owned here, born `satisfied` — N4-24, N6-12 and N9-10, the capabilities
+   the witness leans on that no row had named — so M2 owns 51 rows where it owned 49. WT-01 went
+   to M8 because M8 owns N14-09 and both new rows: the row is owned by the last milestone its
+   workarounds wait on, so no milestone's exit waits on a later one's work.
 8. **Gate integrity** (GI-06, GI-08, GI-09). **ALL THREE CLOSED.** GI-08 was the last, and it was
    the one whose residual this item used to state rather than gloss; that residual is quoted below
    with what closed it, because a closure with no trace of what it closed is not checkable.
@@ -822,7 +839,7 @@ enum-owned method is unreachable by its path form. Each row carries a
    says nothing about M1. Closing GI-08 means deciding what a milestone with no rows means, which
    is a question rather than a line of Make.")*
    **The question was already answered by the reader's own vocabulary, and the residual had asked
-   the wrong one.** `scripts/requirements.py:515` prints, for a zero-row filter, "no row of
+   the wrong one.** `scripts/requirements.py:525` prints, for a zero-row filter, "no row of
    docs/contributing/1.0-requirements.tsv is owned by M1. A filter whose subject matches nothing
    clears everything, so this is refused rather than reported as 'nothing owed'" — an abstention
    with a NAME. So the decision was never "what does a milestone with no rows mean"; it was
@@ -845,9 +862,9 @@ enum-owned method is unreachable by its path form. Each row carries a
    **The wiring, which is the whole of the change:** rc=1 (OWED) reddens `m1-exit`; rc=2 carrying
    that sentence **for M1** does not, and the sentence is REPRINTED under a heading saying what was
    done with it; rc=2 of any **other** shape fails closed. There are three such shapes and only one
-   is tolerable — the other two are an unreadable manifest (`scripts/requirements.py:207`, printed
+   is tolerable — the other two are an unreadable manifest (`scripts/requirements.py:217`, printed
    on stderr as "cannot read …") and "every M1 row is `satisfied`, but the steps listed above did
-   not run" (`scripts/requirements.py:531`), which is an abstention about EVIDENCE and would be the M1 defect again in a
+   not run" (`scripts/requirements.py:541`), which is an abstention about EVIDENCE and would be the M1 defect again in a
    new inventory. **A tolerance is a hole unless its edges are tested**, so
    `scripts/m1-exit.sh --self-test` regenerates all three shapes LIVE from that reader rather than
    pasting its sentences, and adds the two controls that matter: an rc=1 run whose text happens to
@@ -862,15 +879,18 @@ enum-owned method is unreachable by its path form. Each row carries a
    reason `m2-exit`'s did: the mapping needs a state meaning "would not measure", and folding it
    onto OWED would report an abstention as a measurement. 0 still means what it meant and every
    previous 1 is still nonzero, so no consumer that reads zero-or-not is made worse.
-   **`m2-exit` is RED and that is the correct state.** It reports 1 row `OWED_TO_M2`, down from
+   **`m2-exit` is no longer RED.** It reports 0 rows `OWED_TO_M2`, down from 1 until WT-01 moved to
+   M8 on 2026-11-08 (item 7) — a retag and not a payment, which is why that line says so — from
    2 until GI-12 closed, and from 25 before item 9's seven N3 rows moved to `satisfied` on `feat/m2-items`, after item 4's eight N6
    rows plus N4-12 had taken the figure from 34 to 25, item 3's eleven N5 rows had taken it from 47
    to 36, and item 5 (lexical completion) from 43 to 36 with N2-03, N2-04, N2-08, N2-09, N2-10,
-   N2-11 and N4-02. A green `m2-exit` before M2 is done would be the defect.
+   N2-11 and N4-02. A green `m2-exit` before M2 is done would be the defect. With no row owed it
+   exits **2 (NO_VERDICT)** and not 0 — steps 3 and 4 below still do not run — so what declares M2
+   done is the owner, reading this gate, and not the gate alone.
 
-   *The 1, read off `REQ_MILESTONE=M2 python3 scripts/requirements.py` rather than off this list —
-   and the list is where it belongs, which is not the same question as which item names it:*
-   WT-01 (item 7). It was TWO until GI-12 closed — the one row **owned by M2 without being ASSIGNED AS AN ITEM DELIVERABLE** —
+   *The 0, read off `REQ_MILESTONE=M2 python3 scripts/requirements.py` rather than off this list:*
+   nothing is owed. It was ONE — WT-01, item 7 — until that row moved to M8 on 2026-11-08, TWO
+   until GI-12 closed — the one row **owned by M2 without being ASSIGNED AS AN ITEM DELIVERABLE** —
    THREE until GI-08 closed, and EIGHT until `feat/m2-types-semantics` closed five of them
    (N4-04, N4-10, N13-03, N14-02, N14-04), and THIRTEEN before item
    9, and the six that left it are the record of what an item deliverable is worth: N3-05, N3-09,
@@ -878,7 +898,7 @@ enum-owned method is unreachable by its path form. Each row carries a
    entirely (see below). Item 3's sentence had NAMED N3-09 and N3-10 without shipping them, which
    is the distinction the original paragraph was written to make — being mentioned in an item's
    prose is not the same as being what that item ships. GI-12 was the last owed row no item named, and none remains:
-   the one still owed is item 7's. The effect is still the one worth recording: a list of items and a manifest of rows drift while
+   the last one owed was item 7's, and it left by a retag. The effect is still the one worth recording: a list of items and a manifest of rows drift while
    both look complete.
    **Its verdict is three-valued and Make cannot carry it**, so the aggregation lives in
    `scripts/m2-exit.sh` and the verdict is published on the last line of stdout as
@@ -1016,13 +1036,13 @@ enum-owned method is unreachable by its path form. Each row carries a
 
 **Exit**: `make m2-exit` (`Makefile:335-394`) — four inventories. **The condition is not "items
 1–9 land"**, and saying so was a category error this line carried for three rounds: the gate reads
-the MANIFEST, so it goes green when no row owned by M2 is `owed` or `blocked` — all 49 of them —
-and when this line was written six of the eight then outstanding were named by no item at all; today one row is outstanding, WT-01, and item 7 names it. Even then it exits **2
+the MANIFEST, so it goes green when no row owned by M2 is `owed` or `blocked` — all 51 of them —
+and when this line was written six of the eight then outstanding were named by no item at all; today none is outstanding: the last, WT-01, moved to M8 on 2026-11-08 rather than being paid (item 7). Even so it exits **2
 (NO_VERDICT)** rather than 0, because steps 3 and 4 of its own specification do not run: it does
 not resolve each evidence locator and execute it, and it does not reconcile the Rust debt inventory
 by `req:` id. "No row says owed" is a statement about a status column.
 
-## M3 — Traits and generics (v0.5.0)
+## M3 — Traits and generics (v0.6.0)
 
 **Waits on**: M2 → **C0**. *This is the biggest move in the plan.* An earlier draft had it sixth, on
 the argument that effects and totality do not need it. They do not need it to *exist*; they need it
@@ -1082,7 +1102,7 @@ awk -F'\t' '$3=="owed" && $4=="M4"{print $2}' tests/rust-debt-manifest.txt
 because "abstraction costs nothing at runtime" is a claim about generated code that no stdout can
 show.
 
-## M4 — Modules (v0.6.0)
+## M4 — Modules (v0.7.0)
 
 **Waits on**: C0. Split out of the old combined milestone because it has a distinct consumer: this
 is where both the bootstrap compiler and the standard library become multi-file.
@@ -1096,7 +1116,7 @@ imported must be an error, or visibility is decoration), and all four import for
 
 **Exit**: `make m4-exit`.
 
-## M5 — Effects, static half (v0.7.0) · differentiator 1
+## M5 — Effects, static half (v0.8.0) · differentiator 1
 
 **Waits on**: C0 and **C2**. Everything in N7 except parallel execution.
 
@@ -1123,7 +1143,7 @@ on one footing.
 builtin), and the observables stdout cannot show (a callee defined below its caller still
 propagates; `impl` methods are analysed).
 
-## M6 — Totality (v0.8.0) · differentiator 2
+## M6 — Totality (v0.9.0) · differentiator 2
 
 **Waits on**: C2, C3, C0. **Un-split by the reorder**: with generics already present, generic
 structural recursion (N8-07) lands here with the rest of N8 instead of waiting a milestone.
@@ -1144,7 +1164,7 @@ evidence ([F4](#f4-two-differentiators-owned-no-failing-row-anywhere)).
 that refuses everything passes every rejection and fails N8-01…N8-06**, which is why both halves
 are required — the same reason the thesis gate's condition 3 exists.
 
-## M7 — Reference typing and region inference (v0.9.0) · differentiator 3
+## M7 — Reference typing and region inference (v0.10.0) · differentiator 3
 
 **Waits on**: nothing but itself — **C1**. It is the deepest single capability and nothing before it
 needs it, which is why it sits here rather than at the front.
@@ -1167,13 +1187,15 @@ needs it, which is why it sits here rather than at the front.
 
 **Exit**: `make m7-exit`.
 
-## M8 — The standard library, and C FFI (v0.10.0)
+## M8 — The standard library, and C FFI (v0.11.0)
 
 **Waits on**: M3, M4, M7. The last prerelease.
 
-**Owns 15 requirement rows.** What the library needs, as features rather than as compile errors:
+**Owns 18 requirement rows.** What the library needs, as features rather than as compile errors:
 generic ADTs with bounds (M3), associated types for an iterator protocol (M3), drop glue and moves
-so a `Vec<T>` can own its buffer (M7), modules (M4).
+so a `Vec<T>` can own its buffer (M7), modules (M4). *(It owned 15 until 2026-11-08, when three
+arrived together by the owner's decision on issue #46 and M2's exit: WT-01 from M2 — retagged and
+still `owed`, item 4 below — and N4-25 and N14-18, which #46 added `owed`.)*
 
 `make stdlib-gate`'s per-file blocker column is **a lower bound and not that dependency list** — the
 manifest says so itself: the blocker is the *first* construct `pdc` rejects, and a lexer-level
@@ -1191,6 +1213,14 @@ claim that this is the earliest correct start.
 3. **C FFI** (FFI-01…FFI-03) — the one feature-list-only item kept in 1.0. It is nearly free: the
    backend already emits C. FFI-03 is a `reject` row, because an FFI boundary that is not
    effect-classified is a hole in N7.
+4. **Witness 1 with no workarounds** (WT-01), and the two rows its last workarounds wait on.
+   `tests/witness/json_parser.pd` runs in the corpus and still works around three things, each
+   marked at its site: the arena, which wants `Vec<Json>` (N14-09, item 1 above, and N4-15 from M3);
+   a `String` that cannot carry U+0000 (**N4-25**); and a float that cannot cross the text boundary
+   in either direction (**N14-18** — paying it amends N14-01's closed count of 34 builtins in the
+   same change). WT-01 was M2's item 7 and moved here on 2026-11-08 because this is the last
+   milestone any of the three waits on. It is paid when the census in
+   `tests/witness/json_parser.no-workarounds.md` reaches zero live markers, and not by a retag.
 
 **Exit**: `make m8-exit`.
 
