@@ -2,21 +2,22 @@
 // WT-01 — witness 2: a JSON parser (RFC 8259).
 //
 // THIS FILE DOES NOT SATISFY WT-01. WT-01 asks for a JSON parser written with
-// NO WORKAROUNDS. This one runs, and it is built out of four of them. Every one
-// is marked `// WORKAROUND <row>:` at the point of use — four such comments
-// below this header, four distinct workarounds, one per comment. Three more
+// NO WORKAROUNDS. This one runs, and it is built out of three of them. Every one
+// is marked `// WORKAROUND <row>:` at the point of use — three such comments
+// below this header, three distinct workarounds, one per comment. Four more
 // comments are marked `// WORKAROUND DISCHARGED` and are not among them: they
-// record the constant workaround that N3-09/N3-10 removed and the two cursor
-// workarounds the method rewrite removed, so that the count's history stays
-// readable at the site it changed. Nine more sites carry a
+// record the constant workaround that N3-09/N3-10 removed, the two cursor
+// workarounds the method rewrite removed and the integer node kinds the enum
+// array removed, so that the count's history stays
+// readable at the site it changed. Ten more sites carry a
 // shorter `// <row> DISCHARGED` note for the same reason. `<row>` is the
 // requirement id that owns the missing construct, or the word UNOWNED, which
 // means the construct that would remove the workaround is declared by NOTHING in
-// docs/contributing/1.0-requirements.tsv. THREE of the four are UNOWNED, over
-// three distinct gaps, and those are the ones a roadmap reading of N5/N6 cannot
-// see. Exactly one of the four — the arena — is owned outright.
+// docs/contributing/1.0-requirements.tsv. TWO of the three are UNOWNED, over
+// two distinct gaps, and those are the ones a roadmap reading of N5/N6 cannot
+// see. Exactly one of the three — the arena — is owned outright.
 //
-// The count has moved eight times, and every move is a fact about the compiler
+// The count has moved nine times, and every move is a fact about the compiler
 // rather than a rewording here. `cfa7e7f` gave recursive types a layout and a
 // diagnostic, closing one UNOWNED workaround. Two more closed when the claims
 // under them were re-measured against the compiler that is actually here:
@@ -94,12 +95,22 @@
 // the compiler's effects report. That is N7-07 (M5, `owed`), the compiler's gap
 // rather than a workaround here.
 //
+// THE NINTH MOVE IS THE NODE KIND, and it is the fifth time a construct ARRIVED
+// for this file. An array of a user enum was refused — "Type mismatch: expected
+// [K; 4], found [K; 4]" — so the arena stored its kinds as i64 codes behind
+// seven zero-arg functions. W2a (`af5d6ac`, on `main` at `fafe870`) made the
+// type checker keep an enum an enum inside a composite type, and the rewrite is
+// done: `enum Kind`, a `[Kind; 192]` column, and every dispatch on a kind a
+// `match`. The count fell four -> three, the UNOWNED count three ->
+// two, and the transcript did not change by one byte. The ownership did not
+// move: N4-09 still claims `[i64; N]` and `[String; N]` and nothing else.
+//
 // The shape this file would have if nothing were missing is written out in
 // tests/witness/json_parser.no-workarounds.md, beside a per-workaround diff, so
 // that when the remaining rows land the claim "the workarounds are gone" can be
 // CHECKED rather than re-derived. Items 3, 4 and 9 have landed, and so have the
-// char patterns and the method receivers; WT-01 stays `owed` because four
-// workarounds remain, three of them UNOWNED.
+// char patterns, the method receivers and the enum array; WT-01 stays `owed`
+// because three workarounds remain, two of them UNOWNED.
 //
 // What it does: parses one JSON document into a flat arena, re-serialises it
 // canonically, answers structural queries against it, and refuses fifteen
@@ -127,20 +138,39 @@ const MAX_DEPTH: i64 = 24;
 
 // Node kinds.
 //
-// WORKAROUND UNOWNED: these are an `enum` in any language that has one, and
-// Palladium HAS enums — but an array of them cannot be built. Both
-// `[K::A; 4]` and `[K::A, K::A, K::A, K::A]` are refused with
-// "Type mismatch: expected [K; 4], found [K; 4]", a diagnostic that names the
-// same type on both sides. N4-09 is `satisfied` and states it is witnessed for
-// `[i64; 5]`, `[i64; 3]`, `[String; 3]` only, so it does not cover this; no
-// other row does either. The arena therefore stores kinds as i64.
-fn k_null() -> i64 { return 0; }
-fn k_false() -> i64 { return 1; }
-fn k_true() -> i64 { return 2; }
-fn k_number() -> i64 { return 3; }
-fn k_string() -> i64 { return 4; }
-fn k_array() -> i64 { return 5; }
-fn k_object() -> i64 { return 6; }
+// WORKAROUND DISCHARGED (was UNOWNED): the kinds are an `enum`, and the arena's
+// kind column is an array of it, `kind: [Kind; 192]`. They were i64 codes named
+// by seven zero-arg functions, `k_null()` .. `k_object()`, because an array of a
+// user enum could not be built: `[K::A; 4]` and `[K::A, K::A, K::A, K::A]` were
+// both refused with "Type mismatch: expected [K; 4], found [K; 4]" — the type
+// checker read the `K` inside a composite as a struct while every `K::A` was an
+// enum. W2a (`af5d6ac`, on `main` at `fafe870`) fixed that, with
+// tests/regression/enum_in_composites.pd as its witness; re-probed here on
+// `fafe870`, both spellings compile and run, and so does a `[K; 192]` field
+// beside `[i64; 192]` and `[String; 192]` ones, written through `&mut self` and
+// read through `&self`. Every dispatch on a kind is a `match` now; `render` and
+// `kind_name` name every variant, so a new one is "Non-exhaustive match:
+// missing patterns Kind::…" at both, where a new code fell through to
+// "object", and `member` and `element` are guards with a `_` arm. The length is 192 like every
+// column's (the arena marker below): `[Kind; CAP_NODES]` is refused as
+// `[i64; CAP_NODES]` is, because an array length is an integer literal.
+// A kind is never compared with `==`, and that is measured rather than taste:
+// `==` between two values of a user enum (or struct) passes the type checker
+// and gcc refuses the C it emits — "invalid operands to binary expression
+// ('struct K' and 'struct K')" — and no row says whether `==` is defined on a
+// user type at all. An enum is dispatched by `match`, as in the census's sketch.
+// The capability closed and its ownership question did not: N4-09 is still
+// `satisfied` as an instance claim over `[i64; N]` and `[String; N]`, and no
+// row declares an array of a user enum.
+enum Kind {
+    Null,
+    False,
+    True,
+    Number,
+    Str,
+    Array,
+    Object,
+}
 
 // The two character codes with no literal form.
 //
@@ -190,7 +220,7 @@ struct Json {
     err: String,
     err_pos: i64,
 
-    kind: [i64; 192],
+    kind: [Kind; 192],
     // Numeric value. Meaningful only where `exact` is 1 — see `number`.
     num: [i64; 192],
     exact: [i64; 192],
@@ -239,7 +269,7 @@ struct Json {
 // Free functions, not methods: these two classify a `char`, never the
 // document, so there is no receiver for them to take. The same holds for every
 // other free function below — `js_hex_digit`, `js_utf8`, `js_simple_escape`,
-// `js_escape_into`, the kind codes and the two character codes — and for no
+// `js_escape_into` and the two character codes — and for no
 // function that reads or writes a `Json`.
 fn js_is_ws(c: char) -> bool {
     // UNOWNED (char pattern) DISCHARGED: a char literal is a pattern now, so this
@@ -317,7 +347,7 @@ impl Json {
 // ---------------------------------------------------------------------------
 
 impl Json {
-    fn alloc(&mut self, kind: i64) -> i64 {
+    fn alloc(&mut self, kind: Kind) -> i64 {
         if self.count >= CAP_NODES {
             return self.fail("document has more than 192 nodes");
         }
@@ -518,7 +548,7 @@ impl Json {
 // ---------------------------------------------------------------------------
 
 impl Json {
-    fn literal(&mut self, word: String, kind: i64) -> i64 {
+    fn literal(&mut self, word: String, kind: Kind) -> i64 {
         let n: i64 = string_len(word);
         let mut i: i64 = 0;
         while i < n {
@@ -566,7 +596,7 @@ impl Json {
             while js_is_digit(self.peek()) { self.bump(); }
         }
 
-        let node: i64 = self.alloc(k_number());
+        let node: i64 = self.alloc(Kind::Number);
         if node < 0 { return -1; }
         let lexeme: String = string_substring(self.src, start, self.pos);
         self.text[node] = lexeme;
@@ -589,7 +619,7 @@ impl Json {
 
     fn array(&mut self) -> i64 {
         self.bump();
-        let node: i64 = self.alloc(k_array());
+        let node: i64 = self.alloc(Kind::Array);
         if node < 0 { return -1; }
         self.skip_ws();
         if self.peek() == ']' {
@@ -617,7 +647,7 @@ impl Json {
 
     fn object(&mut self) -> i64 {
         self.bump();
-        let node: i64 = self.alloc(k_object());
+        let node: i64 = self.alloc(Kind::Object);
         if node < 0 { return -1; }
         self.skip_ws();
         if self.peek() == '}' {
@@ -682,9 +712,9 @@ impl Json {
         // place the two ordered literal kinds meet a literal in one pattern.
         let node: i64 = match c {
             '\0' => { self.fail("unexpected end of input") }
-            'n' => { self.literal("null", k_null()) }
-            't' => { self.literal("true", k_true()) }
-            'f' => { self.literal("false", k_false()) }
+            'n' => { self.literal("null", Kind::Null) }
+            't' => { self.literal("true", Kind::True) }
+            'f' => { self.literal("false", Kind::False) }
             '"' => {
                 // The one arm that is not a single call: the decode has to happen
                 // before the node exists, and a failed decode leaves -1. The local
@@ -692,7 +722,7 @@ impl Json {
                 let decoded: String = self.string_body();
                 let mut n: i64 = -1;
                 if self.ok {
-                    n = self.alloc(k_string());
+                    n = self.alloc(Kind::Str);
                     if n >= 0 { self.text[n] = decoded; }
                 }
                 n
@@ -764,39 +794,47 @@ fn js_escape_into(s: String) -> String {
 
 impl Json {
     fn render(&self, node: i64) -> String {
-        let k: i64 = self.kind[node];
-        if k == k_null() { return "null"; }
-        if k == k_false() { return "false"; }
-        if k == k_true() { return "true"; }
-        if k == k_number() { return self.text[node]; }
-        if k == k_string() {
-            let body: String = js_escape_into(self.text[node]);
-            return string_concat(string_concat("\"", body), "\"");
-        }
-        if k == k_array() {
-            let mut out: String = "[";
-            let mut child: i64 = self.first[node];
-            let mut first: bool = true;
-            while child >= 0 {
-                if !first { out = string_concat(out, ","); }
-                first = false;
-                out = string_concat(out, self.render(child));
-                child = self.next[child];
+        // UNOWNED (node kinds) DISCHARGED here too: this was `let k: i64 =
+        // self.kind[node];` and six `if k == k_*()` tests, with the object case
+        // as the fall-through, so a kind nobody handled rendered as an object.
+        // It is one `match` on `Kind` naming every variant, as is `kind_name`
+        // below; `member` and `element` guard with a `_` arm. None uses `==`.
+        match self.kind[node] {
+            Kind::Null => { return "null"; }
+            Kind::False => { return "false"; }
+            Kind::True => { return "true"; }
+            Kind::Number => { return self.text[node]; }
+            Kind::Str => {
+                let body: String = js_escape_into(self.text[node]);
+                return string_concat(string_concat("\"", body), "\"");
             }
-            return string_concat(out, "]");
+            Kind::Array => {
+                let mut out: String = "[";
+                let mut child: i64 = self.first[node];
+                let mut first: bool = true;
+                while child >= 0 {
+                    if !first { out = string_concat(out, ","); }
+                    first = false;
+                    out = string_concat(out, self.render(child));
+                    child = self.next[child];
+                }
+                return string_concat(out, "]");
+            }
+            Kind::Object => {
+                let mut out2: String = "{";
+                let mut member: i64 = self.first[node];
+                let mut first2: bool = true;
+                while member >= 0 {
+                    if !first2 { out2 = string_concat(out2, ","); }
+                    first2 = false;
+                    let name: String = js_escape_into(self.key[member]);
+                    out2 = string_concat(out2, string_concat(string_concat("\"", name), "\":"));
+                    out2 = string_concat(out2, self.render(member));
+                    member = self.next[member];
+                }
+                return string_concat(out2, "}");
+            }
         }
-        let mut out2: String = "{";
-        let mut member: i64 = self.first[node];
-        let mut first2: bool = true;
-        while member >= 0 {
-            if !first2 { out2 = string_concat(out2, ","); }
-            first2 = false;
-            let name: String = js_escape_into(self.key[member]);
-            out2 = string_concat(out2, string_concat(string_concat("\"", name), "\":"));
-            out2 = string_concat(out2, self.render(member));
-            member = self.next[member];
-        }
-        return string_concat(out2, "}");
     }
 }
 
@@ -806,7 +844,10 @@ impl Json {
 
 impl Json {
     fn member(&self, node: i64, name: String) -> i64 {
-        if self.kind[node] != k_object() { return -1; }
+        match self.kind[node] {
+            Kind::Object => {}
+            _ => { return -1; }
+        }
         let mut child: i64 = self.first[node];
         while child >= 0 {
             if string_eq(self.key[child], name) { return child; }
@@ -816,7 +857,10 @@ impl Json {
     }
 
     fn element(&self, node: i64, index: i64) -> i64 {
-        if self.kind[node] != k_array() { return -1; }
+        match self.kind[node] {
+            Kind::Array => {}
+            _ => { return -1; }
+        }
         let mut child: i64 = self.first[node];
         let mut i: i64 = 0;
         while child >= 0 {
@@ -839,14 +883,14 @@ impl Json {
 
     fn kind_name(&self, node: i64) -> String {
         if node < 0 { return "absent"; }
-        let k: i64 = self.kind[node];
-        if k == k_null() { return "null"; }
-        if k == k_false() { return "bool"; }
-        if k == k_true() { return "bool"; }
-        if k == k_number() { return "number"; }
-        if k == k_string() { return "string"; }
-        if k == k_array() { return "array"; }
-        return "object";
+        return match self.kind[node] {
+            Kind::Null => { "null" }
+            Kind::False | Kind::True => { "bool" }
+            Kind::Number => { "number" }
+            Kind::Str => { "string" }
+            Kind::Array => { "array" }
+            Kind::Object => { "object" }
+        };
     }
 }
 
@@ -888,7 +932,7 @@ fn main() {
         ok: true,
         err: "",
         err_pos: 0,
-        kind: [0; 192],
+        kind: [Kind::Null; 192],
         num: [0; 192],
         exact: [0; 192],
         text: [""; 192],
