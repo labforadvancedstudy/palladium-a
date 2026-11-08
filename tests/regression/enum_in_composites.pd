@@ -244,6 +244,10 @@ struct Own<X, Y> {
     p: Y,
 }
 
+// Review round 11: a literal is itself, not its span. Every expansion of a
+// macro is parsed from offset 0, so its expansions are literals at one span.
+macro own_of!(x) { Own { tag: 5, p: $x } }
+
 fn main() {
     // Both literal forms against an annotation.
     let xs: [K; 4] = [K::B; 4];
@@ -407,4 +411,17 @@ fn main() {
     print("\nGeneric struct literal, its own instantiation:");
     print_int(own.p);
     print_int(~og.p);
+
+    // The unread expansion's `Own<i64, wz>` does not take the `u32` that is
+    // not typed by the alias's name, though all four expansions share a span.
+    let mw = seat.wz();
+    let munread = own_of!(mw);
+    let mv: u32 = 7;
+    let mx = 4294967297;
+    let moc = false;
+    let mown = if moc { own_of!(mv) } else { own_of!(mx) };
+    let mog = own_of!(mv);
+    print("\nGeneric struct literal, its own node:");
+    print_int(mown.p);
+    print_int(~mog.p);
 }

@@ -1126,7 +1126,7 @@ pub struct TypeChecker {
     trait_resolver: TraitResolver,
     /// Instantiated generic structs
     struct_instantiations: HashMap<StructInstantiation, CheckerType>,
-    /// Each generic struct literal's own record (`StructLiteralRecords`, review round 10).
+    /// Each generic struct literal's own record (`StructLiteralRecords`, review rounds 10-11).
     struct_literal_records: StructLiteralRecords,
     /// Enum definitions with their variants
     enums: HashMap<String, Vec<EnumVariant>>,
@@ -2894,7 +2894,8 @@ impl TypeChecker {
         let modules = std::mem::take(&mut self.imported_modules);
         let mut module_names: Vec<&String> = modules.keys().collect();
         module_names.sort();
-        self.struct_literal_records.imported = true;
+        // An imported body's literals are recorded as the program's are: each by its
+        // own identity (`LiteralId`), which no literal of another file shares.
         for module_name in module_names {
             for item in &modules[module_name].ast.items {
                 if let Item::Function(func) = item {
@@ -2920,7 +2921,6 @@ impl TypeChecker {
                 }
             }
         }
-        self.struct_literal_records.imported = false;
         self.imported_modules = modules;
 
         // AN IMPORTED GENERIC THAT WAS INSTANTIATED IS PART OF THE EMITTED
@@ -4368,7 +4368,7 @@ impl TypeChecker {
                     ))),
                 }
             }
-            Expr::StructLiteral { name, fields, span } => {
+            Expr::StructLiteral { name, fields, .. } => {
                 // First check if this is a generic struct
                 if let Some(generic_struct) = self.generic_structs.get(name).cloned() {
                     // For generic structs, we need to infer type parameters from field values
@@ -4487,8 +4487,8 @@ impl TypeChecker {
                     // argument is (`struct_type_argument`, `carrier`; review round 9): under `type A
                     // = &i64`, `G { tag: 1, p: s.get() }` was recorded `G<i64, i64>` (`p` a `long
                     // long` for a pointer), under `type A = (i64, i64)` `G<i64, ?>`: gcc, where main
-                    // ran it. It is recorded for THIS literal too, by its span, as the instantiation
-                    // code generation emits it as (`struct_literal_records`, review round 10).
+                    // ran it. It is recorded for THIS literal too, as the instantiation codegen emits
+                    // it as (`struct_literal_records`, round 10), keyed by its `LiteralId` (round 11).
                     let type_arg_strings: Vec<String> = inferred_args
                         .iter()
                         .map(|ct| match ct {
@@ -4530,7 +4530,7 @@ impl TypeChecker {
                             .collect(),
                     };
 
-                    self.struct_literal_records.record(*span, &instantiation);
+                    self.struct_literal_records.record(expr, &instantiation);
                     self.struct_instantiations
                         .insert(instantiation, instantiated_type.clone());
 
@@ -8108,7 +8108,7 @@ pub const UNNAMED_TYPE_ARGUMENT: &str = "?";
 
 /// THE INSTANTIATION THE TYPE CHECKER DECIDED FOR EACH GENERIC STRUCT LITERAL
 /// (review round 10): the type arguments it recorded for the literal (the
-/// `StructInstantiation` the literal adds), by the literal's span.
+/// `StructInstantiation` the literal adds), by the literal's identity.
 ///
 /// Code generation had only the set of instantiations, and chose a literal's
 /// by the C types of its values among ALL of them. Beside an unused `G { tag:
@@ -8120,45 +8120,41 @@ pub const UNNAMED_TYPE_ARGUMENT: &str = "?";
 /// other and gcc refused the program main and 6c793f0 ran (`4294967297`).
 /// With the record, a literal is of the instantiation recorded for IT.
 ///
-/// Keyed by the span and by whether the literal is in an imported module's
-/// body (`imported`, set while `check` walks them): a span is an offset into
-/// one file, and two files' literals may share one. A literal checked more
-/// than once keeps every record it was given; one this checker never checks
-/// (a generic function's body: monomorphized, never walked) has none.
+/// KEYED BY THE LITERAL, NOT BY ITS SPAN (review round 11). Round 10 keyed
+/// by the span and by whether the literal was in some imported module's body.
+/// The macro expander parses each expansion again from offset 0, so the
+/// expansions of `macro pack!(x) { G { tag: 1, p: $x } }` with arguments of
+/// one length were literals at one span, and two imported files held literals
+/// at one offset: their records merged (`[i64, z]` beside `[i64, i64]`), and
+/// code generation chose among them by C type again — an unused `pack!(a)`
+/// made `pack!(b)` a `G_i64_z` (gcc where main ran; `4294967288` where main
+/// printed `-8`), and renaming `a` or one more space in a module "fixed" it.
+/// The key is now the literal's `LiteralId`, which the parser gives each
+/// literal it builds. A literal checked more than once (one node) keeps every
+/// record it was given; two literals never share a key; one this checker never
+/// checks (a generic function's body: monomorphized, never walked) has none.
 #[derive(Debug, Clone, Default)]
 pub struct StructLiteralRecords {
-    records: HashMap<LiteralSite, Vec<Vec<String>>>,
-    imported: bool,
+    records: HashMap<LiteralId, Vec<Vec<String>>>,
 }
 
-/// Where a literal is: in an imported module's body or not, and its span's
-/// start, end, line and column.
-type LiteralSite = (bool, usize, usize, usize, usize);
-
 impl StructLiteralRecords {
-    fn key(imported: bool, span: Span) -> LiteralSite {
-        (imported, span.start, span.end, span.line, span.column)
-    }
-
-    /// Record `instantiation`'s type arguments for the literal at `span`, in
-    /// the body being checked.
-    fn record(&mut self, span: Span, instantiation: &StructInstantiation) {
-        let records = self
-            .records
-            .entry(Self::key(self.imported, span))
-            .or_default();
+    /// Record `instantiation`'s type arguments for the struct literal `literal`
+    /// (by its `LiteralId`: a struct literal is the only expression with one).
+    fn record(&mut self, literal: &Expr, instantiation: &StructInstantiation) {
+        let Expr::StructLiteral { id, .. } = literal else {
+            return;
+        };
+        let records = self.records.entry(*id).or_default();
         if !records.contains(&instantiation.type_args) {
             records.push(instantiation.type_args.clone());
         }
     }
 
-    /// The type arguments recorded for the literal at `span` — in an imported
-    /// module's body or in the program's — or `None`: no literal there was
-    /// checked.
-    pub fn of(&self, imported: bool, span: Span) -> Option<&[Vec<String>]> {
-        self.records
-            .get(&Self::key(imported, span))
-            .map(Vec::as_slice)
+    /// The type arguments recorded for the literal `id`, or `None`: it was
+    /// never checked.
+    pub fn of(&self, id: LiteralId) -> Option<&[Vec<String>]> {
+        self.records.get(&id).map(Vec::as_slice)
     }
 }
 

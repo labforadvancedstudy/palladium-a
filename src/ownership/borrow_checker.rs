@@ -2287,6 +2287,7 @@ mod tests {
                         name: "S".to_string(),
                         fields: vec![("v".to_string(), Expr::Integer(1))],
                         span: dummy_span(),
+                        id: crate::ast::LiteralId::fresh(),
                     },
                     mutable: false,
                     span: dummy_span(),

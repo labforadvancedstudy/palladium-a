@@ -731,6 +731,7 @@ mod tests {
                 )),
             ],
             span: Span::dummy(),
+            id: crate::ast::LiteralId::fresh(),
         };
         
         // Note: current implementation doesn't handle StructLiteral

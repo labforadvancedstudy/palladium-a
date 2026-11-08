@@ -4144,7 +4144,6 @@ impl Parser {
                 if self.check(&Token::LeftBrace) && self.check_struct_literal_pattern() {
                     let start_span = span;
                     self.advance()?; // consume '{'
-
                     let mut fields = Vec::new();
 
                     while !self.check(&Token::RightBrace) && !self.is_at_end() {
@@ -4182,6 +4181,7 @@ impl Parser {
                             start_span.line,
                             start_span.column,
                         ),
+                        id: LiteralId::fresh(),
                     })
                 } else {
                     Ok(Expr::Ident(name))

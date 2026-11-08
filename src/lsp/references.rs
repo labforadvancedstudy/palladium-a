@@ -798,6 +798,7 @@ mod tests {
                 ("y".to_string(), Expr::Integer(20)),
             ],
             span: Span::new(0, 30, 0, 0),
+            id: crate::ast::LiteralId::fresh(),
         };
         finder.find_in_expression(&expr);
         // TODO: Currently doesn't add reference for struct name in literals

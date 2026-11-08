@@ -392,7 +392,7 @@ impl CodeGenerator {
     /// Set generic struct instantiations for code generation
     ///
     /// See `set_generic_instantiations` — same source, same bypass, same fix. `literals`, the
-    /// instantiation each literal is of, is keyed by span and holds no name to escape.
+    /// instantiation each literal is of, is keyed by the literal and holds no name to escape.
     pub fn set_generic_struct_instantiations(
         &mut self,
         instantiations: Vec<(String, Vec<String>, crate::typeck::GenericStruct)>,
@@ -570,7 +570,7 @@ impl CodeGenerator {
             Expr::Char(_) => Some("long long".to_string()),
             Expr::String(_) => Some("const char*".to_string()),
             Expr::Bool(_) => Some("int".to_string()),
-            Expr::StructLiteral { name, fields, span } => {
+            Expr::StructLiteral { name, .. } => {
                 // A generic struct's literal is of the instantiation the type checker
                 // recorded for IT (`literal_instantiation`, review round 10), by the rule
                 // the emitter follows for the literal itself, so a `let` it initialises is
@@ -594,7 +594,7 @@ impl CodeGenerator {
                 // monomorphized generic body) has no record, and is matched against every
                 // instantiation as before (`generate_struct` keeps each one's fields in
                 // `structs`).
-                let Some(mangled) = self.literal_instantiation(name, fields, *span, locals) else {
+                let Some(mangled) = self.literal_instantiation(expr, locals) else {
                     // A non-generic struct's literal is of the struct; a generic one no
                     // recorded instantiation holds keeps the struct's own name here, and
                     // the emitter refuses it by name (`instantiation_matched`).
@@ -2352,7 +2352,7 @@ impl CodeGenerator {
             }
             self.output.push('\n');
         }
-        self.struct_literals.scope = LiteralScope::Imported;
+        self.struct_literals.scope = LiteralScope::Recorded;
         // Generate functions from imported modules, off the SAME SORTED LOCAL as
         // above — `imported_modules` here is a sorted Vec, not the HashMap this
         // loop used to walk with `.values()`, because HashMap order put the hash
@@ -2387,7 +2387,7 @@ impl CodeGenerator {
                 }
             }
         }
-        self.struct_literals.scope = LiteralScope::Program;
+        // The program's own bodies are recorded as the modules' are: each literal by its LiteralId.
         // Generate functions from main program
         for item in &program.items {
             match item {
@@ -6344,14 +6344,15 @@ impl CodeGenerator {
                 self.generate_expression(index)?;
                 self.output.push(']');
             }
-            Expr::StructLiteral { name, fields, span } => {
+            Expr::StructLiteral { name, fields, .. } => {
                 // Generate struct literal: (StructName){.field1 = value1, .field2 = value2}
                 //
                 // A generic struct's literal is of the instantiation the type checker
                 // recorded for IT (`literal_instantiation`, `StructLiterals`, review round
                 // 10), the rule the declaration of a `let` it initialises follows too
                 // (`try_infer_expr_type_in`), so the two agree; a literal no instantiation
-                // of its own holds is refused by name (`instantiation_matched`).
+                // of its own holds is refused by name (`instantiation_matched`). IT is the
+                // literal's `LiteralId` (round 11), never its span, which another may share.
                 //
                 // It picked the first instantiation with ANY argument matching the C type
                 // of the FIRST field, by substring: `"long long*".contains("long long")`,
@@ -6372,8 +6373,7 @@ impl CodeGenerator {
                 let struct_name = if let Some(instantiations) =
                     self.generic_struct_instantiation_map.get(name)
                 {
-                    let found =
-                        self.literal_instantiation(name, fields, *span, &Default::default());
+                    let found = self.literal_instantiation(expr, &Default::default());
                     Self::instantiation_matched(name, found.as_deref(), instantiations)?.to_string()
                 } else {
                     // Use the original name for non-generic structs
@@ -6946,22 +6946,26 @@ impl CodeGenerator {
         }
     }
 
-    /// The instantiation of the generic struct `name` the literal at `span`
-    /// with these `fields` builds — or `None`: `name` is not a generic struct,
-    /// or no instantiation holds these values.
+    /// The instantiation of its generic struct `name` the struct literal
+    /// `literal` builds with its `fields` — or `None`: `literal` is no struct
+    /// literal, `name` is not a generic struct, or no instantiation holds these
+    /// values.
     ///
     /// A literal is of the instantiation the type checker RECORDED FOR IT
-    /// (`StructLiterals`, review round 10). Each recorded instantiation is a
-    /// struct whose fields have C types (`generate_struct` keeps them in
-    /// `structs`), and the literal's values for the fields written with a type
-    /// parameter have C types where this pass can say what they are (a field
-    /// written without one is the same in every instantiation). Of the
-    /// literal's own records: the first whose fields hold every such value
-    /// EXACTLY — under `type A = &i64`, `G { tag: 1, p: a }` is of `G<i64, A>`,
-    /// whose `p` is a `long long*` — or else the first whose fields hold them
-    /// as C converts an integer of one width into another, as the record keeps
-    /// no width (an integer carried by no alias is recorded as `i64`): `G {
-    /// tag: 1, p: v }` with `let v: u32 = 7` is of `G<i64, i64>`.
+    /// (`StructLiterals`, review round 10): for the literal's `id`, never for
+    /// its span, which another literal may share — another expansion of a
+    /// macro, a literal of another file (review round 11). Each recorded
+    /// instantiation is a struct whose fields have C types (`generate_struct`
+    /// keeps them in `structs`), and the literal's values for the fields
+    /// written with a type parameter have C types where this pass can say what
+    /// they are (a field written without one is the same in every
+    /// instantiation). Of the literal's own records: the first whose fields
+    /// hold every such value EXACTLY — under `type A = &i64`, `G { tag: 1, p:
+    /// a }` is of `G<i64, A>`, whose `p` is a `long long*` — or else the first
+    /// whose fields hold them as C converts an integer of one width into
+    /// another, as the record keeps no width (an integer carried by no alias is
+    /// recorded as `i64`): `G { tag: 1, p: v }` with `let v: u32 = 7` is of
+    /// `G<i64, i64>`.
     ///
     /// Review round 9 picked the first of ALL the instantiations that held the
     /// values exactly, so another literal's chose: beside an unused `G { tag:
@@ -6992,11 +6996,15 @@ impl CodeGenerator {
     /// once chose an `i64` field for a pointer, review round 9).
     fn literal_instantiation(
         &self,
-        name: &str,
-        fields: &[(String, Expr)],
-        span: Span,
+        literal: &Expr,
         locals: &std::collections::HashMap<String, String>,
     ) -> Option<String> {
+        let Expr::StructLiteral {
+            name, fields, id, ..
+        } = literal
+        else {
+            return None;
+        };
         // An instantiation the type checker recorded with the placeholder for an
         // argument it could not name is no struct C can declare (`G_i64_?`): no
         // literal is of it, and one that would be is refused by name.
@@ -7041,7 +7049,7 @@ impl CodeGenerator {
                 })
             })
         };
-        if let Some(own) = self.struct_literals.own(span) {
+        if let Some(own) = self.struct_literals.own(*id) {
             let of_own: Vec<&(Vec<String>, String)> = instantiations
                 .iter()
                 .copied()
@@ -7481,9 +7489,15 @@ impl CodeGenerator {
 }
 
 /// The instantiation each generic struct literal is of: the type checker's
-/// record for it (`crate::typeck::StructLiteralRecords`, keyed by span), and
-/// whose body is being emitted, as a span is an offset into one file (review
-/// round 10). `literal_instantiation` reads both.
+/// record for it (`crate::typeck::StructLiteralRecords`, keyed by the literal's
+/// `LiteralId`), and whether the bodies being emitted are ones the type checker
+/// walked (review rounds 10-11). `literal_instantiation` reads both.
+///
+/// Round 10 kept a third scope, the imported modules', because the record was
+/// keyed by span, an offset into one file. A span was no identity even within
+/// one file (each macro expansion is parsed from offset 0), and one flag for
+/// every imported module was none across files; the key is now the literal,
+/// which is its own in every file, and only an unwalked body needs a scope.
 #[derive(Debug, Default)]
 struct StructLiterals {
     records: crate::typeck::StructLiteralRecords,
@@ -7491,28 +7505,28 @@ struct StructLiterals {
 }
 
 /// Whose function bodies `compile_escaped` is emitting, in its order: the
-/// monomorphized generic functions, the imported modules' functions, then
-/// the program's own (and its `const`/`static` items, emitted first).
+/// monomorphized generic functions, then the imported modules' functions and
+/// the program's own (whose `const`/`static` items are emitted first).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 enum LiteralScope {
-    /// The program's own bodies: their literals' records are its own.
+    /// Bodies the type checker walked, the program's and the imported
+    /// modules': each literal's record is its own, by its `LiteralId`.
     #[default]
-    Program,
-    /// An imported module's bodies, recorded apart from the program's.
-    Imported,
+    Recorded,
     /// Monomorphized generic bodies, which the type checker never walks: no
-    /// literal there has a record, and a program literal's at the same span
-    /// is not its.
+    /// literal there has a record. Each is a copy of the generic's body, and
+    /// carries its literals' identities; were the generic's literals ever
+    /// recorded, that record would be of no one instantiation, so it is not
+    /// read here.
     Unrecorded,
 }
 
 impl StructLiterals {
-    /// The type arguments the type checker recorded for the literal at `span`
-    /// in the body being emitted, or `None`: it recorded none.
-    fn own(&self, span: Span) -> Option<&[Vec<String>]> {
+    /// The type arguments the type checker recorded for the literal `id` in
+    /// the body being emitted, or `None`: it recorded none.
+    fn own(&self, id: LiteralId) -> Option<&[Vec<String>]> {
         match self.scope {
-            LiteralScope::Program => self.records.of(false, span),
-            LiteralScope::Imported => self.records.of(true, span),
+            LiteralScope::Recorded => self.records.of(id),
             LiteralScope::Unrecorded => None,
         }
     }

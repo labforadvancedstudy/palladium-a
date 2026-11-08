@@ -2944,3 +2944,132 @@ fn a_generic_struct_literal_is_of_the_instantiation_recorded_for_it() {
     }
     assert_eq!(got, want);
 }
+
+/// The verdict `outcome` gives, for a program of several files: `main.pd` and
+/// the modules it imports, compiled by `pdc` in a scratch directory (the module
+/// resolver searches `.`, as `tests/m3_imported_calls.rs` says).
+fn outcome_of_files(modules: &[(&str, &str)], main: &str) -> String {
+    let dir = TempDir::new().unwrap();
+    for (name, src) in modules {
+        fs::write(dir.path().join(name), src).unwrap();
+    }
+    fs::write(dir.path().join("main.pd"), main).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
+        .args(["compile", "main.pd", "-o", "prog"])
+        .current_dir(dir.path())
+        .output()
+        .expect("pdc");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if !out.status.success() {
+        return if text.contains("gcc") {
+            "GCC".to_string()
+        } else {
+            let first = text.lines().find(|l| l.contains("error")).unwrap_or("");
+            format!("REFUSED: {}", first)
+        };
+    }
+    let run = Command::new(dir.path().join("build_output").join("prog"))
+        .current_dir(dir.path())
+        .output()
+        .expect("run");
+    format!("RUN: {}", String::from_utf8_lossy(&run.stdout))
+}
+
+/// A STRUCT LITERAL IS RECORDED AS ITSELF, NOT AS ITS SPAN (review round 11).
+///
+/// Round 10 recorded the instantiation of each generic struct literal by the
+/// literal's span, and by whether it sat in an imported module. A span is not
+/// a literal. The macro expander parses every expansion again from offset 0,
+/// so under `macro pack!(x) { G { tag: 1, p: $x } }` the expansions
+/// `pack!(a)`, `pack!(b)` and `pack!(w)` were three literals at one span; and
+/// two imported files may hold literals at one offset. Their records merged
+/// (`[i64, z]` beside `[i64, i64]`), and code generation chose among them by C
+/// type again. An unused `pack!(a)` (`a` typed by the name of `type z = u32`)
+/// made `pack!(b)` (`b: u32`, recorded `G<i64, i64>`) a `G_i64_z`. An `if`
+/// meeting it with `pack!(w)` then assigned one struct to the other: gcc, where
+/// main printed `4294967297`. And `~` of it printed `4294967288`, where main
+/// printed `-8`. Renaming `a` to `aliaswide` (another span) or one more space
+/// in an imported file "fixed" it. Every literal now carries an identity of its
+/// own from the parser (`LiteralId`), the record is keyed by it, and a span is
+/// for diagnostics only. The controls (another span, no unused literal) print
+/// the same value; so do the rows they control.
+#[test]
+fn a_struct_literal_is_recorded_as_itself_not_as_its_span() {
+    let z = "type z = u32;\nstruct S { n: i64 }\nimpl S { fn get(&self) -> z { return 7; } }\n\
+             struct G<X, Y> { tag: X, p: Y }\nfn id<T>(t: T) -> T { return t; }\n";
+    let pack = "macro pack!(x) { G { tag: 1, p: $x } }\n";
+    let two = "macro alpha!(x) { G { tag: 1, p: $x } }\nmacro beta!(x) { G { tag: 1, p: $x } }\n";
+    let decoy = "let s = S { n: 0 }; let a = s.get(); let d = pack!(a); ";
+    let vw = "let b: u32 = 7; let w: i64 = 4294967297; let c = false; ";
+    let iff = "let r = if c { pack!(b) } else { pack!(w) }; ";
+    let rows: Vec<(&str, String, &str)> = vec![
+        ("one macro, an `if`, the field read", format!("{pack}fn main() {{ {decoy}{vw}{iff}print_int(r.p); }}"), "RUN: 4294967297\n"),
+        ("one macro, an `if`, discarded", format!("{pack}fn main() {{ {decoy}{vw}{iff}print_int(0); }}"), "RUN: 0\n"),
+        ("one macro, an `if`, the field forwarded", format!("{pack}fn main() {{ {decoy}{vw}{iff}let q = r.p; print_int(id(q)); }}"), "RUN: 4294967297\n"),
+        ("one macro, an `if`, the field re-bound annotated", format!("{pack}fn main() {{ {decoy}{vw}{iff}let q: i64 = r.p; print_int(q); }}"), "RUN: 4294967297\n"),
+        ("two macros of one body, an `if`", format!("{two}fn main() {{ let s = S {{ n: 0 }}; let a = s.get(); let d = alpha!(a); {vw}let r = if c {{ beta!(b) }} else {{ beta!(w) }}; print_int(r.p); }}"), "RUN: 4294967297\n"),
+        ("the unused expansion in another function", format!("{pack}fn other() -> i64 {{ {decoy}return 0; }}\nfn main() {{ {vw}{iff}print_int(r.p); }}"), "RUN: 4294967297\n"),
+        ("`~` of a u32 the checker records as i64", format!("{pack}fn main() {{ {decoy}let b: u32 = 7; let r = pack!(b); print_int(~r.p); }}"), "RUN: -8\n"),
+        ("`~`, the unused argument named `aliaswide` (control)", format!("{pack}fn main() {{ let s = S {{ n: 0 }}; let aliaswide = s.get(); let d = pack!(aliaswide); let b: u32 = 7; let r = pack!(b); print_int(~r.p); }}"), "RUN: -8\n"),
+        ("`~`, no unused expansion (control)", format!("{pack}fn main() {{ let b: u32 = 7; let r = pack!(b); print_int(~r.p); }}"), "RUN: -8\n"),
+    ];
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    for (shape, body, out) in &rows {
+        let program = format!("{z}{body}\n");
+        got.push(format!("{}: {}", shape, outcome(&program, "literal_node")));
+        want.push(format!("{}: {}", shape, out));
+    }
+    // Two imported files whose literals sit at one offset: the literal in
+    // `one` is padded to start where the first one in `two` does. The controls
+    // pad it by one space more.
+    let main = "import lib1;\nimport lib2;\ntype z = u32;\nstruct S { n: i64 }\n\
+                impl S { fn get(&self) -> z { return 7; } }\nstruct G<X, Y> { tag: X, p: Y }\n\
+                fn main() { print_int(two()); }\n";
+    let one = |head: &str, tail: &str, two: &str, extra: usize| {
+        let pad = two.find("G {").unwrap() - head.len() + extra;
+        format!("{head}{}{tail}", " ".repeat(pad))
+    };
+    let unused = "pub fn one() -> i64 { let s = S { n: 0 }; let a = s.get(); let gg =";
+    let bitnot =
+        "pub fn two() -> i64 { let a: u32 = 7; let gg =                       G { tag: 1, p: a }; \
+                  return ~gg.p; }\n";
+    let iff = "pub fn two() -> i64 { let b: u32 = 7; let w = 4294967297; let c = false; \
+               let r = if c { G { tag: 1, p: b } } else { G { tag: 2, p: w } }; return r.p; }\n";
+    for (shape, two, extra, out) in [
+        (
+            "two files, one offset, `~` of a u32",
+            bitnot,
+            0,
+            "RUN: -8\n",
+        ),
+        (
+            "two files, another offset, `~` (control)",
+            bitnot,
+            1,
+            "RUN: -8\n",
+        ),
+        (
+            "two files, one offset, an `if`",
+            iff,
+            0,
+            "RUN: 4294967297\n",
+        ),
+        (
+            "two files, another offset, an `if` (control)",
+            iff,
+            1,
+            "RUN: 4294967297\n",
+        ),
+    ] {
+        let one = one(unused, "G { tag: 1, p: a }; return 0; }\n", two, extra);
+        let files = [("lib1.pd", one.as_str()), ("lib2.pd", two)];
+        got.push(format!("{}: {}", shape, outcome_of_files(&files, main)));
+        want.push(format!("{}: {}", shape, out));
+    }
+    assert_eq!(got, want);
+}

@@ -77,3 +77,7 @@ Generic struct, alias argument:
 Generic struct literal, its own instantiation:
 4294967297
 -8
+
+Generic struct literal, its own node:
+4294967297
+-8

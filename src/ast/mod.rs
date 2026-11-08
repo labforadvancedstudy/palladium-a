@@ -723,11 +723,12 @@ pub enum Expr {
         operand: Box<Expr>,
         span: Span,
     },
-    /// Struct literal
+    /// Struct literal; `id` is WHICH one (`LiteralId`), as a span may be another's
     StructLiteral {
         name: String,
         fields: Vec<(String, Expr)>,
         span: Span,
+        id: LiteralId,
     },
     /// Field access
     FieldAccess {
@@ -861,7 +862,6 @@ pub enum Expr {
         span: Span,
     },
 }
-
 /// Enum constructor data
 #[derive(Debug, Clone, PartialEq)]
 pub enum EnumConstructorData {
@@ -955,6 +955,38 @@ impl Expr {
             Expr::Loop { span, .. } => *span,
             Expr::Match { span, .. } => *span,
         }
+    }
+}
+
+/// WHICH STRUCT LITERAL an `Expr::StructLiteral` is (review round 11): a
+/// number no other literal parsed in this process carries, given by the parser
+/// to each literal it builds (`fresh`), and kept by every copy of that node.
+///
+/// A span is not an identity. The macro expander parses every expansion again
+/// from offset 0 (`crate::macros::expander::expand_to_expr`), so under `macro
+/// pack!(x) { G { tag: 1, p: $x } }` the expansions `pack!(a)`, `pack!(b)` and
+/// `pack!(w)` are three literals at one span; and the literals of two imported
+/// files may sit at one offset. Round 10 recorded each literal's instantiation
+/// by its span (and one flag for "in some imported module"), so those records
+/// merged, and an unused `pack!(a)` decided what `pack!(b)` was emitted as:
+/// gcc, where main ran the program, and `4294967288`, where main printed `-8`.
+/// The type checker records by this identity
+/// (`crate::typeck::StructLiteralRecords`) and code generation asks by it;
+/// a span is for diagnostics.
+///
+/// A copy of a node is the same literal — a method's body as
+/// `ImplBlock::methods_with_self_resolved` hands it to each pass, a generic
+/// function's body as code generation monomorphizes it — so what is recorded
+/// for the one is recorded for every copy. Two nodes the parser built never
+/// share one: each expansion is parsed anew, and so is each module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LiteralId(u64);
+
+impl LiteralId {
+    /// An identity no literal has yet: one per call, in this process.
+    pub fn fresh() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
     }
 }
 
