@@ -4269,6 +4269,14 @@ def self_test() -> int:
     # `make test-thesis-runner` was not among them. The count is the only thing that
     # notices an added row here, which is the whole reason it is pinned.
     #
+    # 22 -> 23 on 2026-11-08, an ADDITION: N9-10 ("a `&T` parameter is passed by address
+    # and forwards to another `&T` parameter ... through compile, link and run") arrived
+    # from issue #46 as `observable tests/linker_diagnostics.rs::forwarding_a_shared_
+    # reference_compiles_links_and_runs`. The property is a linked binary's exit status
+    # and its output together, asserted by a Rust test that compiles the program itself;
+    # no `.pd` conformance row carries it, so `fixture` would have been false. Real demand
+    # of the N14-01 kind: `satisfied` today by a test `make v1-exit` would dispatch.
+    #
     # 18 -> 19 on 2026-08-23: N14-01 ("the builtin set is exactly the 34 normative names")
     # changed evidence-kind from `gate make stdlib-gate` to
     # `observable src/builtins.rs::test_registry_is_exactly_the_normative_builtin_set`. Its
@@ -4279,7 +4287,7 @@ def self_test() -> int:
     case("the manifest carries `observable` rows nothing dispatches yet — DEMAND for the "
          "1.0 gate GI-10 owes, not evidence that this code is live; retention is debt "
          "against that row, and an empty set here makes it a deletion",
-         len([f for f in _kinds if f[4] == "observable"]), 22, drives_main=False)
+         len([f for f in _kinds if f[4] == "observable"]), 23, drives_main=False)
     case("...and the gate that would dispatch them does not exist yet, which is what makes "
          "this debt rather than liveness",
          (ROOT / "Makefile").read_text().count("\nv1-exit:"), 0, drives_main=False)
