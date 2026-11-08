@@ -264,7 +264,8 @@ requirement filter cannot see until someone writes the program.
    the requirement inventory would not have, because no row named what it witnesses. Whether N4-09 is
    amended or a row is added is the owner's call, not this file's, and it is the same call issue #46
    parks for the char pattern. **The call was a row** (2026-11-08): N4-24 claims a user enum in
-   every composite position, with that fixture as its evidence, and N4-09's text is unchanged.
+   the composite positions that fixture runs — and names the ones it does not claim, a tuple as a
+   struct field and a generic TYPE at an enum, each measured — and N4-09's text is unchanged.
 2. **A `&T` parameter cannot be forwarded — CLOSED by su2**, and it closed for a reason worth
    recording rather than a fix aimed at it. As written it read: `fn a(p: &P) -> i64 { return b(p); }`
    emits `b((*p))` — a dereference into a pointer parameter — silently, and gcc catches it; recursive
