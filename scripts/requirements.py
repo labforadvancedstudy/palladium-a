@@ -99,8 +99,8 @@ MILESTONE_RE = re.compile(r"\A(M[1-9](?:-start)?|P1|unscheduled|-)\Z")
 # pins the 26 `thesis` rows and pins (kind, evidence, fingerprint) — not the
 # milestone column, and not the other 167 rows. Measured WHEN THIS PIN WAS
 # WRITTEN: all 46 M2 rows carried `disposition = 1.0`, so every one of them was
-# unpinned. Both halves of that sentence have moved since — M2 owns 49 rows now
-# and N3-13 left for M5 — and it is left in the past tense rather than
+# unpinned. Both halves of that sentence have moved since — M2 owned 49 rows at
+# the next count and N3-13 left for M5 — and it is left in the past tense rather than
 # re-measured into the comment, because the ARGUMENT is about what the thesis
 # contract does not cover and that has not changed. The live count is whatever
 # `MILESTONE_ROSTER` below says, which the self-test reconciles against the
@@ -172,9 +172,12 @@ MILESTONE_ROSTER = {
         "FFI-01", "FFI-02", "FFI-03", "N14-06", "N14-07", "N14-08", "N14-09",
         "N14-10", "N14-11", "N14-12", "N14-13", "N14-14", "N14-15", "N14-16",
         "N4-17",
-        # Arrived 2026-11-08 by the owner's decision on issue #46 and M2's exit:
+        # Arrived 2026-11-08 from the owner's decisions on issue #46 and M2's exit:
         # WT-01 from M2 (retagged, still owed -- none of its three live
-        # workarounds is M2's to pay), and the two rows #46 added `owed`.
+        # workarounds is M2's to pay), and the two rows #46 added `owed`. The
+        # owner named M3 for WT-01; M8 is where it landed under the standing
+        # rule after N14-09 (M8) was found on the arena's path -- see the
+        # manifest header.
         "WT-01", "N4-25", "N14-18",
     ),
     "M9": (

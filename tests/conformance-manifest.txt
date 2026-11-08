@@ -126,7 +126,7 @@ tests/misc/test_vec_simple.pd	run	-	expected	-	-
 tests/projects/hello_pdm/package.pd	skip	compile	code=PD0013	-	package manifest; not Palladium source at all, so the parser rejects it outright
 tests/projects/hello_pdm/src/main.pd	run	-	expected	-	-
 tests/projects/hello_pdm/src/math.pd	skip	compile	code=PD0044	-	library module providing add()/factorial(); the compiler itself confirms it has no entry point
-tests/projects/hello_pdm/tests/test_math.pd	xfail	compile	Undefined function: add	M4	calls add()/factorial() from src/math.pd; needs cross-file module imports (no use/mod in the language). OWNER CORRECTED M3 -> M4 on 2026-08-25: modules are M4's milestone (MILESTONES.md 'M4 - Modules (v0.6.0)') and the manifest row for the feature, N3-11 'Module items', is owned by M4. M3 is traits and generics. This is a correction against the ownership roster, not a reassignment
+tests/projects/hello_pdm/tests/test_math.pd	xfail	compile	Undefined function: add	M4	calls add()/factorial() from src/math.pd; needs cross-file module imports (no use/mod in the language). OWNER CORRECTED M3 -> M4 on 2026-08-25: modules are M4's milestone (MILESTONES.md 'M4 - Modules (v0.7.0)', v0.6.0 until the 2026-11-08 re-mapping) and the manifest row for the feature, N3-11 'Module items', is owned by M4. M3 is traits and generics. This is a correction against the ownership roster, not a reassignment
 tests/projects/hello_pdm/tests/test_simple.pd	run	-	expected	-	-
 tests/regression/array_binding_scope.pd	run	-	expected	-	-
 tests/regression/array_reference_params.pd	run	-	expected	-	-

@@ -627,7 +627,7 @@ start "target: the self-test itself is on the certifying path (make gates)"
 dry gates
 expect_rc 0 && expect_out "test-requirements-runner" && ok
 
-start "target: m2-exit is NOT in make gates — it is RED by design"
+start "target: m2-exit is NOT in make gates — it is nonzero by design (OWED, or NO_VERDICT once M2 owes nothing)"
 reject_out "m2-exit" && ok
 
 start "target: the manifest path is an ARGUMENT, so no exported variable can redirect it"
@@ -635,9 +635,15 @@ start "target: the manifest path is an ARGUMENT, so no exported variable can red
 # make m2-exit` pointed the milestone's exit criterion at a file of the caller's
 # choosing. Proved by trying it — the target must ignore the variable entirely,
 # which it does by there no longer being one to read.
+# The exit code alone stopped being evidence on 2026-11-08: with M2 owing nothing
+# the real answer is NO_VERDICT (2), and a reader that HAD followed the variable to
+# /dev/null would also say 2. So the row count is required as well — /dev/null has
+# none — and the code is the one the manifest predicts.
 OUT=$(cd "$REPO" && REQUIREMENTS_MANIFEST=/dev/null REQ_MILESTONE=M2 \
       python3 scripts/requirements.py 2>&1); RC=$?
-expect_rc 1 && expect_out "requirement inventory (docs/contributing/1.0-requirements.tsv)" && ok
+expect_rc "$want_code" \
+  && expect_out "requirement inventory (docs/contributing/1.0-requirements.tsv): $want_rows row(s)" \
+  && expect_out "REQ_MILESTONE=M2 -> $want_owed of $want_m2 row(s)" && ok
 
 start "ledger: MILESTONES.md's counts over the manifest are derived and agree"
 OUT=$(cd "$REPO" && python3 scripts/requirements.py --check-ledger 2>&1); RC=$?
@@ -645,11 +651,20 @@ expect_rc 0 && expect_out "REQUIREMENTS_RESULT 0 CLEAR" && ok
 
 # ---------------------------------------------------------------------------
 # THE STATE OF THE TREE. Everything above runs on planted input; this is the
-# real manifest, and M2 being RED here is the milestone's actual position.
+# real manifest, and its answer for M2 is the milestone's actual position. It was
+# RED (OWED) until 2026-11-08, when WT-01, the last owed row, moved to M8; since
+# then it is NO_VERDICT — every M2 row satisfied, evidence unresolved — and the
+# expectation is the one the manifest predicts, so neither state can be reported
+# as the other.
 # ---------------------------------------------------------------------------
-start "the real manifest: M2 is RED today, which is the correct state"
+start "the real manifest: M2's state is the one the manifest predicts ($want_name)"
 OUT=$(cd "$REPO" && REQ_MILESTONE=M2 python3 scripts/requirements.py 2>&1); RC=$?
-expect_rc 1 && expect_out "OWED_TO_M2" && ok
+if [ "$want_code" -eq 1 ]; then
+  expect_rc 1 && expect_out "OWED_TO_M2" && ok
+else
+  expect_rc 2 && expect_out "NO_VERDICT: every M2 row is \`satisfied\`" \
+    && reject_out "OWED_TO_M2" && ok
+fi
 
 start "the real manifest: it parses clean — no OWED line is a manifest error"
 reject_out "the manifest itself is malformed" && ok

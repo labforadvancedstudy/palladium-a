@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# M2's exit criterion, as a command — GI-08. RED until items 1-7 of M2 land.
+# M2's exit criterion, as a command — GI-08. It was RED (OWED) while M2 owned an owed
+# row; since 2026-11-08 it owns none (WT-01, item 7, moved to M8 unpaid) and it says
+# NO_VERDICT, because steps 3 and 4 of the specification do not run.
 #
 # WHY THIS IS A SCRIPT AND NOT FOUR LINES OF MAKEFILE. It was four lines of
 # Makefile, and the aggregation there was `|| rc=1` per inventory. That destroyed

@@ -18,8 +18,8 @@ bootstrap/pdc.pd	874-878	docs/specification/bootstrap-subset.md	7bde5af5d8d1	if 
 bootstrap/v2_full_compiler/ast.pd	83-83	docs/contributing/MILESTONES.md	f7f1ef90bc4b	else_branch: Option<Vec<Stmt>>,
 bootstrap/v2_full_compiler/ast.pd	83-83	src/lexer/token.rs	f7f1ef90bc4b	else_branch: Option<Vec<Stmt>>,
 bootstrap/v2_full_compiler/parser.pd	178-178	docs/specification/bootstrap-subset.md	0f84a753b824	let op = if matches!(op_token.token_type, TokenType::Star) {
-docs/contributing/MILESTONES.md	1045-1045	tests/m3_imported_calls.rs	f823ac7a9feb	## M3 — Traits and generics (v0.6.0)
-docs/contributing/MILESTONES.md	1105-1112	tests/m3_imported_calls.rs	91ce4d6a55e1	## M4 — Modules (v0.7.0) **Waits on**: C0. Split out of the old combined mile ...  are su3's type-alias rows, owned by M3) and the vacuous `12_modules_imports`.
+docs/contributing/MILESTONES.md	1046-1046	tests/m3_imported_calls.rs	f823ac7a9feb	## M3 — Traits and generics (v0.6.0)
+docs/contributing/MILESTONES.md	1106-1113	tests/m3_imported_calls.rs	91ce4d6a55e1	## M4 — Modules (v0.7.0) **Waits on**: C0. Split out of the old combined mile ...  are su3's type-alias rows, owned by M3) and the vacuous `12_modules_imports`.
 docs/marketing/Turing.md	67-67	docs/reference/features/advanced/totality-checking.md	1825edf6bd0c	By outlawing `unsafe` blocks inside `#![total(strict)]` crates, the language
 docs/marketing/avp_marketing.md	17-20	docs/reference/features/advanced/totality-checking.md	3bc1a629dd9b	#![total(strict)] // Turing's vision realized: Provable termination fn fibonacci(n: nat) -> nat { #[decreases(n)] // Compiler PROVES this terminates
 docs/specification/bootstrap-subset.md	132-132	src/typeck/mod.rs	22b89ce977e8	**Generics**: excluded from PBS-1. They monomorphize in limited cases, but generic-argument
@@ -67,9 +67,9 @@ scripts/conformance.sh	264-287	docs/contributing/MILESTONES.md	5efe57ef8845	code
 scripts/conformance.sh	346-346	docs/reference/features/feature-index.toml	a80165f0b5fd	if [ "$#" -gt 0 ]; then SCOPES=("$@"); else SCOPES=(tests examples); fi
 scripts/conformance.sh	346-346	docs/specification/language-spec.md	a80165f0b5fd	if [ "$#" -gt 0 ]; then SCOPES=("$@"); else SCOPES=(tests examples); fi
 scripts/conformance.sh	980-995	docs/contributing/MILESTONES.md	b655a40c8624	case "$class" in xfail) declared_phrase_match "$fp" "$log"; fp_match=$? ;; re ... else pin_verdict=UNREADABLE; diag_unreadable=$((diag_unreadable+1)) fi ;; esac
-scripts/requirements.py	217-217	docs/contributing/MILESTONES.md	63417ff80f2a	raise ManifestError("cannot read %s: %s" % (path, exc))
-scripts/requirements.py	525-525	docs/contributing/MILESTONES.md	9e6a84a57a77	w("\nNO_VERDICT: no row of %s is owned by %s. A filter whose subject "
-scripts/requirements.py	541-541	docs/contributing/MILESTONES.md	19094761412e	w("\nNO_VERDICT: every %s row is `satisfied`, but the steps listed above "
+scripts/requirements.py	220-220	docs/contributing/MILESTONES.md	63417ff80f2a	raise ManifestError("cannot read %s: %s" % (path, exc))
+scripts/requirements.py	528-528	docs/contributing/MILESTONES.md	9e6a84a57a77	w("\nNO_VERDICT: no row of %s is owned by %s. A filter whose subject "
+scripts/requirements.py	544-544	docs/contributing/MILESTONES.md	19094761412e	w("\nNO_VERDICT: every %s row is `satisfied`, but the steps listed above "
 scripts/stdlib-gate.sh	379-379	tests/d3b_tail_if.rs	42b7c4cd2314	known_violation:*)
 scripts/stdlib-gate.sh	379-381	tests/d3b_tail_if.rs	b6524cd3b834	known_violation:*) known_n=$((known_n+1)) want_fns=${cverdict#known_violation:}
 scripts/stdlib-gate.sh	389-391	tests/d3b_tail_if.rs	eb48c8400ce4	if [ "$cc_rc" -eq 0 ]; then note "XPASS: $drv is recorded known_violation:$wa ...  compiler defect is fixed; promote it to 'clean' in $DRIVER_MANIFEST" continue
@@ -424,7 +424,7 @@ src/typeck/mod.rs	744-748	docs/specification/language-spec.md	d9166315602a	crate
 stdlib/MANIFEST.tsv	1-1	docs/reference/features/feature-index.toml	a9011a68453c	# Pinned compile verdict for every .pd under stdlib/.
 tests/advanced_features_test.rs	340-340	docs/contributing/MILESTONES.md	9efc88caac80	#[ignore = "XFAIL: `macro_rules!` — grammar.ebnf:181 defines only `macro name ... ests/reject/macro_rules.pd. Retiring it is the owner's call, not this test's"]
 tests/compiler_comprehensive_test.rs	633-633	docs/contributing/MILESTONES.md	33e1b803ccb2	fn test_missing_return_is_an_error() {
-tests/conformance-manifest.txt	129-129	docs/contributing/MILESTONES.md	be3ef13e1247	tests/projects/hello_pdm/tests/test_math.pd xfail compile Undefined function: ... enerics. This is a correction against the ownership roster, not a reassignment
+tests/conformance-manifest.txt	129-129	docs/contributing/MILESTONES.md	a7538c654525	tests/projects/hello_pdm/tests/test_math.pd xfail compile Undefined function: ... enerics. This is a correction against the ownership roster, not a reassignment
 tests/e2e_test.rs	277-277	docs/contributing/MILESTONES.md	da9d5556e31e	fn test_c_keyword_identifier_still_links() {
 tests/e2e_test.rs	322-322	docs/contributing/MILESTONES.md	42427853e62c	fn test_tail_if_function_emits_a_return() {
 tests/m3_imported_calls.rs	1245-1249	docs/contributing/citation-and-predicate-debt.md	c6a8f8acac08	/// filter (`src/resolver/mod.rs:113` is the only hit in `src/`). Every consu ... / `register_imported_functions`. So `import lib2::{helper};` imports the whole

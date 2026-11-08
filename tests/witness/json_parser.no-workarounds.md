@@ -60,7 +60,7 @@ N4-24, N9-10 and N6-12 born `satisfied` for the three this witness already appli
 N14-18 born `owed` for the two it still works around — and the two bare `// WORKAROUND UNOWNED`
 markers name those two rows now. The live count stays three, the transcript is untouched, and WT-01
 moved from M2 to M8, because none of the three is M2's to pay (the arena waits on N14-09,
-M8). Moving a row is not paying it, and WT-01 is still `owed`.
+M8). The owner named M3 for it; the manifest header records why it landed on M8. Moving a row is not paying it, and WT-01 is still `owed`.
 
 ## The shape it would have
 
@@ -210,8 +210,8 @@ No string stands for more than one workaround now. Until 2026-11-08 one did, on 
 19 — distinguished by site and not by string. Issue #46 gave each gap a row, N14-18 and N4-25, and
 each marker names its own; the code did not change. It had a third site, row 4's node kinds, until the
 node-kind round; that marker is `DISCHARGED (was UNOWNED)` now, the one record whose parentheses
-keep a string that is still live elsewhere, which is why it is a line of its own here and not a
-third `UNOWNED`. The `UNOWNED (char pattern)` string that used to head this
+kept a string that was still live elsewhere until the ownership round, which is why it is a line of
+its own here and not a third `UNOWNED`. The `UNOWNED (char pattern)` string that used to head this
 list is gone: it was the opposite case, three sites over one gap, and the gap closed. So are
 `UNOWNED (codegen) + N9-01` and `UNAPPLIED (su2 removed the blocker; the rewrite is owed)`, the two
 cursor markers: each is a `DISCHARGED (was …)` record now, keeping the string it discharged inside
@@ -299,7 +299,8 @@ requirement filter cannot see until someone writes the program.
    implementation it is a NUL-terminated C `char*`, so `\u0000` is not representable — a
    conformance question for any parser of a format that permits it, decided by an implementation
    detail rather than by a row. **OWNED since 2026-11-08 by N4-25** (issue #46), born `owed`: a
-   `String` carries every byte value, U+0000 included. The marker at the site names it now.
+   `String` — a UTF-8 value (N12) — can contain U+0000. That is NUL inside UTF-8, not arbitrary
+   bytes. The marker at the site names it now.
 4. **A char literal is not a pattern, so no `match` in this parser can dispatch. — CLOSED as a
    capability, and OWNED by N6-12 since 2026-11-08.** The four rows this was filed under are all `satisfied` and
    all always measured so over an `i64` scrutinee: `match c { 1 => 10, _ => 20 }` in expression
@@ -427,12 +428,12 @@ compiler's gap, owned by N7-07 and owed by M5, and this witness is now where it 
 
 **`WT-01` stays `owed`.** The row's text in `docs/contributing/1.0-requirements.tsv` started as the
 `-` line below and was later made to carry the counts; the `+` line is the row as it stands, its
-counts re-truthed in the same change as this file at every census move — the cursor and
-node-kind rounds included:
+counts re-truthed in the same change as this file at every census move — the cursor, node-kind
+and ownership rounds included (the ownership round also moved it to M8):
 
 ```
 -WT-01	M2	N1	Witness 2 exists: a JSON parser written with no workarounds, in the corpus	fixture	tests/witness/json_parser.pd
-+WT-01	M2	N1	Witness 2 exists: a JSON parser written with no workarounds, in the corpus. THE FIXTURE EXISTS AND RUNS (tests/witness/json_parser.pd, class=run, transcript pinned); the row is owed on the words NO WORKAROUNDS, and the count is derivable rather than asserted: `grep -cE '^[[:space:]]*// WORKAROUND ' tests/witness/json_parser.pd` is 7, of which 3 are live workarounds and 4 are discharge records, and `grep -cE '^[[:space:]]*// WORKAROUND UNOWNED' tests/witness/json_parser.pd` is 2. Three distinct workarounds, one per live comment; exactly one (the arena) is owned outright. The char-pattern gap that used to account for three of them is closed and APPLIED, and the construct it now leans on is owned by no row here (issue #46). The two cursor workarounds are discharged too: the parser is methods on `&self`/`&mut self`, a spelling no row here names either. So is the node-kind workaround: the arena's kind column is an array of a user enum, `[Kind; 192]`, which N4-09's instance claim over `[i64; N]` and `[String; N]` does not cover and no row here names either. See tests/witness/json_parser.no-workarounds.md	fixture	tests/witness/json_parser.pd
++WT-01	M8	N1	Witness 2 exists: a JSON parser written with no workarounds, in the corpus. THE FIXTURE EXISTS AND RUNS (tests/witness/json_parser.pd, class=run, transcript pinned); the row is owed on the words NO WORKAROUNDS, and the count is derivable rather than asserted: `grep -cE '^[[:space:]]*// WORKAROUND ' tests/witness/json_parser.pd` is 7, of which 3 are live workarounds and 4 are discharge records, and `grep -cE '^[[:space:]]*// WORKAROUND UNOWNED' tests/witness/json_parser.pd` is 0. Three distinct workarounds, one per live comment, and every one is owned: the arena by N14-09 + N4-12 + N4-15, the NUL byte by N4-25 and the float<->text boundary by N14-18. The constructs the discharged workarounds now lean on are owned too: char patterns by N6-12, the `&` parameter spelling by N9-10, an array of a user enum by N4-24. All five of those rows were added 2026-11-08 from issue #46, when they were UNOWNED findings of this witness. MOVED M2 -> M8 ON 2026-11-08 (see the header): none of the three live workarounds is M2's to pay, and the move did not pay any of them. See tests/witness/json_parser.no-workarounds.md	fixture	tests/witness/json_parser.pd
 ```
 
 Evidence for leaving it `owed`, as two commands rather than as this paragraph:
@@ -459,8 +460,8 @@ stayed 7. Exactly one of the four workarounds that round left was owned outright
 **And again in the node-kind round, at `fafe870`.** The live count went 4 → 3 and the UNOWNED count
 3 → 2 when the kinds became an enum array: the bare `UNOWNED` marker at the node kinds became a
 `DISCHARGED (was UNOWNED)` record, which is again why the anchored total stayed 7. **Exactly one of
-the three surviving workarounds — the arena, `N14-09 + N4-12 + N4-15` — is owned outright; the other
-two are UNOWNED.** A roadmap filter that drives M2 to zero-owed therefore moves this witness by
+the three surviving workarounds — the arena, `N14-09 + N4-12 + N4-15` — was owned outright then; the
+other two were UNOWNED until the ownership round below.** A roadmap filter that drives M2 to zero-owed therefore moves this witness by
 nothing at all from here, which is what the row is for — and note that three capabilities it now
 leans on were owned by no row either: char patterns (issue #46), the `&self`/`&T` spelling (finding
 2), and an array of a user enum (finding 1).

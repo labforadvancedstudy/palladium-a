@@ -159,28 +159,38 @@
 # stays enumerated -- the point of this file is that nothing is dropped
 # silently, and a row that changes milestone has not been paid.
 #
-# FIVE ROWS WERE ADDED AND WT-01 MOVED M2 -> M8 ON 2026-11-08, by the owner's
-# decision on issue #46 and on M2's exit, and both are contract transitions.
+# FIVE ROWS WERE ADDED AND WT-01 MOVED M2 -> M8 ON 2026-11-08, and both are
+# contract transitions. THE DECISION, as it was actually made: the owner decided
+# issue #46 ("add the rows") and M2's exit ("retag WT-01"), and named M3 as the
+# destination, on the orchestrator's recommendation. That recommendation was wrong
+# on a fact found while applying it — the arena workaround waits on N14-09
+# (`Vec<T>`), which is M8's — and a correction question recommending M8 went
+# unanswered, so M8 was applied under the owner's standing rule to proceed on the
+# recommendation. If the owner prefers M3, M3 then has to own N14-09 and both new
+# owed rows too, or record that its exit waits on M8's.
 # THE ADDITIONS. The JSON witness found five things this inventory could not see,
 # because nothing here named them (tests/witness/json_parser.no-workarounds.md,
 # "The five UNOWNED findings"). Three were already closed as CAPABILITIES and
 # applied in the witness while owned by no row, so the inventory saw neither the
 # defect nor the fix; they are born `satisfied` against the evidence that already
 # runs, and are owned by M2 because M2 is where they were paid:
-#   N4-24  a user enum in every composite position (N4-09 is an instance claim
-#          over `[i64; N]` and `[String; N]` and did not reach it)
+#   N4-24  a user enum in every non-generic composite position, and a generic
+#          FUNCTION instantiated at one (N4-09 is an instance claim over
+#          `[i64; N]` and `[String; N]`; a generic TYPE at an enum stays N4-15's)
 #   N6-12  char literal patterns (N6-02 is integer, string, bool; N6-03 ranges)
 #   N9-10  the `&T` parameter spelling the compiler implements (N9's normative
 #          spelling is `ref T`, M7's, a different row)
 # Two are not closed, and they are the two live workarounds the witness still
-# marks as owned by nobody; they are born `owed`, owned by M8:
-#   N4-25  a `String` carries every byte value, U+0000 included (N4-05 is one
-#          word; the implementation is a NUL-terminated `char*`)
+# marked as owned by nobody; they are born `owed`, owned by M8:
+#   N4-25  a `String` can contain U+0000 — NUL inside UTF-8 (N12), not arbitrary
+#          bytes (N4-05 is one word; the implementation is a NUL-terminated
+#          `char*`)
 #   N14-18 a float crosses the text boundary in both directions (N4-02 owns the
 #          type; N14-01's closed set of 34 names holds neither builtin, so
 #          paying this row amends N14-01's count in the same change)
 # Each one's wording names the general claim, so that an instance claim beside it
-# cannot shadow it again, which is how all five went unseen.
+# cannot shadow it again, which is how all five went unseen — and each says what it
+# does NOT claim where its evidence stops short of the general case.
 # THE MOVE. WT-01 was M2's last owed row. What stands between the witness and NO
 # WORKAROUNDS is three live markers, and none is M2's to pay: the arena waits on
 # N14-09 (`Vec<T>`, M8) and N4-15 (named generic types, M3), beside N4-12 (tuples,
@@ -252,8 +262,8 @@ N4-20	-	N4	Local type inference needs no annotation on let	fixture	examples/tuto
 N4-21	M3	N4	Const generics are evaluated at compile time and monomorphised	fixture	tests/08_const_generics.pd	owed	1.0	-
 N4-22	M2	N4	An `enum` whose payload names its own enum is a type -- it is laid out, built, taken apart by `match` and read back. N3 makes enums the sum type and N8's termination rule speaks of structural recursion on an inductive type, so an enum that cannot name itself leaves both without a subject. The recursive payload slot becomes a pointer; that is the compiler's ONE indirection and the row claims nothing wider. An INSTANCE claim, as every `satisfied` row here is: the witness is concrete and non-generic, because generic definitions are skipped by the analysis and `type_to_c` still erases their parameters	observable	tests/m2_recursive_data_types.rs::a_recursive_enum_compiles_links_and_runs	satisfied	1.0	-
 N4-23	M2	N4	A by-value containment cycle with no such slot on it is refused BEFORE any C exists, and the refusal does not overstate its own reach. EXCLUDED ON PURPOSE, stated here so the exclusion outlives the limitation that currently hides it: a cycle broken only by a ZERO-LENGTH array (`struct Z { xs: [Z; 0] }`) is refused too, even though it stores no `Z` and therefore HAS a finite size. Two measured reasons -- `struct Z xs[0];` is an array of an incomplete element type, which cc refuses outright, and `[T; 0]` is uninhabited here because the empty array literal is refused. The wording is deliberately not `only an enum can stop a cycle`: cardinality can, and a requirement phrased on that theorem would certify more than the compiler delivers	reject	tests/reject/zero_length_array_self_reference.pd	satisfied	1.0	the refusal is a deliberate exclusion (requirement N4-23)
-N4-24	M2	N4	A user `enum` is a type in every composite position: `[E; N]` in both the repeat and the literal spelling, as a local, a parameter, a reference parameter, a struct field and nested; `(E, T)`; `&E`; a method signature; a generic instantiation. ADDED 2026-11-08 FROM ISSUE #46. N4-09 is an instance claim over `[i64; N]` and `[String; N]` and does not reach a user enum, so nothing owned this until it was added; until WT-01 unit W2a every position above was refused with ONE type named on both sides, `Type mismatch: expected [K; 4], found [K; 4]`	fixture	tests/regression/enum_in_composites.pd	satisfied	1.0	-
-N4-25	M8	N4	A `String` carries every byte value, U+0000 included: a string literal, an escape and every builtin that builds a `String` can produce one, and `string_len` counts it. ADDED 2026-11-08 FROM ISSUE #46. N4-05 is the one word `String` and is `satisfied`; the implementation is a NUL-terminated C `char*` (`__pd_string_from_char` writes `result[1] = '\0'`), so the byte is lost by an implementation detail rather than by a row, and the JSON witness has to refuse `\u0000` (WT-01)	fixture	tests/02_types_string_nul.pd	owed	1.0	-
+N4-24	M2	N4	A user `enum` is a type in every NON-GENERIC composite position, and a generic FUNCTION may be instantiated at it: `[E; N]` in both the repeat and the literal spelling, as a local, a parameter, a reference parameter, a struct field and nested; `(E, T)`; `&E`; a method signature; `id<T>(t: T)` called with an `E`. ADDED 2026-11-08 FROM ISSUE #46. N4-09 is an instance claim over `[i64; N]` and `[String; N]` and does not reach a user enum, so nothing owned this until it was added; until WT-01 unit W2a every position above was refused with ONE type named on both sides, `Type mismatch: expected [K; 4], found [K; 4]`. NOT CLAIMED HERE: a generic TYPE instantiated at an enum (`Wrap<E>` with `struct Wrap<T>`) — that is N4-15's (M3, `owed`), and it fails for `Wrap<i64>` as well, so it is not an enum gap	fixture	tests/regression/enum_in_composites.pd	satisfied	1.0	-
+N4-25	M8	N4	A `String` — a UTF-8 value (N12) — can contain U+0000: `string_from_char` given the char 0 returns a one-character `String`, `string_concat` and `string_substring` keep that character where it is, and `string_len` counts it. ADDED 2026-11-08 FROM ISSUE #46. This is NUL support inside UTF-8, not arbitrary bytes: a value N12 does not allow (a lone `0xFF`) stays outside it. N4-05 is the one word `String` and is `satisfied`; the implementation is a NUL-terminated C `char*` (`__pd_string_from_char` writes `result[1] = '\0'`), so the character is lost by an implementation detail rather than by a row, and the JSON witness has to refuse `\u0000` (WT-01)	fixture	tests/02_types_string_nul.pd	owed	1.0	-
 
 # --- N5 Statements and expressions -------------------------------------------
 N5-01	-	N5	let, assignment, return, break, continue, expression statements	fixture	examples/tutorial/05_control_flow.pd	satisfied	1.0	-
@@ -331,7 +341,7 @@ N9-06	M7	N9	Inference failure is a compile error NAMING the ambiguity, never a g
 N9-07	M7	N9	Use after free is rejected	reject	tests/reject/use_after_free.pd	owed	1.0	-
 N9-08	M7	N9	Two aliasing ref mut are rejected	reject	tests/reject/aliasing_ref_mut.pd	owed	1.0	-
 N9-09	M7	N9	Borrow checking costs nothing at run time	observable	tests/n9_regions.rs::generated_c_carries_no_region_data	owed	1.0	-
-N9-10	M2	N9	A `&T` parameter is passed by address and forwards to another `&T` parameter as the pointer it already is, through compile, link and run. `&T` is the reference spelling the compiler IMPLEMENTS; N9's normative spelling is `ref T`, which is N9-01's and M7's and a different row. ADDED 2026-11-08 FROM ISSUE #46. Until su2 the call site took the address of the pointer and gcc refused the C, and because no row named the `&` spelling no inventory saw either the defect or its fix	observable	tests/linker_diagnostics.rs::forwarding_a_shared_reference_compiles_links_and_runs	satisfied	1.0	-
+N9-10	M2	N9	A `&T` parameter is passed by address and forwards to another `&T` parameter as the pointer it already is, through compile, link and run. `&T` is the reference spelling the compiler IMPLEMENTS; N9's normative spelling is `ref T`, which is N9-01's and M7's and a different row. ADDED 2026-11-08 FROM ISSUE #46. Until su2 the call site DEREFERENCED the pointer — `outer` forwarding its `&String` to `inner` emitted `inner((*s))`, a value where a pointer was declared — and gcc refused the C; because no row named the `&` spelling, no inventory saw either the defect or its fix	observable	tests/linker_diagnostics.rs::forwarding_a_shared_reference_compiles_links_and_runs	satisfied	1.0	-
 
 # --- N10 Traits and generics ----------------------------------------------------
 N10-01	M3	N10	A generic function is monomorphised per concrete argument	fixture	tests/08_generics_basic.pd	owed	1.0	-

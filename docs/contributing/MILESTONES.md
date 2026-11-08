@@ -795,11 +795,12 @@ enum-owned method is unreachable by its path form. Each row carries a
    `char` type and belongs to item 4; nothing about the six builtins bears on it. Corrected rather
    than quietly dropped.)*
 7. **Witness 1** (WT-01): a JSON parser written with no workarounds, added to the corpus. It becomes
-   the thesis gate's second witness at M9. **MOVED M2 -> M8 ON 2026-11-08, by the owner's
-   decision, and NOT PAID.** The parser runs and is in the corpus; what keeps the row `owed` is three
+   the thesis gate's second witness at M9. **MOVED M2 -> M8 ON 2026-11-08, and NOT PAID.** The
+   owner decided the move and named M3; M8 is where it landed after N14-09 (M8) was found on the
+   arena's path and the correction question went unanswered — the manifest header records how. The parser runs and is in the corpus; what keeps the row `owed` is three
    live workarounds, and none of them is M2's: the arena waits on `Vec<T>` (N14-09, M8) and on named
-   generic types (N4-15, M3), and the other two — a `String` that carries U+0000 and a float that
-   crosses the text boundary — are N4-25 and N14-18, rows added the same day from issue #46, owned
+   generic types (N4-15, M3), and the other two — a `String` that can contain U+0000 and a float
+   that crosses the text boundary — are N4-25 and N14-18, rows added the same day from issue #46, owned
    by M8. Every construct the witness could apply inside M2 it did apply: the char patterns,
    the `&self` receivers and the enum array were each landed and then written into the parser,
    transcript byte-identical each time (`tests/witness/json_parser.no-workarounds.md`). Issue #46
@@ -839,7 +840,7 @@ enum-owned method is unreachable by its path form. Each row carries a
    says nothing about M1. Closing GI-08 means deciding what a milestone with no rows means, which
    is a question rather than a line of Make.")*
    **The question was already answered by the reader's own vocabulary, and the residual had asked
-   the wrong one.** `scripts/requirements.py:525` prints, for a zero-row filter, "no row of
+   the wrong one.** `scripts/requirements.py:528` prints, for a zero-row filter, "no row of
    docs/contributing/1.0-requirements.tsv is owned by M1. A filter whose subject matches nothing
    clears everything, so this is refused rather than reported as 'nothing owed'" — an abstention
    with a NAME. So the decision was never "what does a milestone with no rows mean"; it was
@@ -862,9 +863,9 @@ enum-owned method is unreachable by its path form. Each row carries a
    **The wiring, which is the whole of the change:** rc=1 (OWED) reddens `m1-exit`; rc=2 carrying
    that sentence **for M1** does not, and the sentence is REPRINTED under a heading saying what was
    done with it; rc=2 of any **other** shape fails closed. There are three such shapes and only one
-   is tolerable — the other two are an unreadable manifest (`scripts/requirements.py:217`, printed
+   is tolerable — the other two are an unreadable manifest (`scripts/requirements.py:220`, printed
    on stderr as "cannot read …") and "every M1 row is `satisfied`, but the steps listed above did
-   not run" (`scripts/requirements.py:541`), which is an abstention about EVIDENCE and would be the M1 defect again in a
+   not run" (`scripts/requirements.py:544`), which is an abstention about EVIDENCE and would be the M1 defect again in a
    new inventory. **A tolerance is a hole unless its edges are tested**, so
    `scripts/m1-exit.sh --self-test` regenerates all three shapes LIVE from that reader rather than
    pasting its sentences, and adds the two controls that matter: an rc=1 run whose text happens to
@@ -1194,8 +1195,9 @@ needs it, which is why it sits here rather than at the front.
 **Owns 18 requirement rows.** What the library needs, as features rather than as compile errors:
 generic ADTs with bounds (M3), associated types for an iterator protocol (M3), drop glue and moves
 so a `Vec<T>` can own its buffer (M7), modules (M4). *(It owned 15 until 2026-11-08, when three
-arrived together by the owner's decision on issue #46 and M2's exit: WT-01 from M2 — retagged and
-still `owed`, item 4 below — and N4-25 and N14-18, which #46 added `owed`.)*
+arrived together from the owner's decisions on issue #46 and M2's exit: WT-01 from M2 — retagged
+and still `owed`, item 4 below; the owner named M3, and the manifest header records why it is M8 —
+and N4-25 and N14-18, which #46 added `owed`.)*
 
 `make stdlib-gate`'s per-file blocker column is **a lower bound and not that dependency list** — the
 manifest says so itself: the blocker is the *first* construct `pdc` rejects, and a lexer-level
@@ -1216,7 +1218,7 @@ claim that this is the earliest correct start.
 4. **Witness 1 with no workarounds** (WT-01), and the two rows its last workarounds wait on.
    `tests/witness/json_parser.pd` runs in the corpus and still works around three things, each
    marked at its site: the arena, which wants `Vec<Json>` (N14-09, item 1 above, and N4-15 from M3);
-   a `String` that cannot carry U+0000 (**N4-25**); and a float that cannot cross the text boundary
+   a `String` that cannot contain U+0000 (**N4-25** — NUL inside UTF-8, not arbitrary bytes); and a float that cannot cross the text boundary
    in either direction (**N14-18** — paying it amends N14-01's closed count of 34 builtins in the
    same change). WT-01 was M2's item 7 and moved here on 2026-11-08 because this is the last
    milestone any of the three waits on. It is paid when the census in
