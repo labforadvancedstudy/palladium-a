@@ -4482,39 +4482,39 @@ impl TypeChecker {
                         }
                     }
 
-                    // Track this instantiation for code generation (an Enum argument was "Unknown")
+                    // Track this instantiation for code generation (an Enum argument was "Unknown"),
+                    // each argument by the alias its value is carried by where a generic FUNCTION's
+                    // argument is (`struct_type_argument`, `carrier`; review round 9). Spelled from
+                    // this checker's type alone, a value of `type A = &i64` given to `struct G<X, Y>
+                    // { tag: X, p: Y }` as `G { tag: 1, p: s.get() }` was recorded as `G<i64, i64>`
+                    // and its `p` declared `long long` for a pointer, and one of `type A = (i64,
+                    // i64)` as `G<i64, ?>`: gcc, where main recorded `G<i64, A>` and printed it.
                     let type_arg_strings: Vec<String> = inferred_args
                         .iter()
-                        .map(|ct| {
-                            match ct {
-                                CheckerType::Int(_) => "i64".to_string(),
-                                CheckerType::Bool(_) => "bool".to_string(),
-                                CheckerType::String(_) => "String".to_string(),
-                                CheckerType::Struct(n, _) | CheckerType::Enum(n, _) => n.clone(),
-                                CheckerType::Generic { name, args } => {
-                                    // Handle nested generics like Box<Box<Int>>
-                                    let arg_strs: Vec<String> = args
-                                        .iter()
-                                        .map(|a| match a {
-                                            GenericArgValue::Type(t) => match t {
-                                                CheckerType::Int(_) => "i64".to_string(),
-                                                CheckerType::Bool(_) => "bool".to_string(),
-                                                CheckerType::String(_) => "String".to_string(),
-                                                CheckerType::Struct(n, _) => n.clone(),
-                                                // An enum was "Unknown" here too.
-                                                CheckerType::Enum(n, _) => n.clone(),
-                                                _ => UNNAMED_TYPE_ARGUMENT.to_string(),
-                                            },
-                                            GenericArgValue::Const(c) => match c {
-                                                ConstValueResolved::Integer(n) => n.to_string(),
-                                                ConstValueResolved::ConstParam(n) => n.clone(),
-                                            },
-                                        })
-                                        .collect();
-                                    format!("{}<{}>", name, arg_strs.join(", "))
-                                }
-                                _ => UNNAMED_TYPE_ARGUMENT.to_string(),
+                        .map(|ct| match ct {
+                            CheckerType::Generic { name, args } => {
+                                let arg_strs: Vec<String> = args
+                                    .iter()
+                                    .map(|a| match a {
+                                        GenericArgValue::Type(t) => match t {
+                                            // Handle nested generics like Box<Box<Int>>, one level
+                                            // down: a generic there is the placeholder, as before.
+                                            CheckerType::Generic { .. } => {
+                                                UNNAMED_TYPE_ARGUMENT.to_string()
+                                            }
+                                            _ => self.struct_type_argument(t),
+                                        },
+                                        GenericArgValue::Const(c) => match c {
+                                            ConstValueResolved::Integer(n) => n.to_string(),
+                                            ConstValueResolved::ConstParam(n) => n.clone(),
+                                        },
+                                    })
+                                    .collect();
+                                format!("{}<{}>", name, arg_strs.join(", "))
                             }
+                            // Anything else is spelled as it is (`i64`, `bool`, `String`, a struct's or
+                            // an enum's name) unless an alias carries it: `let r: N = 7` is `G<i64>`.
+                            _ => self.struct_type_argument(ct),
                         })
                         .collect();
 
@@ -7450,18 +7450,51 @@ impl TypeChecker {
     /// generic met the same instantiation.
     fn type_argument_of(&self, expr: &Expr) -> Result<String> {
         if let Expr::Ident(name) = expr {
-            if let Some(ty) = self.symbols.lookup(name).map(|v| &v.ty) {
-                if let Some(alias) = ty.declared_as() {
-                    let carried = matches!(ty, CheckerType::Tuple(..))
-                        || self.alias_is_reference(alias)
-                        || (ty.declared_by_name() && self.spelled_lossily(alias));
-                    if carried {
-                        return Ok(alias.to_string());
-                    }
-                }
+            if let Some(alias) = self.symbols.lookup(name).and_then(|v| self.carrier(&v.ty)) {
+                return Ok(alias.to_string());
             }
         }
         self.infer_expr_type(expr)
+    }
+
+    /// The alias a value of type `ty` is carried to a generic by, as its type
+    /// argument — the alias it was DECLARED as (`DeclaredAs`), where it is a
+    /// tuple, a reference alias's value, or a value main typed by the alias's
+    /// NAME that this checker spells lossily (`spelled_lossily`) — or `None`:
+    /// it is spelled as the type it is. ONE rule for a generic function's
+    /// argument (`type_argument_of`) and a generic struct's
+    /// (`struct_type_argument`, review round 9).
+    fn carrier<'t>(&self, ty: &'t CheckerType) -> Option<&'t str> {
+        let alias = ty.declared_as()?;
+        let carried = matches!(ty, CheckerType::Tuple(..))
+            || self.alias_is_reference(alias)
+            || (ty.declared_by_name() && self.spelled_lossily(alias));
+        carried.then_some(alias)
+    }
+
+    /// The type argument a generic struct's literal records for `ty`, the
+    /// type one of its parameters was inferred as (a generic's arguments are
+    /// recorded at the literal, one level down by this): the alias the value
+    /// is carried by (`carrier`), or the name this checker spells the type by
+    /// — `i64` for every integer, `bool`, `String`, a struct's or an enum's
+    /// name — or, for anything else, `UNNAMED_TYPE_ARGUMENT`, which code
+    /// generation refuses by name.
+    ///
+    /// Spelled without the carrier, a value of `type A = &i64` given to
+    /// `struct G<X, Y> { tag: X, p: Y }` was recorded as `i64` and initialised
+    /// a `long long` field from a pointer, and one of `type A = (i64, i64)` as
+    /// the placeholder — gcc, where main recorded `A` and ran (review round 9).
+    fn struct_type_argument(&self, ty: &CheckerType) -> String {
+        if let Some(alias) = self.carrier(ty) {
+            return alias.to_string();
+        }
+        match ty {
+            CheckerType::Int(_) => "i64".to_string(),
+            CheckerType::Bool(_) => "bool".to_string(),
+            CheckerType::String(_) => "String".to_string(),
+            CheckerType::Struct(n, _) | CheckerType::Enum(n, _) => n.clone(),
+            _ => UNNAMED_TYPE_ARGUMENT.to_string(),
+        }
     }
 
     /// Does this checker spell a value of the alias `name` as a type argument

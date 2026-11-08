@@ -571,36 +571,36 @@ impl CodeGenerator {
             Expr::String(_) => Some("const char*".to_string()),
             Expr::Bool(_) => Some("int".to_string()),
             Expr::StructLiteral { name, fields, .. } => {
-                // Check if this is a generic struct instantiation
-                if let Some(instantiations) = self.generic_struct_instantiation_map.get(name) {
-                    // Need to determine which instantiation to use based on field types
-                    // For now, we'll infer from the first field's type
-                    if let Some((_, field_expr)) = fields.first() {
-                        let field_type = match field_expr {
-                            Expr::Integer(_) | Expr::Char(_) => "long long",
-                            Expr::Float(_) => "double",
-                            Expr::String(_) => "const char*",
-                            Expr::Bool(_) => "int",
-                            _ => "long long",
-                        };
-
-                        // Find the matching instantiation
-                        for (type_args, mangled_name) in instantiations {
-                            // Simple heuristic: check if any type arg matches the field type
-                            for type_arg in type_args {
-                                if (type_arg == "i64" && field_type.contains("long long"))
-                                    || (type_arg == "bool" && field_type == "int")
-                                    || (type_arg == "String" && field_type.contains("char*"))
-                                {
-                                    return Some(format!("struct {}", mangled_name));
-                                }
-                            }
-                        }
-                    }
-                    Some(format!("struct {}", name))
-                } else {
-                    Some(format!("struct {}", name))
-                }
+                // A generic struct's literal is of the instantiation its values' C
+                // types pick (`literal_instantiation`), by the rule the emitter follows
+                // for the literal itself, so a `let` it initialises is declared as the
+                // struct the emitter builds.
+                //
+                // This asked the C type of the first field's SPELLING — a literal's
+                // own, and `long long` for every other expression — and matched it
+                // against ANY argument of each recorded instantiation by substring,
+                // where the emitter asked the type inferred for the value. Under `type
+                // A = &i64`, `let gg = G { tag: 1, p: a }` was declared as the first
+                // instantiation with an `i64` argument, whatever `p`'s was, and a
+                // pointer matched an `i64` argument too (review round 9).
+                //
+                // A value this pass cannot type rules no instantiation out. Failing an
+                // exact one, the literal is of the first the old rule matched by its
+                // first field, where every field holds its value as C converts it — an
+                // integer of one width into another, as the record keeps no width
+                // (`StructInstantiation`) — and never a pointer into a scalar.
+                //
+                // The instantiations are recorded by the type checker, one per list of
+                // type arguments, and emitted before any body (`generate_struct` keeps
+                // each one's fields in `structs`), so every literal in a body is matched
+                // against all of them.
+                let Some(mangled) = self.literal_instantiation(name, fields, locals) else {
+                    // A non-generic struct's literal is of the struct; a generic one no
+                    // recorded instantiation holds keeps the struct's own name here, and
+                    // the emitter refuses it by name (`instantiation_matched`).
+                    return Some(format!("struct {}", name));
+                };
+                Some(format!("struct {}", mangled))
             }
             // Every binder (let, parameter, for-loop variable, match binding)
             // records its C type in `self.variables`, so a name we cannot find
@@ -6346,39 +6346,39 @@ impl CodeGenerator {
             }
             Expr::StructLiteral { name, fields, .. } => {
                 // Generate struct literal: (StructName){.field1 = value1, .field2 = value2}
-                // Check if this is a generic struct instantiation
-                let struct_name =
-                    if let Some(instantiations) = self.generic_struct_instantiation_map.get(name) {
-                        // Need to determine which instantiation to use based on field types
-                        // For now, we'll infer from the first field's type
-                        if let Some((_field_name, field_expr)) = fields.first() {
-                            let field_type = self.infer_expr_type(field_expr);
-
-                            // Find the matching instantiation
-                            let mut found_name = None;
-                            for (type_args, mangled_name) in instantiations {
-                                // Simple heuristic: check if any type arg matches the field type
-                                for type_arg in type_args {
-                                    if (type_arg == "i64" && field_type.contains("long long"))
-                                        || (type_arg == "bool" && field_type == "int")
-                                        || (type_arg == "String" && field_type.contains("char*"))
-                                    {
-                                        found_name = Some(mangled_name.as_str());
-                                        break;
-                                    }
-                                }
-                                if found_name.is_some() {
-                                    break;
-                                }
-                            }
-                            Self::instantiation_matched(name, found_name, instantiations)?
-                        } else {
-                            name.as_str()
-                        }
-                    } else {
-                        // Use the original name for non-generic structs
-                        name.as_str()
-                    };
+                //
+                // A generic struct's literal is of the instantiation its values' C types
+                // pick (`literal_instantiation`), the rule the declaration of a `let` it
+                // initialises follows too (`try_infer_expr_type_in`), so the two agree;
+                // a literal no recorded instantiation holds is refused by name
+                // (`instantiation_matched`) rather than emitted.
+                //
+                // It picked the first instantiation with ANY argument matching the C type
+                // of the FIRST field, by substring: `"long long*".contains("long long")`,
+                // so a pointer chose an `i64` instantiation and initialised a `long long`
+                // field from it (review round 9), and `G { tag: 1, p: a }` chose by `tag`
+                // alone between `G<i64, A>` and `G<i64, i64>`, whichever sorted first.
+                // Under `type A = &i64` the type checker now records `A` for a value of
+                // it (`struct_type_argument`), so the instantiation is `G_i64_A`, whose
+                // `p` is a `long long*`, and it is the one this literal holds. A plain
+                // `&i64` is still recorded as `i64` (the type checker reads a reference
+                // as its referent), and is now refused here, where it was emitted into
+                // a `long long` field and refused by gcc (`G { v: &m }`, on main and on
+                // 6c793f0).
+                //
+                // A literal of a generic struct always has a field: every type parameter
+                // is inferred from one, and the type checker refuses an uninferred one, so
+                // `literal_instantiation` always has a value to match.
+                let struct_name = if let Some(instantiations) =
+                    self.generic_struct_instantiation_map.get(name)
+                {
+                    let found =
+                        self.literal_instantiation(name, fields, &std::collections::HashMap::new());
+                    Self::instantiation_matched(name, found.as_deref(), instantiations)?.to_string()
+                } else {
+                    // Use the original name for non-generic structs
+                    name.clone()
+                };
 
                 self.output.push_str(&format!("(struct {})", struct_name));
                 self.output.push('{');
@@ -6965,6 +6965,135 @@ impl CodeGenerator {
     /// unannotated `let g = G { v: s }` over a `String` or `bool` VARIABLE
     /// still declares `struct G g`; and an annotated `let g: G<i64>` is
     /// lowered as `void*` (#74). Both still reach gcc.
+    /// The instantiation of the generic struct `name` a literal of it with
+    /// these `fields` builds — or `None`: `name` is not a generic struct, or
+    /// no instantiation the type checker recorded holds these values.
+    ///
+    /// Each recorded instantiation is a struct whose fields have C types
+    /// (`generate_struct` keeps them in `structs`), and the literal's values
+    /// for the fields written with a type parameter have C types where this
+    /// pass can say what they are (a field written without one is the same in
+    /// every instantiation, and tells none apart). The literal is of the first
+    /// instantiation every such value is EXACTLY the field of — so under `type
+    /// A = &i64`, `G { tag: 1, p: a }` is of `G<i64, A>`, whose `p` is a
+    /// `long long*`, and `P2 { x: a, y: b }` of `P2<A>`.
+    ///
+    /// Failing that, as before: the first instantiation with an argument
+    /// matching the first field's C type — `i64` for a `long long` (signed or
+    /// not), `bool` for an `int`, `String` for a `char*` — as the record keeps
+    /// no integer width (an integer carried by no alias is recorded as `i64`).
+    /// But only one whose every such field holds its value as C converts it,
+    /// an integer of one width into another: the first field was matched by
+    /// substring, so `"long long*".contains("long long")` chose an `i64`
+    /// instantiation for a pointer, a `long long` field was initialised from
+    /// it, and gcc refused the program (review round 9) — a value no
+    /// instantiation holds is refused by name instead.
+    fn literal_instantiation(
+        &self,
+        name: &str,
+        fields: &[(String, Expr)],
+        locals: &std::collections::HashMap<String, String>,
+    ) -> Option<String> {
+        // An instantiation the type checker recorded with the placeholder for an
+        // argument it could not name is no struct C can declare (`G_i64_?`): no
+        // literal is of it, and one that would be is refused by name.
+        let instantiations: Vec<&(Vec<String>, String)> = self
+            .generic_struct_instantiation_map
+            .get(name)?
+            .iter()
+            .filter(|(args, _)| {
+                !args
+                    .iter()
+                    .any(|arg| arg.contains(crate::typeck::UNNAMED_TYPE_ARGUMENT))
+            })
+            .collect();
+        let (_, _, template) = self
+            .generic_struct_instantiations
+            .iter()
+            .find(|(generic, _, _)| generic == name)?;
+        let values: Vec<(&String, String)> = fields
+            .iter()
+            .filter(|(field, _)| {
+                template.fields.iter().any(|(written, ty)| {
+                    written == field && Self::names_a_type_parameter(ty, &template.type_params)
+                })
+            })
+            .filter_map(|(field, value)| Some((field, self.try_infer_expr_type_in(value, locals)?)))
+            .collect();
+        let field_type = |mangled: &String, field: &String| {
+            let layout = self.structs.get(mangled)?;
+            let (_, ty) = layout.iter().find(|(f, _)| f == field)?;
+            Some(self.type_to_c(ty))
+        };
+        let exactly = |mangled: &String| {
+            values.iter().all(|(field, value)| {
+                field_type(mangled, field).is_some_and(|c| Self::same_c_type(&c, value))
+            })
+        };
+        if !values.is_empty() {
+            if let Some((_, mangled)) = instantiations.iter().find(|(_, m)| exactly(m)) {
+                return Some(mangled.clone());
+            }
+        }
+        let converts = |mangled: &String| {
+            values.iter().all(|(field, value)| {
+                field_type(mangled, field).is_some_and(|c| {
+                    Self::same_c_type(&c, value)
+                        || (Self::is_c_integer(value) && Self::is_c_integer(&c))
+                })
+            })
+        };
+        let (_, first) = fields.first()?;
+        let first = self
+            .try_infer_expr_type_in(first, locals)
+            .unwrap_or_else(|| "long long".to_string());
+        instantiations
+            .iter()
+            .find(|(args, mangled)| {
+                converts(mangled)
+                    && args.iter().any(|arg| {
+                        (arg == "i64" && first.contains("long long") && !first.contains('*'))
+                            || (arg == "bool" && first == "int")
+                            || (arg == "String" && first.contains("char*"))
+                    })
+            })
+            .map(|(_, mangled)| mangled.clone())
+    }
+
+    /// Does the written type `ty` name one of `params` at some depth?
+    fn names_a_type_parameter(ty: &Type, params: &[String]) -> bool {
+        match ty {
+            Type::TypeParam(name) | Type::Custom(name) => params.contains(name),
+            Type::Array(inner, _) | Type::Reference { inner, .. } => {
+                Self::names_a_type_parameter(inner, params)
+            }
+            Type::Tuple(types) => types
+                .iter()
+                .any(|t| Self::names_a_type_parameter(t, params)),
+            Type::Generic { args, .. } => args.iter().any(
+                |arg| matches!(arg, GenericArg::Type(t) if Self::names_a_type_parameter(t, params)),
+            ),
+            _ => false,
+        }
+    }
+
+    /// Do two C types this pass spells name one type? A struct's or an enum's
+    /// is spelled with its tag (`struct P`, as `type_to_c` writes a field) or
+    /// without it (`P`, as a parameter of it is recorded), and both name the
+    /// typedef `generate_struct` / `generate_enum` emit.
+    fn same_c_type(a: &str, b: &str) -> bool {
+        a == b || a.strip_prefix("struct ") == Some(b) || b.strip_prefix("struct ") == Some(a)
+    }
+
+    /// Is `c_type` an integer C type, which C converts to any other integer
+    /// type a field may have — never a pointer, a struct or a float?
+    fn is_c_integer(c_type: &str) -> bool {
+        matches!(
+            c_type,
+            "long long" | "unsigned long long" | "int" | "unsigned int"
+        )
+    }
+
     fn instantiation_matched<'m>(
         name: &str,
         found: Option<&'m str>,
@@ -7017,9 +7146,11 @@ impl CodeGenerator {
             CompileError::CodegenError {
                 message: format!(
                     "`{} {{ .. }}` is a literal of the generic struct `{}`, and code generation \
-                     picks a literal's instantiation from the C type of its first field, which \
-                     it can match only to an `i64`, `bool` or `String` argument; it matched \
-                     none here.{} Write a non-generic struct for this argument",
+                     picks a literal's instantiation by the C types of its values: one whose \
+                     fields of a type parameter they are exactly, or else one with an `i64`, \
+                     `bool` or `String` argument matching its first field's, whose fields take \
+                     the values as C converts them; none holds these values.{} Write a \
+                     non-generic struct for this argument",
                     name, name, record
                 ),
             }

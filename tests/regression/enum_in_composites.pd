@@ -211,6 +211,24 @@ fn lnot<U>(u: U) -> i64 {
     return ~u;
 }
 
+// Review round 9: a generic struct's type argument is carried by the alias,
+// as a generic function's is (one struct per alias, so each literal has one
+// instantiation to be of).
+struct Tagged<X, Y> {
+    tag: X,
+    p: Y,
+}
+
+struct Paired<X, Y> {
+    tag: X,
+    p: Y,
+}
+
+struct Narrow<X, Y> {
+    tag: X,
+    p: Y,
+}
+
 fn main() {
     // Both literal forms against an annotation.
     let xs: [K; 4] = [K::B; 4];
@@ -350,4 +368,16 @@ fn main() {
     print_int(rnot(rif));
     print_int(lnot(lw));
     print_int(lnot(la));
+
+    // A generic struct's type argument is the alias its value is carried by.
+    let tr = Tagged { tag: 1, p: ra };
+    let tp = Paired { tag: 2, p: pmake(5) };
+    let tn = Narrow { tag: 3, p: seat.wn() };
+    let tr1 = tr.p;
+    let tp1 = tp.p;
+    let tn1 = tn.p;
+    print("\nGeneric struct, alias argument:");
+    print_int(rnot(tr1));
+    print_int(pfirst(tp1));
+    print_int(wnot(tn1));
 }
