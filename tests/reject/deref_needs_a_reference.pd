@@ -1,0 +1,19 @@
+// `*x` over a parameter WRITTEN `&mut i64` is refused BY NAME: there is nothing
+// to dereference, because the parameter is already read as its referent.
+//
+// Code generation reads a `&T` parameter as `(*x)` wherever the body names it,
+// and the type checker typed `*e` as `e` ("assume dereference returns the same
+// type / TODO"). So `*x` emitted `(*((*x)))` — two indirections through one
+// pointer. MEASURED on d5166e8 before this refusal: "gcc compilation failed",
+// for this program and for `*m` over a plain `i64` alike. The receiver's own
+// form of the same mistake, `*self`, is PD0050. Naming the parameter (`x`)
+// reads the value.
+fn bump(x: &mut i64) {
+    *x = *x + 1;
+}
+
+fn main() {
+    let mut m: i64 = 5;
+    bump(&mut m);
+    print_int(m);
+}

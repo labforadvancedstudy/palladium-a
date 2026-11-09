@@ -1,0 +1,14 @@
+// #90, THE WIDTH SHAPE, alias-free. A pointer to a 64-bit value is declared as a
+// pointer to a 32-bit one, and it is refused BY NAME.
+//
+// The type checker has ONE `Int` for every width (#82) and read a written `&T`
+// as `T`, so `&u32` and `&i64` were one type here and `unsigned int *` and
+// `long long *` in C. MEASURED on d5166e8 before this refusal: "internal
+// compiler error: the C backend emitted ill-typed C". The referent of a
+// reference is now compared as the source spells it, wherever both sides say:
+// `m` is an `i64` because its initialiser is an integer literal.
+fn main() {
+    let m = 4294967297;
+    let v: &u32 = &m;
+    print_int(*v);
+}

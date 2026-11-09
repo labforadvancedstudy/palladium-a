@@ -1,0 +1,19 @@
+// A reference held in a binding, handed to a parameter WRITTEN `&i64`, is
+// refused BY NAME.
+//
+// Code generation takes the address of what it is given for such a parameter —
+// that is how `f(m)` and `f(&m)` both reach it — so `f(r)` with `let r = &m`
+// passed `&r`, a pointer to the pointer. MEASURED on d5166e8 before this
+// refusal: "internal compiler error: the C backend emitted ill-typed C" (and,
+// through a toolchain that only warns, a run that printed an address). Pass the
+// place (`f(m)`, `f(*r)`) or a borrow written at the call; a parameter declared
+// by a reference alias (`type A = &i64`) takes the held reference as it is.
+fn f(x: &i64) -> i64 {
+    x + 1
+}
+
+fn main() {
+    let m: i64 = 5;
+    let r = &m;
+    print_int(f(r));
+}

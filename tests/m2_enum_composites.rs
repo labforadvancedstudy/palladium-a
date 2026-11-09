@@ -2170,7 +2170,9 @@ fn a_reference_alias_is_passed_as_main_passed_it() {
         ("`&T`, a struct's field, read", "type A = &T;\nstruct T { n: i64 }\nstruct H { p: A }\nfn main() { let m = T { n: 4294967297 }; let hh = H { p: &m }; let r = hh.p; print_int((*r).n); }\n", "RUN: 4294967297\n"),
         ("`&bool`, a parameter bound under the alias", "type A = &bool;\nfn bi(b: bool) -> i64 { if b { return 1; } return 0; }\nfn pk(r0: A) -> i64 { let x: A = r0; let r = x; return bi(*r); }\nfn main() { let m = true; print_int(pk(&m)); }\n", "RUN: 1\n"),
         ("a method's result through a generic's alias parameter", "type A = &i64;\nstruct S { n: i64 }\nfn g<U>(u: U) -> i64 { return *u + *u; }\nimpl S { fn get(&self) -> A { return &self.n; } }\nfn gk<T>(t: T, x: A) -> A { return x; }\nfn main() { let s = S { n: 4294967297 }; let y = gk(1, s.get()); let r = y; print_int(g(r)); }\n", "RUN: 8589934594\n"),
-        ("the alias-free twin, returned (gcc on main)", "fn w(r0: &i64) -> &i64 { return r0; }\nfn main() { let m = 4294967297; let r = w(&m); let z: &i64 = r; print_int(*z); }\n", "GCC"),
+        // Refused by name since #88: a parameter WRITTEN `&i64` is read as its
+        // referent, so `return r0` gives an `i64` where `-> &i64` is declared.
+        ("the alias-free twin, returned (gcc on main)", "fn w(r0: &i64) -> &i64 { return r0; }\nfn main() { let m = 4294967297; let r = w(&m); let z: &i64 = r; print_int(*z); }\n", "REFUSED"),
         ("a binding annotated with it, handed to a generic (gcc on main)", "type A = &i64;\nfn g<U>(u: U) -> i64 { return *u + *u; }\nfn main() { let m = 4294967297; let r0: A = &m; print_int(g(r0)); }\n", "RUN: 8589934594\n"),
         ("a struct's field of it, handed to a generic (gcc on main)", "type A = &T;\nstruct T { n: i64 }\nstruct H { p: A }\nfn g<U>(u: U) -> i64 { return (*u).n + 1; }\nfn main() { let m = T { n: 4294967297 }; let hh = H { p: &m }; let r = hh.p; print_int(g(r)); }\n", "RUN: 4294967298\n"),
     ];

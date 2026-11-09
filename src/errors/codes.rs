@@ -642,6 +642,34 @@ pub enum DiagnosticCode {
     /// parameter lists (fn/struct/enum, trait, trait method, impl, type alias);
     /// the name is the parameter (#93 review round 4).
     GenericParameterIsNamedOnce,
+
+    /// PD0082 — `*e` dereferences a reference value only (#88). One `Err` in
+    /// `dereferenced` (`src/typeck/mod.rs`), for `*e` in a value and in an
+    /// assignment's place. `*e` was typed as `e` ("assume dereference returns
+    /// the same type / TODO"), so `*m` over an `i64` and `*x` over a
+    /// parameter WRITTEN `&T` — which code generation already reads as its
+    /// referent — reached gcc as an indirection on a value. The sibling for
+    /// the receiver is PD0050, which fires first for `*self`.
+    DereferenceNeedsAReferenceValue,
+
+    /// PD0083 — an operand of an operator is not a reference value (#88). One
+    /// `Err` in `refuse_reference_operand` (`src/typeck/mod.rs`), for every
+    /// binary and unary operator. A reference is a C pointer, so `r == s`
+    /// compared two ADDRESSES and printed `ne` for `5 == 5`, `s - r` was a
+    /// pointer difference, `r += 1` stepped the pointer, and `!r` read a
+    /// pointer's truth. The language names no operator on a reference;
+    /// `*r == *s` is the comparison of the values.
+    OperatorOperandIsNotAReference,
+
+    /// PD0084 — an argument for a parameter WRITTEN `&T` is a place of type
+    /// `T` or a borrow written at the call, `&place` (#88). One `Err` in
+    /// `admits_argument` (`src/typeck/mod.rs`). Code generation takes the
+    /// address of anything else it is given for such a parameter, so a
+    /// reference held in a binding (`let r = &m; f(r)`) arrived as a pointer
+    /// to the pointer — the ill-typed-C trap. A parameter declared by a
+    /// reference alias takes the held reference as it is, and is the form that
+    /// passes one on.
+    ReferenceParameterTakesAPlaceOrABorrow,
 }
 
 impl DiagnosticCode {
@@ -725,6 +753,9 @@ impl DiagnosticCode {
         DiagnosticCode::MacroExpansionParsesWhereItIsInvoked,
         DiagnosticCode::TypeAliasExpansionReachesNoCycle,
         DiagnosticCode::GenericParameterIsNamedOnce,
+        DiagnosticCode::DereferenceNeedsAReferenceValue,
+        DiagnosticCode::OperatorOperandIsNotAReference,
+        DiagnosticCode::ReferenceParameterTakesAPlaceOrABorrow,
     ];
 
     /// The numbers that are RETIRED and must never be allocated again, with the
@@ -837,6 +868,9 @@ impl DiagnosticCode {
             DiagnosticCode::MacroExpansionParsesWhereItIsInvoked => 79,
             DiagnosticCode::TypeAliasExpansionReachesNoCycle => 80,
             DiagnosticCode::GenericParameterIsNamedOnce => 81,
+            DiagnosticCode::DereferenceNeedsAReferenceValue => 82,
+            DiagnosticCode::OperatorOperandIsNotAReference => 83,
+            DiagnosticCode::ReferenceParameterTakesAPlaceOrABorrow => 84,
         }
     }
 
@@ -986,6 +1020,15 @@ impl DiagnosticCode {
                 "type_alias_expansion_reaches_no_cycle"
             }
             DiagnosticCode::GenericParameterIsNamedOnce => "generic_parameter_is_named_once",
+            DiagnosticCode::DereferenceNeedsAReferenceValue => {
+                "dereference_needs_a_reference_value"
+            }
+            DiagnosticCode::OperatorOperandIsNotAReference => {
+                "operator_operand_is_not_a_reference"
+            }
+            DiagnosticCode::ReferenceParameterTakesAPlaceOrABorrow => {
+                "reference_parameter_takes_a_place_or_a_borrow"
+            }
         }
     }
 }

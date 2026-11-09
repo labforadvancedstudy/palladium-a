@@ -651,6 +651,110 @@ pub enum CheckerType {
     /// The specification names no operations on a range beyond iterating it,
     /// so this type has none.
     Range,
+    /// `&T` and `&mut T` — A REFERENCE VALUE, a type of its own (#88, #90).
+    ///
+    /// It was the referent's type ("references have the same type as their
+    /// inner value / TODO"), so `&m` met an `i64` place as one type and a
+    /// `&u32` met a `&i64` as one type, and the C said otherwise: gcc, the
+    /// ill-typed-C trap, or — where C only converts — a program that ran and
+    /// printed an address (`r == s` was `ne` for `5 == 5`; `while r` over a
+    /// `false` never ended).
+    ///
+    /// WHAT IS ONE, measured against code generation rather than chosen: `&e`;
+    /// a binding, a field or an element holding one; a `-> &T` result; and a
+    /// parameter DECLARED BY A REFERENCE ALIAS (`r0: A`, `type A = &i64`),
+    /// which code generation keeps as the pointer. NOT a parameter WRITTEN
+    /// `&T`: code generation reads that one as its referent (`(*p)`) and adds
+    /// the `&` where a place is passed for it, so it is bound as `T`
+    /// (`TypeChecker::check_function`) and its signature takes a place
+    /// (`Referent::place`).
+    ///
+    /// The `DeclaredAs` is the alias the value was declared as, as on every
+    /// other type: a reference alias carries its value to a generic by the
+    /// alias's name (`TypeChecker::carrier`).
+    Reference(Box<CheckerType>, Referent, DeclaredAs),
+}
+
+/// What a `CheckerType::Reference` refers to beyond the referent's checker
+/// type: the referent as the SOURCE spells it, where it is known.
+///
+/// The checker type erases what C does not (`Int` for every width, `Float` for
+/// both, #82) — and behind a reference that is a pointer type, so `&u32` and
+/// `&i64` were one type here and `int *`, `long long *` and `unsigned int *`
+/// in C (#90). The source type is recorded where a declaration writes it (a
+/// written `&T`, with every alias expanded) or where `&e` borrows a place
+/// whose declaration is known (`TypeChecker::source_of`), and two referents
+/// differ only where BOTH are known and disagree (`sources_agree`). Unknown is
+/// what this checker always said, and is not guessed.
+#[derive(Debug, Clone)]
+pub struct Referent {
+    /// The referent's type as the source spells it, aliases expanded.
+    pub source: Option<crate::ast::Type>,
+    /// `&mut` rather than `&`: the same C type, kept only to spell the source
+    /// type back (`TypeChecker::lossless`).
+    pub mutable: bool,
+    /// A parameter WRITTEN `&T` (not through an alias): code generation reads
+    /// it as its referent and adds the `&` for a place passed for it
+    /// (`TypeChecker::admits_argument`). Meaningful only at the top of a
+    /// signature's parameter; ignored by equality.
+    pub place: bool,
+}
+
+impl PartialEq for Referent {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.source, &other.source) {
+            (Some(a), Some(b)) => sources_agree(a, b),
+            _ => true,
+        }
+    }
+}
+
+impl Referent {
+    /// The referent of a reference whose source spelling is `source`.
+    fn of(source: Option<crate::ast::Type>, mutable: bool) -> Referent {
+        Referent {
+            source,
+            mutable,
+            place: false,
+        }
+    }
+}
+
+/// Does `ty` name a struct, an enum, an alias or a type parameter anywhere —
+/// a spelling a diagnostic should not print in place of the checker's own?
+fn mentions_a_name(ty: &crate::ast::Type) -> bool {
+    use crate::ast::Type as T;
+    match ty {
+        T::Custom(_) | T::TypeParam(_) | T::Generic { .. } | T::Future { .. } => true,
+        T::Reference { inner, .. } | T::Array(inner, _) => mentions_a_name(inner),
+        T::Tuple(types) => types.iter().any(mentions_a_name),
+        _ => false,
+    }
+}
+
+/// Do two referents, as the source spells them, name one C type? Integer and
+/// float widths and signedness are compared exactly, at every depth of a
+/// reference, an array or a tuple — the distinctions `CheckerType` erases. A
+/// name (a struct, an enum, an alias left unexpanded, `Self`) or a type
+/// parameter is the checker type's to compare, and agrees here.
+fn sources_agree(a: &crate::ast::Type, b: &crate::ast::Type) -> bool {
+    use crate::ast::Type as T;
+    match (a, b) {
+        (T::Custom(_) | T::TypeParam(_) | T::Generic { .. } | T::Future { .. }, _)
+        | (_, T::Custom(_) | T::TypeParam(_) | T::Generic { .. } | T::Future { .. }) => true,
+        (T::Reference { inner: x, .. }, T::Reference { inner: y, .. }) => sources_agree(x, y),
+        (T::Array(x, n), T::Array(y, m)) => {
+            let sized = match (n, m) {
+                (ArraySize::Literal(n), ArraySize::Literal(m)) => n == m,
+                _ => true,
+            };
+            sized && sources_agree(x, y)
+        }
+        (T::Tuple(xs), T::Tuple(ys)) => {
+            xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| sources_agree(x, y))
+        }
+        _ => a == b,
+    }
 }
 
 /// Map a built-in's type (from the canonical registry) to a checker type.
@@ -741,11 +845,14 @@ impl From<&crate::ast::Type> for CheckerType {
                     args: checker_args,
                 }
             }
-            crate::ast::Type::Reference { inner, .. } => {
-                // For now, treat references as the inner type
-                // TODO: Proper reference type handling
-                CheckerType::from(inner.as_ref())
-            }
+            // A reference is a reference (#88), its referent spelled as the
+            // source wrote it (#90; aliases are expanded where a table is,
+            // `TypeChecker::with_enum_kinds`).
+            crate::ast::Type::Reference { inner, mutable, .. } => CheckerType::Reference(
+                Box::new(CheckerType::from(inner.as_ref())),
+                Referent::of(Some(inner.as_ref().clone()), *mutable),
+                DeclaredAs(None, false),
+            ),
             crate::ast::Type::Future { output } => {
                 // Create a Future generic type
                 CheckerType::Generic {
@@ -765,6 +872,22 @@ impl std::fmt::Display for CheckerType {
         match self {
             CheckerType::Unit => write!(f, "()"),
             CheckerType::Range => write!(f, "a range"),
+            // By the alias where main typed it by the NAME (`DeclaredAs::shown`);
+            // otherwise the referent as the source spells it where that is known
+            // and names no type this checker would print otherwise — so a width
+            // refusal reads `expected &u32, found &i64`, not `&Int` twice (#90).
+            CheckerType::Reference(inner, referent, declared) => {
+                if let DeclaredAs(Some(alias), true) = declared {
+                    return write!(f, "{}", spelled(alias));
+                }
+                let mutable = if referent.mutable { "mut " } else { "" };
+                match &referent.source {
+                    Some(source) if !mentions_a_name(source) => {
+                        write!(f, "&{}{}", mutable, source)
+                    }
+                    _ => write!(f, "&{}{}", mutable, inner),
+                }
+            }
             CheckerType::String(d) => write!(f, "{}", d.shown("String")),
             CheckerType::Int(d) => write!(f, "{}", d.shown("Int")),
             CheckerType::Float(d) => write!(f, "{}", d.shown("Float")),
@@ -845,6 +968,12 @@ impl ConstScalar {
 struct VarInfo {
     ty: CheckerType,
     mutable: bool,
+    /// The binding's type as the SOURCE spells it, aliases expanded, where its
+    /// declaration says (`TypeChecker::source_of`): what `&name` refers to in
+    /// C, which `ty` erases (#90). `None` is not guessed.
+    source: Option<crate::ast::Type>,
+    /// A parameter WRITTEN `&T`, bound as its referent (`check_function`).
+    read_as_referent: bool,
 }
 
 /// Symbol table for storing variable types with scope support
@@ -874,6 +1003,17 @@ impl SymbolTable {
 
     /// Define a variable in the current scope
     fn define(&mut self, name: String, ty: CheckerType, mutable: bool) -> Result<()> {
+        self.define_with_source(name, ty, mutable, None)
+    }
+
+    /// `define`, with the source type the binding's declaration gives it.
+    fn define_with_source(
+        &mut self,
+        name: String,
+        ty: CheckerType,
+        mutable: bool,
+        source: Option<crate::ast::Type>,
+    ) -> Result<()> {
         if let Some(scope) = self.scopes.last_mut() {
             if scope.contains_key(&name) {
                 return Err(CompileError::Generic(format!(
@@ -881,10 +1021,33 @@ impl SymbolTable {
                     name
                 )));
             }
-            scope.insert(name, VarInfo { ty, mutable });
+            scope.insert(
+                name,
+                VarInfo {
+                    ty,
+                    mutable,
+                    source,
+                    read_as_referent: false,
+                },
+            );
             Ok(())
         } else {
             Err(CompileError::Generic("No active scope".to_string()))
+        }
+    }
+
+    /// Set the source type of `name`, just defined in the innermost scope.
+    fn set_source(&mut self, name: &str, source: Option<crate::ast::Type>) {
+        if let Some(info) = self.scopes.last_mut().and_then(|s| s.get_mut(name)) {
+            info.source = source;
+        }
+    }
+
+    /// Mark `name`, just defined in the innermost scope, as a parameter
+    /// written `&T` and bound as its referent.
+    fn mark_read_as_referent(&mut self, name: &str) {
+        if let Some(info) = self.scopes.last_mut().and_then(|s| s.get_mut(name)) {
+            info.read_as_referent = true;
         }
     }
 
@@ -1120,6 +1283,16 @@ pub struct TypeChecker {
     instantiations: HashMap<FunctionInstantiation, CheckerType>,
     /// Struct definitions
     structs: HashMap<String, Vec<(String, CheckerType)>>,
+    /// Each non-generic local struct's fields as the SOURCE declares them: what
+    /// `&s.f` refers to in C, which `structs` erases (`source_of`, #90).
+    struct_field_sources: HashMap<String, HashMap<String, crate::ast::Type>>,
+    /// Each non-generic function's and method's (`Owner::name`) written return
+    /// type: the C type code generation declares a binding of its result with
+    /// (`source_of`, #90).
+    return_sources: HashMap<String, crate::ast::Type>,
+    /// Each non-generic local enum's variants as the source declares them: the
+    /// C type of a pattern binder (`record_pattern_sources`, #90).
+    enum_variant_sources: HashMap<String, Vec<(String, crate::ast::EnumVariantData)>>,
     /// Generic struct definitions
     generic_structs: HashMap<String, GenericStruct>,
     /// Trait resolver
@@ -1233,6 +1406,9 @@ impl TypeChecker {
             generic_function_origin: HashMap::new(),
             instantiations: HashMap::new(),
             structs: HashMap::new(),
+            struct_field_sources: HashMap::new(),
+            return_sources: HashMap::new(),
+            enum_variant_sources: HashMap::new(),
             generic_structs: HashMap::new(),
             trait_resolver: TraitResolver::new(),
             struct_instantiations: HashMap::new(),
@@ -1461,6 +1637,11 @@ impl TypeChecker {
                     })
                     .collect(),
             },
+            CheckerType::Reference(inner, referent, declared) => CheckerType::Reference(
+                Box::new(Self::as_enums_where_known(enum_names, *inner)),
+                referent,
+                declared,
+            ),
             other => other,
         }
     }
@@ -1617,9 +1798,12 @@ impl TypeChecker {
                                     .params
                                     .iter()
                                     .map(|param| {
-                                        Self::as_enums_where_known(
-                                            &self.enum_names,
-                                            CheckerType::from(&param.ty),
+                                        Self::parameter_type(
+                                            &param.ty,
+                                            Self::as_enums_where_known(
+                                                &self.enum_names,
+                                                CheckerType::from(&param.ty),
+                                            ),
                                         )
                                     })
                                     .collect();
@@ -1641,6 +1825,10 @@ impl TypeChecker {
                                 // Add both qualified and unqualified names
                                 // Note: In a full implementation, we'd use a proper module resolution system
                                 self.functions.insert(func.name.clone(), func_type.clone());
+                                if let Some(ret) = &func.return_type {
+                                    self.return_sources.insert(func.name.clone(), ret.clone());
+                                    self.return_sources.insert(qualified_name.clone(), ret.clone());
+                                }
                                 self.functions.insert(qualified_name, func_type);
                             }
                         }
@@ -2002,7 +2190,10 @@ impl TypeChecker {
             global.kind,
             crate::ast::GlobalKind::Static { is_mut: true }
         );
-        self.symbols.define(global.name.clone(), declared, mutable)?;
+        let mut source = global.ty.clone();
+        crate::ast::expand_aliases_in_type(&mut source, &self.type_aliases, &[]);
+        self.symbols
+            .define_with_source(global.name.clone(), declared, mutable, Some(source))?;
         self.global_items.insert(global.name.clone(), global.span);
         Ok(())
     }
@@ -2554,7 +2745,7 @@ impl TypeChecker {
                         let param_types: Vec<CheckerType> = func
                             .params
                             .iter()
-                            .map(|param| self.written_type(&param.ty))
+                            .map(|param| Self::parameter_type(&param.ty, self.written_type(&param.ty)))
                             .collect();
 
                         let return_type = func
@@ -2565,6 +2756,9 @@ impl TypeChecker {
 
                         let func_type = CheckerType::Function(param_types, Box::new(return_type));
                         self.functions.insert(func.name.clone(), func_type);
+                        if let Some(ret) = &func.return_type {
+                            self.return_sources.insert(func.name.clone(), ret.clone());
+                        }
                     }
                 }
                 Item::Struct(struct_def) => {
@@ -2594,6 +2788,12 @@ impl TypeChecker {
                             .collect();
 
                         self.structs.insert(struct_def.name.clone(), fields);
+                        // As written: an alias declared after the struct is
+                        // expanded where the field is read (`source_of`).
+                        self.struct_field_sources.insert(
+                            struct_def.name.clone(),
+                            struct_def.fields.iter().cloned().collect(),
+                        );
                     }
                 }
                 Item::Enum(enum_def) => {
@@ -2612,6 +2812,14 @@ impl TypeChecker {
                         self.generic_enums
                             .insert(enum_def.name.clone(), generic_enum);
                     } else {
+                        self.enum_variant_sources.insert(
+                            enum_def.name.clone(),
+                            enum_def
+                                .variants
+                                .iter()
+                                .map(|v| (v.name.clone(), v.data.clone()))
+                                .collect(),
+                        );
                         // Store enum variants for type checking
                         let mut variants = Vec::new();
 
@@ -2758,7 +2966,12 @@ impl TypeChecker {
                             let param_types: Vec<CheckerType> = method
                                 .params
                                 .iter()
-                                .map(|param| self.kinded(&param.ty, &impl_block.type_params))
+                                .map(|param| {
+                                    Self::parameter_type(
+                                        &param.ty,
+                                        self.kinded(&param.ty, &impl_block.type_params),
+                                    )
+                                })
                                 .collect();
 
                             let return_type = method
@@ -2769,6 +2982,9 @@ impl TypeChecker {
 
                             let func_type =
                                 CheckerType::Function(param_types, Box::new(return_type));
+                            if let Some(ret) = &method.return_type {
+                                self.return_sources.insert(method_name.clone(), ret.clone());
+                            }
                             self.functions.insert(method_name, func_type);
                         }
                     }
@@ -3208,11 +3424,34 @@ impl TypeChecker {
         self.symbols.enter_scope();
 
         // Add function parameters to symbol table
+        // A parameter WRITTEN `&T` is bound as `T` (#88): code generation reads
+        // it as its referent (`(*p)`), so it is the referent's value wherever
+        // the body names it — the type it had here before references were
+        // types, exactly. Declared by a reference alias (`r0: A`, `type A =
+        // &i64`) it stays the pointer it is in C, a `Reference`.
         for param in &func.params {
             self.refuse_global_shadow(&param.name, "the parameter")?;
-            let checker_type = self.written_type(&param.ty);
-            self.symbols
-                .define(param.name.clone(), checker_type, param.mutable)?;
+            let mut source = param.ty.clone();
+            crate::ast::expand_aliases_in_type(&mut source, &self.type_aliases, &[]);
+            let (checker_type, source, read_as_referent) =
+                match (self.written_type(&param.ty), &param.ty) {
+                    (CheckerType::Reference(inner, ..), crate::ast::Type::Reference { .. }) => {
+                        let crate::ast::Type::Reference { inner: referent, .. } = source else {
+                            unreachable!("an alias expansion keeps a written `&T` a reference")
+                        };
+                        (*inner, Some(*referent), true)
+                    }
+                    (checker_type, _) => (checker_type, Some(source), false),
+                };
+            self.symbols.define_with_source(
+                param.name.clone(),
+                checker_type,
+                param.mutable,
+                source,
+            )?;
+            if read_as_referent {
+                self.symbols.mark_read_as_referent(&param.name);
+            }
         }
 
         // Set current function return type
@@ -3355,10 +3594,17 @@ impl TypeChecker {
                             .with_code(DiagnosticCode::LetAnnotationAndInitialiserAgree));
                     }
                     let bound = self.annotated(annotated_type, expected_type, &value_type);
-                    self.symbols.define(name.clone(), bound, *mutable)?;
+                    // What `&name` refers to in C (#90): the annotation's type.
+                    let mut source = annotated_type.clone();
+                    crate::ast::expand_aliases_in_type(&mut source, &self.type_aliases, &[]);
+                    self.symbols
+                        .define_with_source(name.clone(), bound, *mutable, Some(source))?;
                 } else {
-                    // Define variable with inferred type
-                    self.symbols.define(name.clone(), value_type, *mutable)?;
+                    // Define variable with inferred type — and, where the value
+                    // says, the source type code generation declares it with.
+                    let source = self.source_of(value);
+                    self.symbols
+                        .define_with_source(name.clone(), value_type, *mutable, source)?;
                 }
 
                 Ok(())
@@ -3584,12 +3830,21 @@ impl TypeChecker {
 
                         Ok(())
                     }
+                    // `*e = v` writes the referent of a reference value (#88):
+                    // `e` must be one (PD0080), and `v` must be what it refers
+                    // to. Neither was checked ("we don't have proper reference
+                    // types / TODO").
                     AssignTarget::Deref { expr } => {
-                        // Type check the expression being dereferenced
-                        let _ptr_type = self.check_expression(expr)?;
-                        // For now, we don't have proper reference types, so just check the value
-                        let _value_type = self.check_expression(value)?;
-                        // TODO: Check that ptr_type is actually a reference to value_type
+                        let ptr_type = self.check_expression(expr)?;
+                        let place = self.dereferenced(&ptr_type, expr)?;
+                        let value_type = self.check_expression(value)?;
+                        if !self.admits_or_meets(&place, &value_type, value) {
+                            return Err(CompileError::TypeMismatch {
+                                expected: Self::told(&place, &value_type),
+                                found: Self::told(&value_type, &place),
+                                span: None,
+                            });
+                        }
                         Ok(())
                     }
                 }
@@ -3678,6 +3933,13 @@ impl TypeChecker {
             } => {
                 // Type check the iterator expression
                 let iter_type = self.check_expression(iter)?;
+                // What the loop variable is in C (#90): an array's element as
+                // the source declares it, or a range's `long long`.
+                let var_source = match (&iter_type, self.source_of(iter)) {
+                    (_, Some(crate::ast::Type::Array(elem, _))) => Some(*elem),
+                    (CheckerType::Range, _) => Some(crate::ast::Type::I64),
+                    _ => None,
+                };
 
                 // Extract element type from array
                 let elem_type = match iter_type {
@@ -3701,7 +3963,8 @@ impl TypeChecker {
                 // is a fresh binder too, and it silently took the name of a
                 // top-level item until this line asked.
                 self.refuse_global_shadow(var, "the loop variable")?;
-                self.symbols.define(var.clone(), elem_type, false)?;
+                self.symbols
+                    .define_with_source(var.clone(), elem_type, false, var_source)?;
 
                 // Type check body
                 let result = (|| -> Result<()> {
@@ -3773,6 +4036,8 @@ impl TypeChecker {
                     // Bind pattern variables if any
                     let checked = (|| -> Result<()> {
                         self.bind_pattern_variables(&arm.pattern, &expr_type)?;
+                        let scrutinee_source = self.source_of(expr);
+                        self.record_pattern_sources(&arm.pattern, scrutinee_source);
                         // THE GUARD IS CHECKED INSIDE THE ARM'S SCOPE, after the
                         // bindings: `Num(n) if n > 5` reads `n`, so a guard
                         // checked outside would report an undefined variable for
@@ -4066,8 +4331,10 @@ impl TypeChecker {
                         let method = self.is_method(func_name);
                         for (arg, expected_type) in args.iter().zip(param_types.iter()) {
                             let arg_type = self.check_expression(arg)?;
-                            if !self.written_admits(expected_type, &arg_type, Some(arg))
-                                && !(method && self.is_or_names(&arg_type, expected_type))
+                            if !self.admits_argument(expected_type, &arg_type, arg)?
+                                && !(method
+                                    && !Self::takes_a_place(expected_type)
+                                    && self.is_or_names(&arg_type, expected_type))
                             {
                                 return Err(CompileError::TypeMismatch {
                                     expected: Self::told(expected_type, &arg_type),
@@ -4091,6 +4358,8 @@ impl TypeChecker {
             } => {
                 let left_type = self.check_expression(left)?;
                 let right_type = self.check_expression(right)?;
+                self.refuse_reference_operand(&op.to_string(), &left_type, left)?;
+                self.refuse_reference_operand(&op.to_string(), &right_type, right)?;
 
                 match op {
                     BinOp::Add => {
@@ -4882,6 +5151,7 @@ impl TypeChecker {
             }
             Expr::Unary { op, operand, .. } => {
                 let operand_type = self.check_expression(operand)?;
+                self.refuse_reference_operand(&op.to_string(), &operand_type, operand)?;
 
                 match op {
                     UnaryOp::Neg => {
@@ -4923,15 +5193,19 @@ impl TypeChecker {
                     }
                 }
             }
-            Expr::Reference {
-                mutable: _, expr, ..
-            } => {
-                // Type check the inner expression
+            // A REFERENCE IS A TYPE OF ITS OWN (#88): `&m` was answered with
+            // `m`'s type, so a pointer met an `i64` place as one type and gcc
+            // refused the C — or, where C only converts, the program ran with
+            // an address for a value. The referent is spelled as the source
+            // declared it where that is known (`source_of`, #90).
+            Expr::Reference { mutable, expr, .. } => {
                 let inner_type = self.check_expression(expr)?;
-
-                // For now, references have the same type as their inner value
-                // TODO: Proper reference type handling
-                Ok(inner_type)
+                let source = self.source_of(expr);
+                Ok(CheckerType::Reference(
+                    Box::new(inner_type),
+                    Referent::of(source, *mutable),
+                    DeclaredAs(None, false),
+                ))
             }
             Expr::Deref { expr, .. } => {
                 // `*self` IS NOT A SECOND LEVEL OF INDIRECTION. Code generation already
@@ -4955,19 +5229,8 @@ impl TypeChecker {
                         }
                     }
                 }
-                // Type check the expression being dereferenced
                 let expr_type = self.check_expression(expr)?;
-
-                // For now, assume dereference returns the same type
-                // TODO: Proper reference type handling - should check that expr_type is a reference
-                //
-                // Except the alias a REFERENCE was declared as: what `*r` reads
-                // is not a pointer, and a generic handed it is not instantiated
-                // at the pointer's alias (`DeclaredAs`).
-                match expr_type.declared_as() {
-                    Some(alias) if self.alias_is_reference(alias) => Ok(expr_type.undeclared()),
-                    _ => Ok(expr_type),
-                }
+                self.dereferenced(&expr_type, expr)
             }
             // D5. `?` and `.await` parse, but no backend lowers either: the C
             // emitter produced a `struct Result` layout nothing else emits, and
@@ -5195,6 +5458,8 @@ impl TypeChecker {
                     self.symbols.enter_scope();
                     let arm_type = (|| {
                         self.bind_pattern_variables(&arm.pattern, &scrutinee)?;
+                        let scrutinee_source = self.source_of(expr);
+                        self.record_pattern_sources(&arm.pattern, scrutinee_source);
                         self.check_guard(arm.guard.as_ref())?;
                         for stmt in &arm.body {
                             self.check_statement(stmt)?;
@@ -6348,6 +6613,11 @@ impl TypeChecker {
                     .collect();
                 format!("({})", type_strs.join(", "))
             }
+            // Not a name, so not a type argument (`type_argument_as_named_type`
+            // refuses it): a generic instantiated at a reference's REFERENT was
+            // handed the pointer (#88). A reference alias's value is carried by
+            // the alias's name instead (`carrier`).
+            CheckerType::Reference(inner, ..) => format!("&{}", self.checker_type_to_string(inner)),
         }
     }
 
@@ -6367,7 +6637,10 @@ impl TypeChecker {
         let mut param_types = Vec::new();
         for (_param_name, param_type) in &generic_func.params {
             let substituted_type = self.substitute_type(param_type, &subst_map)?;
-            param_types.push(self.declared_type(&substituted_type));
+            param_types.push(Self::parameter_type(
+                param_type,
+                self.declared_type(&substituted_type),
+            ));
         }
 
         // Substitute return type: an alias it names is the type the alias
@@ -6459,9 +6732,9 @@ impl TypeChecker {
                 // (`t: (B, i64)`), and admits what it names (`written_admits`).
                 for (arg, expected_type) in args.iter().zip(&param_types) {
                     let arg_type = self.check_expression(arg)?;
-                    if !self.is_or_names(&arg_type, expected_type)
-                        && !self.written_admits(expected_type, &arg_type, Some(arg))
-                    {
+                    let named =
+                        !Self::takes_a_place(expected_type) && self.is_or_names(&arg_type, expected_type);
+                    if !named && !self.admits_argument(expected_type, &arg_type, arg)? {
                         return Err(CompileError::TypeMismatch {
                             expected: Self::told(expected_type, &arg_type),
                             found: Self::told(&arg_type, expected_type),
@@ -6676,7 +6949,37 @@ impl TypeChecker {
     /// (`enum_names_in_scope`), through the same rewrite the import
     /// registration uses, so the two cannot disagree about a name.
     fn with_enum_kinds(&self, ast_type: &crate::ast::Type) -> CheckerType {
-        Self::as_enums_where_known(&self.enum_names, CheckerType::from(ast_type))
+        self.referents_expanded(Self::as_enums_where_known(
+            &self.enum_names,
+            CheckerType::from(ast_type),
+        ))
+    }
+
+    /// `ty` with the source spelling of every reference's referent in it
+    /// (`Referent::source`) expanded through the alias table, so that `&N`
+    /// under `type N = u32` is compared as a `&u32` (#90). `CheckerType::from`
+    /// records the referent as written, and has no table.
+    fn referents_expanded(&self, ty: CheckerType) -> CheckerType {
+        match ty {
+            CheckerType::Reference(inner, mut referent, declared) => {
+                if let Some(source) = referent.source.as_mut() {
+                    crate::ast::expand_aliases_in_type(source, &self.type_aliases, &[]);
+                }
+                CheckerType::Reference(
+                    Box::new(self.referents_expanded(*inner)),
+                    referent,
+                    declared,
+                )
+            }
+            CheckerType::Array(elem, size) => {
+                CheckerType::Array(Box::new(self.referents_expanded(*elem)), size)
+            }
+            CheckerType::Tuple(types, declared) => CheckerType::Tuple(
+                types.into_iter().map(|t| self.referents_expanded(t)).collect(),
+                declared,
+            ),
+            other => other,
+        }
     }
 
     /// The type a generic function's type argument names, when it names one.
@@ -6704,8 +7007,9 @@ impl TypeChecker {
         }
         Err(CompileError::Generic(format!(
             "a generic function instantiated at `{}` is not implemented: a type argument is \
-             carried by name, and an array, a tuple or a generic type has none. Wrap the value \
-             in a struct and pass that, or write the function for the concrete type",
+             carried by name, and an array, a tuple, a reference or a generic type has none. \
+             Wrap the value in a struct and pass that, or write the function for the concrete \
+             type",
             concrete_type
         )))
     }
@@ -6751,8 +7055,16 @@ impl TypeChecker {
             crate::ast::Type::Tuple(types) => {
                 CheckerType::tuple(types.iter().map(below).collect::<Result<_>>()?)
             }
-            // A reference is its referent, as in `CheckerType::from`.
-            crate::ast::Type::Reference { inner, .. } => below(inner)?,
+            // A reference is a reference, as in `CheckerType::from` (#88).
+            crate::ast::Type::Reference { inner, mutable, .. } => {
+                let mut source = inner.as_ref().clone();
+                crate::ast::expand_aliases_in_type(&mut source, &self.type_aliases, &[]);
+                CheckerType::Reference(
+                    Box::new(below(inner)?),
+                    Referent::of(Some(source), *mutable),
+                    DeclaredAs(None, false),
+                )
+            }
             crate::ast::Type::Future { output } => CheckerType::Generic {
                 name: "Future".to_string(),
                 args: vec![GenericArgValue::Type(below(output)?)],
@@ -6864,6 +7176,25 @@ impl TypeChecker {
     /// stands (gcc on 144a493; main refused each by the name).
     fn declares_tuple(&self, name: &str, resolved: &CheckerType) -> bool {
         !matches!(resolved, CheckerType::Tuple(..)) || self.alias_is_reference(name)
+    }
+
+    /// A signature's parameter WRITTEN `written`, read as `resolved`: written
+    /// `&T` at the top (not through an alias), it takes a place for its
+    /// referent, as code generation passes one (it adds the `&`, and reads the
+    /// parameter as `(*p)`; `Referent::place`, `admits_argument`). A parameter
+    /// declared by a reference alias is a pointer code generation passes as it
+    /// is given, and takes a reference value only (#88).
+    fn parameter_type(written: &crate::ast::Type, resolved: CheckerType) -> CheckerType {
+        match (written, resolved) {
+            (
+                crate::ast::Type::Reference { .. },
+                CheckerType::Reference(inner, mut referent, declared),
+            ) => {
+                referent.place = true;
+                CheckerType::Reference(inner, referent, declared)
+            }
+            (_, resolved) => resolved,
+        }
     }
 
     /// `ty` as a DECLARATION writes it — a `let` annotation, a function's
@@ -7207,6 +7538,9 @@ impl TypeChecker {
             (CheckerType::Array(found, n), CheckerType::Array(expected, m)) => {
                 n == m && self.is_or_names(found, expected)
             }
+            (CheckerType::Reference(found, f, _), CheckerType::Reference(expected, e, _)) => {
+                f == e && self.is_or_names(found, expected)
+            }
             (CheckerType::Tuple(found, _), CheckerType::Tuple(expected, _)) => {
                 found.len() == expected.len()
                     && found
@@ -7263,7 +7597,6 @@ impl TypeChecker {
         found: &CheckerType,
         value: Option<&Expr>,
     ) -> bool {
-        let written_as = value;
         let value = value.map(|v| match v {
             Expr::Reference { expr, .. } => expr.as_ref(),
             v => v,
@@ -7300,6 +7633,16 @@ impl TypeChecker {
                     }
                 }
             }
+            // A reference takes a reference to what its referent admits, as
+            // main's referent admitted it (#88): the alias names below a `&`
+            // are compared as they were. Where both say, the referents agree
+            // as the source spells them (#90), and a place main typed by a
+            // reference alias's NAME takes only what the alias names.
+            (CheckerType::Reference(inner, referent, _), CheckerType::Reference(theirs, found_referent, _)) => {
+                referent == found_referent
+                    && !self.misnamed(written, self.lossless(found))
+                    && self.written_admits(inner, theirs, value)
+            }
             (CheckerType::Array(written, n), CheckerType::Array(found, m)) => {
                 let element = |i: usize| match value {
                     Some(Expr::ArrayLiteral { elements, .. }) => elements.get(i),
@@ -7318,7 +7661,7 @@ impl TypeChecker {
                     _ => None,
                 };
                 elements.len() == found_elements.len()
-                    && !self.tuples_differ(written, found, self.lossless_value(found, written_as))
+                    && !self.tuples_differ(written, found, self.lossless(found))
                     && elements
                         .iter()
                         .zip(found_elements)
@@ -7344,7 +7687,7 @@ impl TypeChecker {
             // type the alias names (a `let` annotation: `let r: N = 7`) is not
             // by the name, and takes a literal as before.
             _ => {
-                written == found && !self.misnamed(written, self.lossless_value(found, written_as))
+                written == found && !self.misnamed(written, self.lossless(found))
             }
         }
     }
@@ -7454,6 +7797,13 @@ impl TypeChecker {
             CheckerType::Bool(_) => "bool".to_string(),
             CheckerType::String(_) => "String".to_string(),
             CheckerType::Struct(n, _) | CheckerType::Enum(n, _) => n.clone(),
+            // A reference declared as no alias is recorded by its referent, as
+            // main recorded it when this checker read a reference as its
+            // referent (#88 changes the type, not the record): code generation
+            // matches a reference value against such a record only through an
+            // instantiation that keeps the pointer, so `G { tag: 2, p: &m }`
+            // beside a `G<i64, A>` (`type A = &i64`) still runs as on main.
+            CheckerType::Reference(inner, ..) => self.struct_type_argument(inner),
             _ => UNNAMED_TYPE_ARGUMENT.to_string(),
         }
     }
@@ -7557,6 +7907,9 @@ impl TypeChecker {
             (CheckerType::Array(mine, size), CheckerType::Array(theirs, _)) => {
                 CheckerType::Array(Box::new(self.agreed(*mine, theirs)), size)
             }
+            (CheckerType::Reference(mine, referent, declared), CheckerType::Reference(theirs, ..)) => {
+                CheckerType::Reference(Box::new(self.agreed(*mine, theirs)), referent, declared)
+            }
             (ty, _) => ty,
         };
         match alias {
@@ -7588,6 +7941,16 @@ impl TypeChecker {
                     Cow::Owned(elem) => {
                         Cow::Owned(CheckerType::Array(Box::new(elem), size.clone()))
                     }
+                }
+            }
+            (CheckerType::Reference(inner, referent, declared), CheckerType::Reference(theirs, ..)) => {
+                match self.name_read_as_declared(inner, theirs) {
+                    Cow::Borrowed(_) => Cow::Borrowed(ty),
+                    Cow::Owned(inner) => Cow::Owned(CheckerType::Reference(
+                        Box::new(inner),
+                        referent.clone(),
+                        declared.clone(),
+                    )),
                 }
             }
             (CheckerType::Tuple(mine, declared), CheckerType::Tuple(theirs, _))
@@ -7729,32 +8092,333 @@ impl TypeChecker {
                 .map(|e| self.lossless(e))
                 .collect::<Option<Vec<_>>>()
                 .map(T::Tuple),
+            // A reference to its referent as the source spelled it where that is
+            // known (`Referent::source`), else as this checker spells it — so
+            // `gk(1, &m)` for `x: A` under `type A = &i64` gives what `A` names,
+            // and `gk(1, m)` does not (#88: `&m` is typed as the reference).
+            CheckerType::Reference(inner, referent, _) => Some(T::Reference {
+                lifetime: None,
+                mutable: referent.mutable,
+                inner: Box::new(match &referent.source {
+                    Some(source) => source.clone(),
+                    None => self.lossless(inner)?,
+                }),
+            }),
             _ => None,
         }
     }
 
-    /// `lossless`, for a value of `found` written as `value`: a reference
-    /// taken where it is written (`&m`, which this checker types as `m`) is a
-    /// reference to `m`'s type — so `gk(1, &m)` for `x: A` under
-    /// `type A = &i64` gives what `A` names, and `gk(1, m)` does not.
-    fn lossless_value(
-        &self,
-        found: &CheckerType,
-        value: Option<&Expr>,
-    ) -> Option<crate::ast::Type> {
-        let ty = self.lossless(found)?;
-        Some(match value {
-            Some(Expr::Reference { mutable, .. }) => crate::ast::Type::Reference {
+    /// Is `ty` a parameter WRITTEN `&T` (`Referent::place`)?
+    fn takes_a_place(ty: &CheckerType) -> bool {
+        matches!(ty, CheckerType::Reference(_, referent, _) if referent.place)
+    }
+
+    /// Does a parameter of type `expected` take the argument `arg`, of type
+    /// `found`? As `written_admits` says — except a parameter WRITTEN `&T`
+    /// (`takes_a_place`), which takes what code generation passes for one: a
+    /// borrow written at the call (`&place`, a reference like any other), or a
+    /// PLACE of the referent's type, whose address code generation takes —
+    /// its source type compared with the referent's where both are known, so
+    /// `f(m)` for `x: &u32` with `m` an `i64` is refused here and not in gcc
+    /// (#90). A reference held anywhere else (`let r = &m; f(r)`) would have
+    /// its address taken too, a pointer to the pointer: refused by name
+    /// (PD0082, #88).
+    fn admits_argument(&self, expected: &CheckerType, found: &CheckerType, arg: &Expr) -> Result<bool> {
+        let CheckerType::Reference(referent_type, referent, _) = expected else {
+            return Ok(self.written_admits(expected, found, Some(arg)));
+        };
+        if !referent.place || matches!(arg, Expr::Reference { .. }) {
+            return Ok(self.written_admits(expected, found, Some(arg)));
+        }
+        if matches!(found, CheckerType::Reference(..)) {
+            return Err(CompileError::Generic(format!(
+                "`{}` is a reference ({}) given for a parameter written `{}`: code generation \
+                 takes the address of what it is given for such a parameter, and would pass a \
+                 pointer to this pointer. Pass the place it refers to (`*{}`), or a borrow \
+                 written here (`&place`)",
+                arg, found, expected, arg
+            ))
+            .with_code(DiagnosticCode::ReferenceParameterTakesAPlaceOrABorrow));
+        }
+        let place = Referent::of(self.source_of(arg), false);
+        Ok(place == *referent && self.written_admits(referent_type, found, Some(arg)))
+    }
+
+    /// Refuse a reference value as an operand of `op` (PD0081, #88). A reference
+    /// is a C pointer, and every operator here would have applied to the
+    /// POINTER: `r == s` compared addresses (`ne` for `5 == 5`), `s - r` was a
+    /// pointer difference, `r += 1` stepped it, `!r` read its truth. No
+    /// operator on a reference is defined, so none is guessed — not a
+    /// comparison of the values either, which `*r == *s` writes.
+    fn refuse_reference_operand(&self, op: &str, ty: &CheckerType, operand: &Expr) -> Result<()> {
+        if !matches!(ty, CheckerType::Reference(..)) {
+            return Ok(());
+        }
+        Err(CompileError::Generic(format!(
+            "`{}` is a reference ({}), and `{}` is not an operation on references: it would \
+             apply to the address. Dereference it (`*{}`) to use the value it refers to",
+            operand, ty, op, operand
+        ))
+        .with_code(DiagnosticCode::OperatorOperandIsNotAReference))
+    }
+
+    /// The type `*e` reads, for `e` of type `ty`: the referent of a reference
+    /// value. Anything else is refused by name (PD0080) — it was typed as
+    /// itself ("assume dereference returns the same type / TODO") and reached
+    /// gcc as an indirection on a value. A parameter WRITTEN `&T` is the case
+    /// that reads like a reference and is not one: it is read as its referent
+    /// (`check_function`), so `*x` asked for a second dereference, as `*self`
+    /// did before PD0050.
+    fn dereferenced(&self, ty: &CheckerType, e: &Expr) -> Result<CheckerType> {
+        if let CheckerType::Reference(inner, ..) = ty {
+            return Ok(inner.as_ref().clone());
+        }
+        let detail = match e {
+            Expr::Ident(name) if self.is_reference_parameter(name) => format!(
+                "`{}` is a parameter written `&T`, which is already read as its referent: \
+                 `{}` names the value, and `*{}` asks for a second dereference",
+                name, name, name
+            ),
+            _ => format!(
+                "`{}` is a value of type {}, not a reference, so there is nothing to \
+                 dereference",
+                e, ty
+            ),
+        };
+        Err(CompileError::Generic(format!(
+            "`*` dereferences a reference value only: {}",
+            detail
+        ))
+        .with_code(DiagnosticCode::DereferenceNeedsAReferenceValue))
+    }
+
+    /// Is `name` a parameter of the function being checked that is WRITTEN
+    /// `&T` — bound as its referent (`check_function`)?
+    fn is_reference_parameter(&self, name: &str) -> bool {
+        self.symbols.lookup(name).is_some_and(|v| v.read_as_referent)
+    }
+
+    /// The type `expr` has as the SOURCE spells it — widths, signedness and
+    /// references kept, aliases expanded — where this checker can say so
+    /// without guessing (#90): a literal (an integer literal is an `i64`, the
+    /// type code generation declares its binding with), a binding whose
+    /// declaration says (`VarInfo::source`), a borrow or a dereference of such
+    /// a value, an element, a tuple element or a struct field of one, and a
+    /// cast. `None` for anything else — an operator's result, a call's: what
+    /// this checker always said of every width, and not guessed now.
+    fn source_of(&self, expr: &Expr) -> Option<crate::ast::Type> {
+        use crate::ast::Type as T;
+        let mut ty = match expr {
+            Expr::Integer(_) => T::I64,
+            Expr::Float(_) => T::F64,
+            Expr::Bool(_) => T::Bool,
+            Expr::Char(_) => T::Char,
+            Expr::String(_) => T::String,
+            Expr::Ident(name) => self.symbols.lookup(name)?.source.clone()?,
+            Expr::Reference { expr, mutable, .. } => T::Reference {
                 lifetime: None,
                 mutable: *mutable,
-                inner: Box::new(ty),
+                inner: Box::new(self.source_of(expr)?),
             },
-            _ => ty,
-        })
+            Expr::Deref { expr, .. } => match self.source_of(expr)? {
+                T::Reference { inner, .. } => *inner,
+                _ => return None,
+            },
+            Expr::Index { array, .. } => match self.source_of(array)? {
+                T::Array(elem, _) => *elem,
+                _ => return None,
+            },
+            Expr::TupleIndex { expr, index, .. } => match self.source_of(expr)? {
+                T::Tuple(mut elements) if *index < elements.len() => elements.swap_remove(*index),
+                _ => return None,
+            },
+            Expr::FieldAccess { object, field, .. } => {
+                let T::Custom(owner) = self.source_of(object)? else {
+                    return None;
+                };
+                let owner = match owner.as_str() {
+                    "Self" => self.current_impl_type.clone()?,
+                    _ => owner,
+                };
+                self.struct_field_sources.get(&owner)?.get(field)?.clone()
+            }
+            Expr::Cast { ty, .. } => ty.clone(),
+            // The rest mirror the C type code generation declares a binding of
+            // the value with (`try_infer_expr_type` in src/codegen/mod.rs): a
+            // struct literal is its struct; a call, its written return type; an
+            // integer `+ - * / %` a `long long` whatever its operands' widths;
+            // a bitwise operator its left operand's type; a comparison an
+            // `int`; a value `if`, block or `match` its first arm's value; an
+            // array literal its first element's.
+            Expr::StructLiteral { name, .. } => T::Custom(name.clone()),
+            Expr::Call { func, args, .. } => self.call_source(func, args)?,
+            Expr::EnumConstructor {
+                enum_name, variant, ..
+            } => match self.return_sources.get(&format!("{}::{}", enum_name, variant)) {
+                Some(ret) => ret.clone(),
+                None if self.enum_names.contains(enum_name) => T::Custom(enum_name.clone()),
+                None => return None,
+            },
+            Expr::Binary {
+                op, left, right, ..
+            } => match op {
+                BinOp::Eq
+                | BinOp::Ne
+                | BinOp::Lt
+                | BinOp::Gt
+                | BinOp::Le
+                | BinOp::Ge
+                | BinOp::And
+                | BinOp::Or => T::Bool,
+                BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
+                    self.source_of(left)?
+                }
+                _ => {
+                    let sides = [self.source_of(left), self.source_of(right)];
+                    let any = |want: &[T]| sides.iter().flatten().any(|s| want.contains(s));
+                    if any(&[T::String]) {
+                        T::String
+                    } else if any(&[T::F64]) {
+                        T::F64
+                    } else if any(&[T::F32]) {
+                        T::F32
+                    } else if any(&[T::I32, T::I64, T::U32, T::U64]) {
+                        T::I64
+                    } else {
+                        return None;
+                    }
+                }
+            },
+            Expr::Unary { op, operand, .. } => match op {
+                UnaryOp::Not => T::Bool,
+                UnaryOp::Neg | UnaryOp::BitNot => self.source_of(operand)?,
+            },
+            Expr::ArrayLiteral { elements, .. } => T::Array(
+                Box::new(self.source_of(elements.first()?)?),
+                ArraySize::Literal(elements.len()),
+            ),
+            Expr::Tuple { elements, .. } => T::Tuple(
+                elements
+                    .iter()
+                    .map(|e| self.source_of(e))
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            Expr::If { then_value, .. } => self.source_of(then_value.as_deref()?)?,
+            Expr::Block { value, .. } => self.source_of(value.as_deref()?)?,
+            Expr::Match { arms, .. } => self.source_of(arms.first()?.value.as_ref()?)?,
+            _ => return None,
+        };
+        crate::ast::expand_aliases_in_type(&mut ty, &self.type_aliases, &[]);
+        Some(ty)
+    }
+
+    /// `source_of` a call of `func` with `args`: a method's or a function's
+    /// written return type (a generic returning its type parameter returns
+    /// what it was handed for it, as code generation reads it), or a
+    /// built-in's.
+    fn call_source(&self, func: &Expr, args: &[Expr]) -> Option<crate::ast::Type> {
+        use crate::ast::Type as T;
+        let name = match func {
+            Expr::FieldAccess { object, field, .. } => {
+                let T::Custom(owner) = self.source_of(object)? else {
+                    return None;
+                };
+                format!("{}::{}", owner, field)
+            }
+            Expr::Ident(name) => name.clone(),
+            _ => return None,
+        };
+        if let Some(ret) = self.return_sources.get(&name) {
+            return Some(ret.clone());
+        }
+        if let Some(generic) = self.generic_functions.get(&name) {
+            return match generic.return_type.as_ref()? {
+                T::TypeParam(p) | T::Custom(p) if generic.type_params.contains(p) => {
+                    let at = generic.params.iter().position(
+                        |(_, ty)| matches!(ty, T::TypeParam(n) | T::Custom(n) if n == p),
+                    )?;
+                    self.source_of(args.get(at)?)
+                }
+                _ => None,
+            };
+        }
+        use crate::builtins::BuiltinType as B;
+        match crate::builtins::lookup(&name)?.ret {
+            B::I64 => Some(T::I64),
+            B::Str => Some(T::String),
+            B::Bool => Some(T::Bool),
+            B::Char => Some(T::Char),
+            B::Unit => None,
+        }
+    }
+
+    /// Record, on the names `pattern` just bound (`bind_pattern_variables`),
+    /// the source type each has where the declaration says: a variant's
+    /// payload as its enum declares it, a tuple element as the scrutinee's
+    /// source spells it (#90: what `&x` refers to in C).
+    fn record_pattern_sources(&mut self, pattern: &Pattern, source: Option<crate::ast::Type>) {
+        use crate::ast::Type as T;
+        match pattern {
+            Pattern::Ident(name) => self.symbols.set_source(name, source),
+            Pattern::Binding { name, inner } => {
+                self.symbols.set_source(name, source.clone());
+                self.record_pattern_sources(inner, source);
+            }
+            Pattern::Tuple(elements) => {
+                let parts = match source {
+                    Some(T::Tuple(types)) if types.len() == elements.len() => {
+                        types.into_iter().map(Some).collect()
+                    }
+                    _ => vec![None; elements.len()],
+                };
+                for (element, part) in elements.iter().zip(parts) {
+                    self.record_pattern_sources(element, part);
+                }
+            }
+            Pattern::EnumPattern {
+                enum_name,
+                variant,
+                data: Some(data),
+                ..
+            } => {
+                let declared = self
+                    .enum_variant_sources
+                    .get(enum_name)
+                    .and_then(|vs| vs.iter().find(|(v, _)| v == variant))
+                    .map(|(_, d)| d.clone());
+                let expand = |t: &T| {
+                    let mut t = t.clone();
+                    crate::ast::expand_aliases_in_type(&mut t, &self.type_aliases, &[]);
+                    t
+                };
+                match (data, declared) {
+                    (PatternData::Tuple(patterns), Some(crate::ast::EnumVariantData::Tuple(types))) => {
+                        let types: Vec<T> = types.iter().map(expand).collect();
+                        for (p, t) in patterns.iter().zip(types) {
+                            self.record_pattern_sources(p, Some(t));
+                        }
+                    }
+                    (PatternData::Struct(fields), Some(crate::ast::EnumVariantData::Struct(declared))) => {
+                        let found: Vec<(&Pattern, Option<T>)> = fields
+                            .iter()
+                            .map(|(f, p)| {
+                                (p, declared.iter().find(|(n, _)| n == f).map(|(_, t)| expand(t)))
+                            })
+                            .collect();
+                        for (p, t) in found {
+                            self.record_pattern_sources(p, t);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
     }
 
     /// `is_or_names`, or a reference taken where it is written to a value of
-    /// what the field's alias names (`lossless_value`): a generic struct's
+    /// what the field's alias names (`lossless`, which since #88 reads `&m` as
+    /// the reference it is typed as): a generic struct's
     /// field written `n: A` under `type A = &i64` takes `&m`. A LITERAL is a
     /// value like any other (review round 8: `G { v: 1, n: 7 }` under
     /// `type N = u32` ran on 144a493 and printed `4294967288`; main refused
@@ -7764,7 +8428,7 @@ impl TypeChecker {
         self.is_or_names(found, expected)
             || (matches!(value, Expr::Reference { .. })
                 && found == expected
-                && !self.misnamed(expected, self.lossless_value(found, Some(value))))
+                && !self.misnamed(expected, self.lossless(found)))
     }
 
     /// The type a value passed for a type parameter has, where this checker
@@ -7970,7 +8634,8 @@ impl CheckerType {
             | CheckerType::Char(d)
             | CheckerType::Struct(_, d)
             | CheckerType::Enum(_, d)
-            | CheckerType::Tuple(_, d) => Some(d),
+            | CheckerType::Tuple(_, d)
+            | CheckerType::Reference(_, _, d) => Some(d),
             _ => None,
         }
     }
@@ -7994,7 +8659,8 @@ impl CheckerType {
             | CheckerType::Char(d)
             | CheckerType::Struct(_, d)
             | CheckerType::Enum(_, d)
-            | CheckerType::Tuple(_, d) => Some(d),
+            | CheckerType::Tuple(_, d)
+            | CheckerType::Reference(_, _, d) => Some(d),
             _ => None,
         }
     }
@@ -9177,6 +9843,12 @@ mod tests {
             mutable,
             inner: Box::new(t),
         };
+        // A reference is a reference since #88; the kind is decided BELOW it.
+        // The referent's source spelling is left unknown here (`Referent`
+        // compares it only where both sides know it).
+        let cref = |t: CheckerType| {
+            CheckerType::Reference(Box::new(t), Referent::of(None, false), DeclaredAs(None, false))
+        };
         let cases: Vec<(&str, Type, CheckerType)> = vec![
             ("K", k(), ek()),
             ("[K; 4]", arr(k(), 4), carr(ek(), 4)),
@@ -9186,9 +9858,9 @@ mod tests {
                 Type::Tuple(vec![k(), Type::I64]),
                 CheckerType::tuple(vec![ek(), CheckerType::INT]),
             ),
-            ("&K", reference(k(), false), ek()),
-            ("&mut K", reference(k(), true), ek()),
-            ("&[K; 3]", reference(arr(k(), 3), false), carr(ek(), 3)),
+            ("&K", reference(k(), false), cref(ek())),
+            ("&mut K", reference(k(), true), cref(ek())),
+            ("&[K; 3]", reference(arr(k(), 3), false), cref(carr(ek(), 3))),
             (
                 "Box2<[K; 2]>",
                 Type::Generic {

@@ -220,10 +220,11 @@ fixtures — `grep -rn lifetime_params src/ --include='*.rs' | grep -v '^src/par
 nothing else. There is no region inference of any kind: `grep -rn 'region\|Region' src/
 --include='*.rs'` returns nothing.
 
-**4. References are not a type.** The type checker maps `Type::Reference { inner, .. }` to the
-inner type — "For now, treat references as the inner type / TODO: Proper reference type handling"
-(`src/typeck/mod.rs:744-748`). `&i64` and `i64` are indistinguishable to it, so no lifetime
-relation could be inferred even if the machinery existed.
+**4. References are a type with no lifetime in it.** Until #88/#90 the type checker mapped
+`Type::Reference { inner, .. }` to the inner type, and `&i64` and `i64` were indistinguishable to
+it. It now has a reference type (`src/typeck/mod.rs:848-855`) — "A reference is a reference" —
+whose referent keeps its integer width, but the type carries no lifetime and no region, so no
+lifetime relation could be inferred even if the machinery existed.
 
 **5. What exists instead is a move/initialization discipline.**
 `src/ownership/borrow_checker.rs` tracks moves and conflicting borrows over a scope

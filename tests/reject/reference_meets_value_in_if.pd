@@ -1,0 +1,38 @@
+// #88, THE MERGE SHAPE. A plain reference value meets an `i64` in a value `if`,
+// and it is refused BY NAME: the two branches are two types.
+//
+// `get` on S2 returns `&i64`. The type checker answered every reference with its
+// referent's type, so `a` (an `i64`) and `b` (a `&i64`) were one type here, and
+// the `if` hoisted both into ONE C temporary. MEASURED on d5166e8 before this
+// refusal: "gcc compilation failed" — a pointer assigned to a `long long`. The
+// alias spelling of the same program (`type N = i64`, `fn get(&self) -> N`)
+// failed the same way.
+struct S1 {
+    n: i64,
+}
+
+impl S1 {
+    fn get(&self) -> i64 {
+        return 4294967297;
+    }
+}
+
+struct S2 {
+    n: i64,
+}
+
+impl S2 {
+    fn get(&self) -> &i64 {
+        return &self.n;
+    }
+}
+
+fn main() {
+    let sa = S1 { n: 0 };
+    let a = sa.get();
+    let sb = S2 { n: 9 };
+    let b = sb.get();
+    let c = true;
+    let r = if c { a } else { b };
+    print_int(r);
+}

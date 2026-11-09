@@ -2121,9 +2121,12 @@ fn the_legal_neighbours_of_the_codegen_family_still_compile_link_and_run() {
 #[test]
 fn the_su4_positions_the_corpus_does_not_witness_carry_the_code_too() {
     let cases: &[(&str, &str, &str, &str)] = &[
+        // The field is read as `(*r).x`: `r.x` reads a field through a
+        // reference local, which reached gcc on main once `v` was `mut`, and
+        // is refused by the type checker before the borrow checker since #88.
         (
             "PD0012, an explicit `&mut` OUTSIDE a call (the corpus borrows inside one)",
-            "struct S {\n    x: i64,\n}\n\nfn main() {\n    let v: S = S { x: 1 };\n    let r: &mut S = &mut v;\n    print_int(r.x);\n}\n",
+            "struct S {\n    x: i64,\n}\n\nfn main() {\n    let v: S = S { x: 1 };\n    let r: &mut S = &mut v;\n    print_int((*r).x);\n}\n",
             "PD0012",
             "cannot borrow `v` as mutable: it is not declared mutable",
         ),

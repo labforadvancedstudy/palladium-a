@@ -1,0 +1,14 @@
+// #90, THE WIDTH SHAPE through an alias: the same program as
+// tests/reject/reference_width_annotation.pd with the reference written as
+// `type A = &u32`, refused by the same rule and the same words.
+//
+// MEASURED on d5166e8 before this refusal: "internal compiler error: the C
+// backend emitted ill-typed C" for this and for its alias-free twin alike. An
+// alias is expanded before its referent is compared, so `A` is a `&u32`.
+type A = &u32;
+
+fn main() {
+    let m = 4294967297;
+    let v: A = &m;
+    print_int(*v);
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The evidence gate for stable diagnostic codes — GI-12 spec D4/R2.
 #
-# WHAT THIS TARGET IS NOT. It is NOT a second runner over the 123 reject rows.
+# WHAT THIS TARGET IS NOT. It is NOT a second runner over the 129 reject rows.
 # A gate that re-executed the corpus its own way would be a second authority, and
 # two authorities over one question means the weaker one decides every
 # disagreement — in practice the one that says PASS. Execution belongs to
@@ -472,6 +472,13 @@ check_codes_pinned() {       # $1 = registry, $2 = manifest -> 0 clean / 1 compl
 #   re-pinned 033dffe3… at #93 review round 4: 127 rows, ONE ADDED —
 #   tests/reject/generic_parameter_named_twice.pd (reject|compile, PD0081).
 REFUSAL_SET_SHA=033dffe37446920d49b68402a45dfb2c88f71d746443f651a39e7225d87c9047
+#   (#88/#90, rebased onto 2ca5eb5: re-pinned below) SIX ADDED, all reject|compile —
+#   tests/reject/reference_meets_value_in_if.pd (PD0058),
+#   tests/reject/reference_width_annotation.pd and
+#   tests/reject/reference_width_alias_annotation.pd (PD0022),
+#   tests/reject/deref_needs_a_reference.pd (PD0082),
+#   tests/reject/reference_operands_compared.pd (PD0083),
+#   tests/reject/held_reference_to_reference_parameter.pd (PD0084).
 # THE SIZE OF THAT SET, pinned beside it and re-pinned by the same deliberate
 # edit. Every row of the set is at stage compile and pins a code, so this is also
 # the number of code-pinned refusal rows and the `coded=` conformance must report.

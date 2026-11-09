@@ -1,0 +1,20 @@
+// `r == s` over two references is refused BY NAME: no operator applies to a
+// reference, and this one applied to the ADDRESSES.
+//
+// A reference is a C pointer. The type checker typed `&a` as `a`, so `==` saw
+// two `i64`s and code generation emitted a pointer comparison. MEASURED on
+// d5166e8 before this refusal: it compiled, ran, exited 0 and printed `ne` for
+// `5 == 5` — the silent-wrong-result class. `s - r` printed `-1` for `7 - 5`
+// (a pointer difference), `r += 1` stepped the pointer, `!r` and `while r` read
+// a pointer's truth (the second never ended). `*r == *s` compares the values.
+fn main() {
+    let a: i64 = 5;
+    let b: i64 = 5;
+    let r = &a;
+    let s = &b;
+    if r == s {
+        print("eq");
+    } else {
+        print("ne");
+    }
+}

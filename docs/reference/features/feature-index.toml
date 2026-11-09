@@ -177,13 +177,15 @@ implementation = "partial"
 evidence = [
   "conformance: tests/05_ownership_basic.pd run",
   "conformance: tests/05_borrowing_references.pd run",
-  "src: src/typeck/mod.rs:744-748 Type::Reference maps to its inner type — 'TODO: Proper reference type handling'",
+  "src: src/typeck/mod.rs:848-855 a written `&T` is `CheckerType::Reference` with its referent recorded (#88, #90) — 'A reference is a reference' — and no lifetime or borrow region in it",
+  "conformance: tests/reject/reference_meets_value_in_if.pd reject",
+  "conformance: tests/reject/reference_width_annotation.pd reject",
   "src: src/ownership/borrow_checker.rs:1015 let call_lifetime = self.context.new_lifetime() — each call gets its own lifetime",
   "src: src/ownership/borrow_checker.rs:1021 self.context.end_borrows(&call_lifetime) — argument borrows end with the call",
   "conformance: tests/regression/param_reused_after_call.pd run",
   "conformance: tests/reject/mut_borrow_of_immutable.pd reject",
 ]
-note = "Enforces a move/initialization discipline and conflicting-borrow detection, but is not represented in the type system. The \"known defect\" this note used to record -- `&mut` of an immutable local accepted for struct types -- was a `cmd:` string no gate ran; executed on 2026-08-22 the borrow checker refuses that program and names the repair, so the defect is retracted and tests/reject/mut_borrow_of_immutable.pd pins the refusal. Defect D6 (\"call arguments borrowed forever\") was FIXED in commit 191f8c1; its retraction is now a passing fixture rather than a sentence. CLAUDE.md still lists D6 as open and is stale."
+note = "Enforces a move/initialization discipline and conflicting-borrow detection, but borrows are not represented in the type system: since #88/#90 the type checker gives a reference a type of its own -- `&T` is not `T`, and its referent keeps its integer width -- but that type carries no lifetime and no borrow region, so nothing about how long a borrow lives is a type. The \"known defect\" this note used to record -- `&mut` of an immutable local accepted for struct types -- was a `cmd:` string no gate ran; executed on 2026-08-22 the borrow checker refuses that program and names the repair, so the defect is retracted and tests/reject/mut_borrow_of_immutable.pd pins the refusal. Defect D6 (\"call arguments borrowed forever\") was FIXED in commit 191f8c1; its retraction is now a passing fixture rather than a sentence. CLAUDE.md still lists D6 as open and is stale."
 
 [core_language.memory_management.unsafe_blocks]
 description = "Restricted unsafe with side-channel protection; forbidden in #![total(strict)] crates."
