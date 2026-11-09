@@ -171,9 +171,9 @@ emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:215-215
 `src/typeck/mod.rs:1128-1128`) emitted by iterating `.keys()`.
 
 **Both are now ordered, and this paragraph was written before they were.** Every one of the four
-sites sorts before it emits: the imported-module walks at `src/codegen/mod.rs:3073-3074` and
+sites sorts before it emits: the imported-module walks at `src/codegen/mod.rs:3100-3101` and
 `src/typeck/mod.rs:1529-1529`, the two later codegen walks off their own sorted locals
-(`src/codegen/mod.rs:3167-3167`, `src/codegen/mod.rs:4142-4142`), and the instantiation keys at
+(`src/codegen/mod.rs:3194-3194`, `src/codegen/mod.rs:4169-4169`), and the instantiation keys at
 `src/typeck/mod.rs:6519-6520` and `src/typeck/mod.rs:6578-6582`. Pinned by
 `tests/m3_imported_calls.rs` — `test_the_whole_emitted_c_is_byte_stable`,
 `test_modules_and_generics_together_are_byte_stable`,
@@ -1349,7 +1349,7 @@ owner's.
 
 ### F11. The async producer was alive and violated N7 — CLOSED
 
-M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:7747-7751` returns
+M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:7774-7778` returns
 `CompileError::await_unimplemented`. The **producer** was not touched: code generation dispatched
 on `func.is_async` into `generate_async_function_with_name`, which emitted a `Future` struct and a
 poll routine commented "Simplified async - immediately ready".
@@ -1373,7 +1373,7 @@ representation."* A `struct` with a `state` field, emitted into the program's ow
 representation.
 
 **CLOSED.** `async fn` is refused at the construct — in the type checker (`src/typeck/mod.rs`,
-`check_function`) and again at the defect in code generation (`src/codegen/mod.rs:4562-4568`), the
+`check_function`) and again at the defect in code generation (`src/codegen/mod.rs:4589-4595`), the
 same double placement `?` and `.await` already had. The emitter is **deleted**, not merely
 unreachable: a private method nothing calls is one edit away from being called again. No line of
 `src/codegen/mod.rs` now writes `_Future` or `_poll` into the C, and

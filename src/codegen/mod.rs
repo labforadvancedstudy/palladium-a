@@ -374,6 +374,11 @@ struct LetFacts {
     escapes: bool,
     /// Its initializer's needs, then every assignment's, all to hold.
     needs: Vec<OriginNeed>,
+    /// Its initializer names the binding's OWN name (`let mut r = r;`, review
+    /// round 5). The source means the outer `r`; the C declaration `T* r = r;`
+    /// puts the new `r` in scope inside its own initializer, so the pointer is
+    /// read uninitialized (found f10). Never proven.
+    self_initialized: bool,
 }
 
 /// Every `let` binding of one function body, resolved through the scope chain
@@ -403,6 +408,9 @@ struct ReferenceWalk<'a> {
     functions: &'a std::collections::HashMap<String, (Vec<Param>, Option<Type>)>,
     methods: &'a std::collections::HashMap<String, Vec<Param>>,
     facts: ReferenceFacts,
+    /// The names of the `let`s whose initializers are being walked, each with
+    /// whether its initializer has named it (`LetFacts::self_initialized`).
+    initializing: Vec<(String, bool)>,
 }
 
 impl ReferenceFacts {
@@ -437,6 +445,7 @@ impl ReferenceFacts {
             functions,
             methods,
             facts: ReferenceFacts::default(),
+            initializing: Vec::new(),
         };
         walk.block(&func.body);
         walk.facts
@@ -489,6 +498,16 @@ impl ReferenceWalk<'_> {
         }
     }
 
+    /// A name read or written while `let`s are being initialized: a `let` of the
+    /// same name is initializing from itself in the emitted C.
+    fn named(&mut self, name: &str) {
+        for (initializing, named) in self.initializing.iter_mut() {
+            if initializing == name {
+                *named = true;
+            }
+        }
+    }
+
     /// A `let` binding's address leaves the reach of `r = ..`.
     fn escape(&mut self, name: &str) {
         if let Some(Bound::Let(key)) = self.resolve(name).cloned() {
@@ -507,23 +526,23 @@ impl ReferenceWalk<'_> {
             Stmt::Let {
                 name, value, span, ..
             } => {
+                self.initializing.push((name.clone(), false));
                 self.expr(value);
+                let self_initialized = self.initializing.pop().is_some_and(|(_, named)| named);
                 let key: LetKey = (name.clone(), span.start, span.end);
                 let needs = self.needs_of(value);
                 if self.facts.lets.contains_key(&key) {
                     self.facts.ambiguous.insert(key.clone());
                 }
-                self.facts
-                    .lets
-                    .entry(key.clone())
-                    .or_default()
-                    .needs
-                    .extend(needs);
+                let facts = self.facts.lets.entry(key.clone()).or_default();
+                facts.needs.extend(needs);
+                facts.self_initialized |= self_initialized;
                 self.bind(name, Bound::Let(key));
             }
             Stmt::Assign { target, value, .. } => {
                 match target {
                     AssignTarget::Ident(name) => {
+                        self.named(name);
                         if let Some(Bound::Let(key)) = self.resolve(name).cloned() {
                             let needs = self.needs_of(value);
                             self.facts.lets.entry(key).or_default().needs.extend(needs);
@@ -718,8 +737,8 @@ impl ReferenceWalk<'_> {
             }
             // Expanded before code generation.
             Expr::MacroInvocation { .. } => {}
-            Expr::Ident(_)
-            | Expr::String(_)
+            Expr::Ident(name) => self.named(name),
+            Expr::String(_)
             | Expr::Integer(_)
             | Expr::Float(_)
             | Expr::Char(_)
@@ -1906,6 +1925,14 @@ impl CodeGenerator {
         let Some(facts) = self.reference_facts.lets.get(key) else {
             return Err(format!("`let {}` is not one the body was read for", name));
         };
+        if facts.self_initialized {
+            return Err(format!(
+                "its initializer names `{n}` itself, and the emitted C declaration puts the new \
+                 `{n}` in scope there (`T* {n} = {n};` reads the binding being declared, \
+                 uninitialized: found f10), so what it holds is not known. Rename the binding",
+                n = name
+            ));
+        }
         if facts.escapes {
             return Err(format!(
                 "its address is taken (`&{n}`, `&mut {n}`) or it is passed to a parameter that \

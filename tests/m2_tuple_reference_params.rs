@@ -550,6 +550,54 @@ fn a_reference_re_pointed_only_at_writable_places_stays_proven() {
     check(&table, "ref_tuple_proven");
 }
 
+/// Review round 5 (astra): a `let` whose initializer reads its OWN name. The
+/// source means the outer binding, but the C declaration `T* r = r;` puts the
+/// new `r` in scope inside its own initializer (found f10: `let x = x + 1` in
+/// an inner block prints garbage on main), so the inner reference is
+/// uninitialized. Judged as a copy of the proven outer `r`, `set(*r)` was let
+/// through and the program died on signal 5 (rc 133) on f87fb3b; the by-value
+/// row died on main too. Such a binding is never proven; renamed, it runs.
+#[test]
+fn a_let_that_reads_its_own_name_is_never_proven() {
+    let set = "fn set(q: &mut (i64, i64)) { *q = (97, 83); }\n";
+    let m = "fn m(mut x: (i64, i64)) { x = (97, 83); }\n";
+    let out = "print_int(a.0); print_int(a.1); }\n";
+    let refused: [(&str, String); 3] = [
+        ("`let mut r = r;` under `&mut *p` of a tuple parameter", format!("{set}fn f(p: &mut (i64, i64)) {{ let mut r = &mut *p; if true {{ let mut r = r; set(*r); }} }}\nfn main() {{ let mut a = (11, 29); f(&mut a); {out}")),
+        ("`let mut r = &mut *r;`", format!("{set}fn main() {{ let mut a = (11, 29); let mut r = &mut a; if true {{ let mut r = &mut *r; set(*r); }} {out}")),
+        ("`let mut r = r;` into a by-value `mut` (died on main too)", format!("{m}fn main() {{ let mut a = (11, 29); let mut r = &mut a; if true {{ let mut r = r; m(*r); }} {out}")),
+    ];
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    for (shape, program) in &refused {
+        let verdict = outcome(program, "ref_tuple_selfinit");
+        let refused_here = verdict.starts_with("REFUSED: ")
+            && verdict.contains("its initializer names `r` itself");
+        got.push(format!(
+            "{}: {}",
+            shape,
+            if refused_here { "REFUSED by name" } else { &verdict }
+        ));
+        want.push(format!("{}: REFUSED by name", shape));
+    }
+    assert_eq!(got, want);
+    check(
+        &[
+            (
+                "renamed: `let mut s = r;` under `&mut *p`",
+                &format!("{set}fn f(p: &mut (i64, i64)) {{ let mut r = &mut *p; if true {{ let mut s = r; set(*s); }} }}\nfn main() {{ let mut a = (11, 29); f(&mut a); {out}"),
+                "RUN: 97\n83\n",
+            ),
+            (
+                "renamed: `let mut s = r;` into a by-value `mut`",
+                &format!("{m}fn main() {{ let mut a = (11, 29); let mut r = &mut a; if true {{ let mut s = r; m(*s); }} {out}"),
+                "RUN: 97\n83\n",
+            ),
+        ],
+        "ref_tuple_selfinit_ok",
+    );
+}
+
 /// What the local-reference rule leaves running: a reference bound once with
 /// `&mut` (even in a `mut` binding), a proven inner shadow beside a shared
 /// outer one, and reads through a shared local.
