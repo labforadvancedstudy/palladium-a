@@ -159,6 +159,13 @@ pub struct CodeGenerator {
     /// which neither the C type of the binding nor `mutable_params` says.
     /// Filled and cleared with `mutable_params`.
     tuple_reference_params: std::collections::HashMap<String, bool>,
+    /// The one `&`-expression, by node address, that the call being emitted
+    /// lends straight to a SHARED reference parameter while it is rooted in a
+    /// shared reference-to-tuple parameter (issue #84, review round 1). Every
+    /// other `&` of such a place is refused by the `Expr::Reference` arm; see
+    /// `check_tuple_reference_lending`. An address, because the decision is
+    /// about one node of one call and must not leak to any other.
+    lent_shared_tuple_reference: Option<usize>,
     /// When the function being generated returns UNIT in Palladium, the C
     /// return statement that must replace a value-bearing one — and `None`
     /// when it genuinely returns a value.
@@ -335,6 +342,7 @@ impl CodeGenerator {
             array_bindings: std::collections::HashMap::new(),
             mutable_params: std::collections::HashMap::new(),
             tuple_reference_params: std::collections::HashMap::new(),
+            lent_shared_tuple_reference: None,
             imported_modules: std::collections::HashMap::new(),
             generic_instantiations: Vec::new(),
             generic_struct_instantiations: Vec::new(),
@@ -1098,7 +1106,17 @@ impl CodeGenerator {
     /// `place`; the parser), and `p.0.f = v` writes into an element, which the
     /// borrow checker refuses as "Cannot assign to temporary value" — through
     /// `&mut` as well, measured.
-    fn check_tuple_reference_write(&self, target: &AssignTarget) -> Result<()> {
+    ///
+    /// Through a `&mut` one, the VALUE must be of the referent's C struct (review
+    /// round 1). The type checker does not compare a `*p = v` value with what `p`
+    /// points at, and code generation names a tuple literal's struct from its
+    /// elements' own C types — so `(1, 2)` into `&mut (i32, i64)`, a struct
+    /// parameter's value as an element (spelled `P`, not `struct P`), a tuple of
+    /// another shape or a scalar each reached gcc as an assignment between
+    /// incompatible types. Refused by name; the same values through a local
+    /// `&mut` reach gcc on main too (found f8, f9). A value whose C type this pass
+    /// cannot infer is left to the emitter, as every other assignment is.
+    fn check_tuple_reference_write(&self, target: &AssignTarget, value: &Expr) -> Result<()> {
         let name = match target {
             AssignTarget::Ident(name) => name.as_str(),
             AssignTarget::Deref { expr } => match expr.as_ref() {
@@ -1107,17 +1125,139 @@ impl CodeGenerator {
             },
             _ => return Ok(()),
         };
-        if self.tuple_reference_param(&Expr::Ident(name.to_string())) != Some(false) {
-            return Ok(());
+        match self.tuple_reference_param(&Expr::Ident(name.to_string())) {
+            None => Ok(()),
+            Some(false) => Err(CompileError::CodegenError {
+                message: format!(
+                    "cannot write through `{}`: it is a shared reference to a tuple, `&(..)`, \
+                     and a shared reference does not permit mutation. Declare it `&mut (..)` if \
+                     this function is meant to modify the caller's tuple",
+                    name
+                ),
+            }),
+            Some(true) => {
+                let (Some(referent), Some(written)) =
+                    (self.variables.get(name), self.try_infer_expr_type(value))
+                else {
+                    return Ok(());
+                };
+                if *referent == written {
+                    return Ok(());
+                }
+                Err(CompileError::CodegenError {
+                    message: format!(
+                        "cannot write through `{}`: it points at the C struct `{}`, and the value \
+                         is `{}`. Code generation builds a tuple's struct from its elements' own \
+                         C types, so a value of another shape, of another integer width, or with \
+                         a struct element spelled without its tag cannot be stored there. Build \
+                         the value from elements of exactly the tuple's types",
+                        name, referent, written
+                    ),
+                })
+            }
         }
-        Err(CompileError::CodegenError {
-            message: format!(
-                "cannot write through `{}`: it is a shared reference to a tuple, `&(..)`, and \
-                 a shared reference does not permit mutation. Declare it `&mut (..)` if this \
-                 function is meant to modify the caller's tuple",
-                name
-            ),
-        })
+    }
+
+    /// The SHARED reference-to-tuple parameter a place is rooted in, through
+    /// `*`, `.0`, `.f`, `[i]` and `&` (issue #84, review round 1).
+    fn shared_tuple_reference_root(&self, expr: &Expr) -> Option<String> {
+        let mut place = expr;
+        loop {
+            match place {
+                Expr::Deref { expr, .. }
+                | Expr::TupleIndex { expr, .. }
+                | Expr::Reference { expr, .. } => place = expr,
+                Expr::FieldAccess { object, .. } => place = object,
+                Expr::Index { array, .. } => place = array,
+                Expr::Ident(name) => {
+                    return (self.tuple_reference_param(place) == Some(false))
+                        .then(|| name.clone());
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    /// What a call may do with a reference to a tuple (issue #84, review round 1).
+    ///
+    /// The type checker does not tell `&` from `&mut` (`src/typeck/mod.rs`,
+    /// `Type::Reference` is its inner type), and C drops `const` from a pointer
+    /// with a warning this compiler does not make fatal (`src/linker.rs`), so a
+    /// shared tuple reference handed on as a writable pointer was written
+    /// through SILENTLY — measured in review: `set(&p)`, `set(&p, 97)` into a
+    /// generic `&mut (T, T)`, `set(p)` from `mut p: &(A, B)`, and `set(&t)` of
+    /// an immutable `t`, each turned `(11, 29)` into `(97, 83)`. Refused by
+    /// name, each one, because a shared reference does not permit mutation:
+    ///
+    /// * a shared reference-to-tuple parameter, by name, to a parameter that
+    ///   may write through what it receives (`&mut`, or `mut` — both pointers);
+    /// * a `&` of a place rooted in one, to anything but a SHARED reference
+    ///   parameter — the one place that `&` keeps its `const`; the answer
+    ///   `Some(address)` marks that argument for the `Expr::Reference` arm,
+    ///   which refuses every other `&` of such a place (a local, a result, a
+    ///   field, an unknown callee's argument);
+    /// * a shared borrow `&x`, of anything, to a `&mut (..)` tuple parameter.
+    fn check_tuple_reference_lending(
+        &self,
+        param: Option<&Param>,
+        arg: &Expr,
+        index: usize,
+        callee: &str,
+    ) -> Result<Option<usize>> {
+        let writable = param
+            .is_some_and(|p| p.mutable || matches!(p.ty, Type::Reference { mutable: true, .. }));
+        let shared_reference = param
+            .is_some_and(|p| !p.mutable && matches!(p.ty, Type::Reference { mutable: false, .. }));
+        let refuse = |message: String| Err(CompileError::CodegenError { message });
+        match arg {
+            Expr::Ident(name) if writable && self.tuple_reference_param(arg) == Some(false) => {
+                refuse(format!(
+                    "cannot pass `{}` as argument {} of `{}`: it is a shared reference to a \
+                     tuple, `&(..)`, and that parameter may write through what it is given \
+                     (`&mut`, or `mut`). Declare `{}` as `&mut (..)` if the caller's tuple is \
+                     meant to change",
+                    name,
+                    index + 1,
+                    callee,
+                    name
+                ))
+            }
+            Expr::Reference { mutable, .. } => {
+                if let Some(root) = self.shared_tuple_reference_root(arg) {
+                    if shared_reference {
+                        return Ok(Some(arg as *const Expr as usize));
+                    }
+                    return refuse(format!(
+                        "cannot pass a reference into `{}` as argument {} of `{}`: `{}` is a \
+                         shared reference to a tuple, `&(..)`, and a reference taken from it may \
+                         only be lent on to a `&` parameter, which cannot write through it",
+                        root,
+                        index + 1,
+                        callee,
+                        root
+                    ));
+                }
+                let writes_a_tuple = match param.map(|p| &p.ty) {
+                    Some(Type::Reference {
+                        mutable: true,
+                        inner,
+                        ..
+                    }) => self.is_tuple(inner, 0),
+                    _ => false,
+                };
+                if !*mutable && writes_a_tuple {
+                    return refuse(format!(
+                        "cannot pass a shared borrow `&..` as argument {} of `{}`: the parameter \
+                         is `&mut (..)`, which writes the tuple it is given, and a shared borrow \
+                         does not permit mutation. Write `&mut` of a `mut` binding",
+                        index + 1,
+                        callee
+                    ));
+                }
+                Ok(None)
+            }
+            _ => Ok(None),
+        }
     }
 
     /// The variable an assignment ultimately writes into: `xs[i].f` -> `xs`.
@@ -4066,7 +4206,7 @@ impl CodeGenerator {
                 if let Some(root) = Self::assign_target_root(target) {
                     self.check_array_write(root)?;
                 }
-                self.check_tuple_reference_write(target)?;
+                self.check_tuple_reference_write(target, value)?;
                 self.output.push_str("    ");
                 match target {
                     AssignTarget::Ident(name) => {
@@ -6319,10 +6459,23 @@ impl CodeGenerator {
                     _ => "<indirect>".to_string(),
                 };
 
+                // Saved and restored around the loop: an argument may itself
+                // contain a call, and its loop must not hand this one a marker.
+                let outer_lent = self.lent_shared_tuple_reference.take();
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
                         self.output.push_str(", ");
                     }
+
+                    // Issue #84, review round 1: a shared tuple reference is lent
+                    // on only as shared. Decided before anything of the argument is
+                    // emitted, on both the hoisted and the in-place path below.
+                    self.lent_shared_tuple_reference = self.check_tuple_reference_lending(
+                        func_params.as_ref().and_then(|params| params.get(i)),
+                        arg,
+                        i,
+                        &callee,
+                    )?;
 
                     // Does this parameter arrive as a POINTER? The call side used to ask a
                     // NARROWER question than the declaration side: `param.mutable` alone,
@@ -6410,6 +6563,7 @@ impl CodeGenerator {
                         self.generate_expression(Self::not_an_array_literal(arg, i, &callee)?)?;
                     }
                 }
+                self.lent_shared_tuple_reference = outer_lent;
                 self.output.push(')');
                 if matches!(func.as_ref(), Expr::Ident(name) if name == "panic") {
                     self.output.push_str(", abort())");
@@ -6738,7 +6892,28 @@ impl CodeGenerator {
                     }
                 }
             }
-            Expr::Reference { expr, .. } => {
+            Expr::Reference { expr: operand, .. } => {
+                // Issue #84, review round 1. A `&` of a place rooted in a SHARED
+                // reference-to-tuple parameter is a `T*` in C — the `const` of
+                // the parameter does not survive it — so anywhere but straight
+                // into a `&` parameter (marked by the call that lends it,
+                // `check_tuple_reference_lending`) it was a way to write the
+                // caller's tuple: `let r = &p; *r = (97, 83);` did.
+                if let Some(root) = self.shared_tuple_reference_root(operand) {
+                    if self.lent_shared_tuple_reference != Some(expr as *const Expr as usize) {
+                        return Err(CompileError::CodegenError {
+                            message: format!(
+                                "cannot take a reference into `{}` here: it is a shared \
+                                 reference to a tuple, `&(..)`, and a reference taken from it \
+                                 may only be handed straight to a `&` parameter. Bound to a \
+                                 local, returned, stored, or given to any other parameter, it \
+                                 would be a pointer the caller's tuple can be written through. \
+                                 Read it through `{}` itself, or declare `{}` as `&mut (..)`",
+                                root, root, root
+                            ),
+                        });
+                    }
+                }
                 // Generate reference (address-of) expression.
                 // C doesn't distinguish between & and &mut.
                 //
@@ -6747,13 +6922,13 @@ impl CodeGenerator {
                 // operand must *decay* rather than have its address taken —
                 // `&arr` would be a `T (*)[N]`, a different pointer type.
                 let is_array = self
-                    .try_infer_expr_type(expr)
+                    .try_infer_expr_type(operand)
                     .is_some_and(|ty| ty.contains('['));
                 if is_array {
-                    self.generate_expression(expr)?;
+                    self.generate_expression(operand)?;
                 } else {
                     self.output.push_str("(&(");
-                    self.generate_expression(expr)?;
+                    self.generate_expression(operand)?;
                     self.output.push_str("))");
                 }
             }

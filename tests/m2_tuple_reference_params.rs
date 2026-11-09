@@ -337,6 +337,93 @@ fn a_write_through_a_shared_tuple_reference_is_refused_by_name() {
     }
 }
 
+/// A SHARED tuple reference is never lent on as a writable pointer (review
+/// round 1). The type checker does not tell `&` from `&mut`, and C drops a
+/// pointer's `const` with a warning only, so each of these turned the caller's
+/// immutable `(11, 29)` into `(97, 83)` before it was refused — silently. Every
+/// one is refused by THIS compiler's code generation, by name.
+#[test]
+fn a_shared_tuple_reference_is_never_lent_on_as_writable() {
+    let set = "fn set(q: &mut (i64, i64)) { *q = (97, 83); }\n";
+    let main = "fn main() { let t = (11, 29); f(&t); print_int(t.0); print_int(t.1); }\n";
+    let rows: [(&str, String, &str); 10] = [
+        ("`set(&p)`: a reborrow handed to `&mut`", format!("{set}fn f(p: &(i64, i64)) {{ set(&p); }}\n{main}"), "a reference taken from it may only be lent on to a `&` parameter"),
+        ("`let r = &p; *r = ..`: a local alias", format!("fn f(p: &(i64, i64)) {{ let r = &p; *r = (97, 83); }}\n{main}"), "may only be handed straight to a `&` parameter"),
+        ("`set(&p, 97)` into a generic `&mut (T, T)`", format!("fn set<T>(q: &mut (T, T), x: T) {{ *q = (x, x); }}\nfn f(p: &(i64, i64)) {{ set(&p, 97); }}\n{main}"), "a reference taken from it may only be lent on to a `&` parameter"),
+        ("`set(p)` from `mut p: &(..)`", format!("{set}fn f(mut p: &(i64, i64)) {{ set(p); }}\n{main}"), "that parameter may write through what it is given"),
+        ("`set(&mut p)` from `mut p: &(..)`", format!("{set}fn f(mut p: &(i64, i64)) {{ set(&mut p); }}\n{main}"), "a reference taken from it may only be lent on to a `&` parameter"),
+        ("`m(p)` from `mut p: &(..)` to a `mut` by-value parameter", format!("fn m(mut u: (i64, i64)) {{ u = (97, 83); }}\nfn f(mut p: &(i64, i64)) {{ m(p); }}\n{main}"), "that parameter may write through what it is given"),
+        ("a method's `&mut (..)` parameter", format!("struct S {{ k: i64 }}\nimpl S {{ fn m(&self, q: &mut (i64, i64)) {{ *q = (97, 83); }} }}\nfn f(p: &(i64, i64)) {{ let s = S {{ k: 1 }}; s.m(&p); }}\n{main}"), "a reference taken from it may only be lent on to a `&` parameter"),
+        ("`&p` inside a tuple literal", format!("fn f(p: &(i64, i64)) {{ let u = (&p, 1); print_int(u.1); }}\n{main}"), "may only be handed straight to a `&` parameter"),
+        ("`set(&t)`: a shared borrow of an immutable local handed to `&mut`", format!("{set}fn main() {{ let t = (11, 29); set(&t); print_int(t.0); print_int(t.1); }}\n"), "a shared borrow does not permit mutation"),
+        ("`set(&a[0])`: a shared borrow of an element handed to `&mut`", format!("{set}fn main() {{ let a = [(11, 29), (1, 2)]; set(&a[0]); print_int(a[0].0); }}\n"), "a shared borrow does not permit mutation"),
+    ];
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    for (shape, program, fragment) in &rows {
+        let verdict = outcome(program, "ref_tuple_lend");
+        let refused_here = verdict.starts_with("REFUSED: ") && verdict.contains(fragment);
+        let seen = if refused_here {
+            "REFUSED by name"
+        } else {
+            &verdict
+        };
+        got.push(format!("{}: {}", shape, seen));
+        want.push(format!("{}: REFUSED by name", shape));
+    }
+    assert_eq!(got, want);
+}
+
+/// `*p = v` through `&mut` stores only a value of the referent's C struct
+/// (review round 1). The type checker does not compare the two, and a tuple
+/// literal's struct is named from its elements' own C types, so each of these
+/// reached gcc as an assignment between incompatible structs.
+#[test]
+fn a_value_of_another_c_struct_is_not_written_through_a_tuple_reference() {
+    let rows = [
+        ("another shape", "fn set(p: &mut ((i64, i64), (i64, i64))) { *p = (1, 2, 3, 4); }\nfn main() { let mut t = ((11, 29), (37, 41)); set(&mut t); print_int((t.0).0); }\n"),
+        ("a scalar", "fn set(p: &mut (i64, i64)) { *p = 5; }\nfn main() { let mut t = (1, 2); set(&mut t); print_int(t.0); }\n"),
+        ("another integer width", "fn set(p: &mut (i32, i64)) { *p = (1, 2); }\nfn main() { let a: i32 = 5; let mut t = (a, 6); set(&mut t); print_int(t.1); }\n"),
+        ("a struct parameter's value as an element", "struct P { a: i64 }\nfn set(p: &mut (P, i64), q: P) { *p = (q, 1); }\nfn main() { let mut t = (P { a: 5 }, 2); let s = P { a: 9 }; set(&mut t, s); print_int(t.1); }\n"),
+    ];
+    for (shape, program) in rows {
+        let verdict = outcome(program, "ref_tuple_value");
+        assert!(
+            verdict.starts_with("REFUSED: ") && verdict.contains("points at the C struct"),
+            "{}: {}",
+            shape,
+            verdict
+        );
+    }
+}
+
+/// What the lending rule leaves alone: a shared reference lent to `&`
+/// parameters (by name, as `&p`, as `&*p`, through a hoisted argument and a
+/// method's parameter), and a mutable one reborrowed into `&mut`.
+#[test]
+fn a_tuple_reference_is_still_lent_where_it_cannot_be_written() {
+    check(
+        &[
+            (
+                "`&p`, `&*p`, and `&p` beside an argument that writes",
+                "fn inner(q: &(i64, i64)) -> i64 { return q.0 * 100 + q.1; }\nfn next(c: &mut (i64, i64)) -> i64 { *c = (c.0 + 1, c.1); return c.0; }\nfn two(a: &(i64, i64), b: i64) -> i64 { return a.0 * 1000 + b; }\nfn f(p: &(i64, i64)) -> i64 { let mut c = (5, 0); return inner(&p) + two(&p, next(&mut c)) + two(&*p, 0); }\nfn main() { let t = (11, 29); print_int(f(&t)); print_int(t.0); }\n",
+                "RUN: 23135\n11\n",
+            ),
+            (
+                "a method's `&(..)` parameter, as `&p` and as `p`",
+                "struct S { k: i64 }\nimpl S { fn m(&self, q: &(i64, i64)) -> i64 { return self.k + q.0; } }\nfn f(p: &(i64, i64)) -> i64 { let s = S { k: 100 }; return s.m(&p) + s.m(p); }\nfn main() { let t = (11, 29); print_int(f(&t)); }\n",
+                "RUN: 222\n",
+            ),
+            (
+                "`&mut *p` of a `&mut` parameter into `&mut`",
+                "fn set(q: &mut (i64, i64)) { *q = (97, 83); }\nfn f(p: &mut (i64, i64)) { set(&mut *p); }\nfn main() { let mut t = (11, 29); f(&mut t); print_int(t.0); print_int(t.1); }\n",
+                "RUN: 97\n83\n",
+            ),
+        ],
+        "ref_tuple_lend_ok",
+    );
+}
+
 /// A tuple reference result beside a tuple reference parameter is refused by
 /// name. `return p;` would hand back the parameter's pointee where the result
 /// is a pointer, and the caller would hold a `T*` to what it lent `const`.
