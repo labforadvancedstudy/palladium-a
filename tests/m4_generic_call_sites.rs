@@ -861,6 +861,79 @@ fn a_value_whose_width_the_emitted_c_does_not_keep_picks_no_instantiation() {
     }
 }
 
+/// A REFERENCE PARAMETER IS READ AT ITS REFERENT'S C TYPE (review round 6).
+///
+/// A parameter `p: &u64` is declared `const unsigned long long* p`, tracked as a
+/// `long long`, and read as the value `(*p)`. Round 5 excluded references from
+/// the parameter's exact type, so `half(p)` met the record's `half__i64` exactly
+/// and halved 9223372036854775808 as a signed number (-4611686018427387904,
+/// main 4611686018427387904); `inv(p)` with `p: &u32` printed -8 (main
+/// 4294967288), and `G { v: p }` filled a `long long` field (-8; main refused).
+/// A reference parameter's read is now of its referent's C type: the call is the
+/// alias's `u64`/`u32` instantiation, the literal is refused by name, and a `let`
+/// of it, declared `long long`, is of no width (main printed -4611686018427387904).
+/// A field read through a reference, and an element of a `&[u32; 2]`, are of
+/// their declared types.
+#[test]
+fn a_reference_parameter_is_read_at_its_referents_c_type() {
+    let h64 = format!("{}{HALF}", by_name("u64", "8"));
+    let m64 = "let s = S { n: 0 }; let zval = s.get(); let d = half(zval); let a = half(8); \
+               let mut v: u64 = 9223372036854775807; v = v + 1; ";
+    let h32 = format!("{}fn inv<T>(x: T) -> T {{ return ~x; }}\n", by_name("u32", "8"));
+    let m32 = "let s = S { n: 0 }; let zval = s.get(); let d = inv(zval); let a = inv(8); ";
+    let rows: Vec<(&str, String, &str)> = vec![
+        (
+            "astra ref_u64: `half(p)` with `p: &u64` (main: same)",
+            format!("{h64}fn wrap<T>(t: T, p: &u64) -> i64 {{ return half(p); }}\n\
+                     fn main() {{ {m64}print_int(wrap(1, &v)); }}\n"),
+            "RUN: 4611686018427387904\n",
+        ),
+        (
+            "astra ref_u32: `inv(p)` with `p: &u32` (main: same)",
+            format!("{h32}fn wrap<T>(t: T, p: &u32) -> i64 {{ return inv(p); }}\n\
+                     fn main() {{ {m32}let v: u32 = 7; print_int(wrap(1, &v)); }}\n"),
+            "RUN: 4294967288\n",
+        ),
+        (
+            "a u64 field read through a reference (main: -4611686018427387904)",
+            format!("{h64}struct P {{ x: u64 }}\nfn wrap<T>(t: T, p: &P) -> i64 {{ return half(p.x); }}\n\
+                     fn main() {{ {m64}let pp = P {{ x: v }}; print_int(wrap(1, &pp)); }}\n"),
+            "RUN: 4611686018427387904\n",
+        ),
+        (
+            "an element of a `&[u32; 2]` parameter (main: -8)",
+            format!("{h32}fn wrap<T>(t: T, xs: &[u32; 2]) -> i64 {{ return inv(xs[0]); }}\n\
+                     fn main() {{ {m32}let ys: [u32; 2] = [7, 9]; print_int(wrap(1, &ys)); }}\n"),
+            "RUN: 4294967288\n",
+        ),
+        (
+            "control: `half(p)` with `p: &i64` (main: same)",
+            format!("{h64}fn wrap<T>(t: T, p: &i64) -> i64 {{ return half(p); }}\n\
+                     fn main() {{ {m64}let w: i64 = -9; print_int(wrap(1, &w)); }}\n"),
+            "RUN: -4\n",
+        ),
+    ];
+    table(&rows, "ref_param");
+
+    for (shape, program, fragment) in [
+        (
+            "astra ref_literal: `G { v: p }` with `p: &u32` (main: refused)",
+            format!("{}struct G<T> {{ v: T }}\nfn wrap<T>(t: T, p: &u32) -> i64 {{ let g = G {{ v: p }}; return ~g.v; }}\n\
+                     fn main() {{ let s = S {{ n: 0 }}; let g = G {{ v: s.get() }}; let v: u32 = 7; print_int(wrap(1, &v)); }}\n",
+                    by_name("u32", "8")),
+            "is a literal of the generic struct",
+        ),
+        (
+            "`let q = p` of a `&u64` parameter, declared `long long q` (main: -4611686018427387904)",
+            format!("{h64}fn wrap<T>(t: T, p: &u64) -> i64 {{ let q = p; return half(q); }}\n\
+                     fn main() {{ {m64}print_int(wrap(1, &v)); }}\n"),
+            "the call of `half`",
+        ),
+    ] {
+        refused_pd0082(&program, "ref_param_refused", fragment, shape);
+    }
+}
+
 /// AN EXACT TYPE IS A BINDING'S, AND IS SCOPED LIKE ONE (review round 3, astra).
 ///
 /// A parameter is declared at a C type `variables` does not track (`w: u32` is

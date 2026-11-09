@@ -4781,14 +4781,29 @@ impl CodeGenerator {
                 }
                 _ => "long long".to_string(),
             };
-            let declared = self.type_to_c(&param.ty);
-            if declared != c_type
-                && !declared.contains('[')
-                && !matches!(param.ty, Type::Reference { .. } | Type::Tuple(_))
-            {
-                self.param_exact_c.insert(param.name.clone(), Some(declared));
-            } else {
-                self.param_exact_c.remove(param.name.as_str());
+            // The exact type of the parameter is the C type a READ of it has in the
+            // emitted C: its declared type, and for a reference to anything but an array
+            // the type of the `(*p)` the read is emitted as (`Expr::Ident`) — its
+            // referent's. Review round 6: `p: &u64` was tracked as `long long` and read as
+            // the `unsigned long long` `(*p)`, so `half(p)` met `half__i64` exactly and
+            // halved 9223372036854775808 as a signed number (main: 4611686018427387904).
+            let read_as = match &param.ty {
+                Type::Reference { inner, .. } => {
+                    (!matches!(inner.as_ref(), Type::Array(_, _))).then(|| self.type_to_c(inner))
+                }
+                Type::Tuple(_) => None,
+                _ => {
+                    let declared = self.type_to_c(&param.ty);
+                    (!declared.contains('[')).then_some(declared)
+                }
+            };
+            match read_as {
+                Some(read_as) if !Self::same_c_type(&read_as, &c_type) => {
+                    self.param_exact_c.insert(param.name.clone(), Some(read_as));
+                }
+                _ => {
+                    self.param_exact_c.remove(param.name.as_str());
+                }
             }
             self.variables.insert(param.name.clone(), c_type);
         }
