@@ -50,6 +50,7 @@ pub struct MethodImpl {
 }
 
 /// Trait resolver manages trait definitions and implementations
+#[derive(Clone)]
 pub struct TraitResolver {
     /// All trait definitions
     traits: HashMap<String, TraitInfo>,

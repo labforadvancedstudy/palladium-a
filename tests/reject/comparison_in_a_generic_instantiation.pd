@@ -1,0 +1,27 @@
+// NEGATIVE TEST — a comparison on a type parameter, instantiated at an enum,
+// PD0080 at its SECOND site.
+//
+// A generic body is never type-checked on its own (`check_function` returns
+// early for one), so on d5166e8 `same` was monomorphised to `same_Suit` and gcc
+// refused the `==` inside it. Each instantiation's body is now checked at the
+// types it was instantiated with, for this rule, and the refusal names the
+// instantiation. `same` is DEFINED AFTER `main` on purpose: the check runs once
+// every call site has been seen, so declaration order is not a way around it.
+enum Suit {
+    Hearts,
+    Spades,
+}
+
+fn main() {
+    let a = Suit::Hearts;
+    let b = Suit::Spades;
+    if same(a, b) {
+        print_int(1);
+    } else {
+        print_int(0);
+    }
+}
+
+fn same<T>(a: T, c: T) -> bool {
+    a == c
+}

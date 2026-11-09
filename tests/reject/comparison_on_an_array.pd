@@ -1,0 +1,14 @@
+// NEGATIVE TEST — `==` on two arrays, PD0080. Well-typed but WRONG.
+//
+// An array decays to a pointer to its first element in a C comparison, so `a ==
+// b` compared the two arrays' addresses: on d5166e8 this printed 0 for two
+// arrays with equal elements, silently. Compare element by element instead.
+fn main() {
+    let a = [1, 2];
+    let b = [1, 2];
+    if a == b {
+        print_int(1);
+    } else {
+        print_int(0);
+    }
+}

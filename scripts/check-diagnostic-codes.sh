@@ -471,6 +471,11 @@ check_codes_pinned() {       # $1 = registry, $2 = manifest -> 0 clean / 1 compl
 #   tests/reject/alias_cycle_through_generic_argument.pd (reject|compile, PD0080).
 #   re-pinned 033dffe3… at #93 review round 4: 127 rows, ONE ADDED —
 #   tests/reject/generic_parameter_named_twice.pd (reject|compile, PD0081).
+#   re-pinned 5b076afe… for #89/#92 (PD0082): 131 rows, the 125 above plus six
+#   reject|compile rows ADDED — tests/reject/comparison_on_a_tuple.pd,
+#   comparison_on_an_enum.pd, comparison_on_a_struct.pd,
+#   comparison_on_a_string.pd, comparison_on_an_array.pd and
+#   comparison_in_a_generic_instantiation.pd. None removed or retyped.
 REFUSAL_SET_SHA=033dffe37446920d49b68402a45dfb2c88f71d746443f651a39e7225d87c9047
 # THE SIZE OF THAT SET, pinned beside it and re-pinned by the same deliberate
 # edit. Every row of the set is at stage compile and pins a code, so this is also

@@ -642,6 +642,16 @@ pub enum DiagnosticCode {
     /// parameter lists (fn/struct/enum, trait, trait method, impl, type alias);
     /// the name is the parameter (#93 review round 4).
     GenericParameterIsNamedOnce,
+    /// PD0080 — a comparison operator (`==` `!=` `<` `<=` `>` `>=`) applies only
+    /// to a type with a comparison: an integer, a float, a `bool` or a `char`.
+    /// Code generation emits C's own operator between the operands, which is
+    /// ill-typed C for a tuple, struct, enum, range or unit, and well-typed but
+    /// WRONG for a String or an array (both compare addresses) and a function
+    /// name. Two sites, one rule: the comparison arm of `check_expression`
+    /// (`src/typeck/mod.rs`), and the post-pass that checks each generic
+    /// instantiation's body at the types it was instantiated with, because a
+    /// generic body is otherwise never type-checked (#89, #92).
+    ComparisonOperandIsIntFloatBoolOrChar,
 }
 
 impl DiagnosticCode {
@@ -725,6 +735,7 @@ impl DiagnosticCode {
         DiagnosticCode::MacroExpansionParsesWhereItIsInvoked,
         DiagnosticCode::TypeAliasExpansionReachesNoCycle,
         DiagnosticCode::GenericParameterIsNamedOnce,
+        DiagnosticCode::ComparisonOperandIsIntFloatBoolOrChar,
     ];
 
     /// The numbers that are RETIRED and must never be allocated again, with the
@@ -837,6 +848,7 @@ impl DiagnosticCode {
             DiagnosticCode::MacroExpansionParsesWhereItIsInvoked => 79,
             DiagnosticCode::TypeAliasExpansionReachesNoCycle => 80,
             DiagnosticCode::GenericParameterIsNamedOnce => 81,
+            DiagnosticCode::ComparisonOperandIsIntFloatBoolOrChar => 82,
         }
     }
 
@@ -986,6 +998,9 @@ impl DiagnosticCode {
                 "type_alias_expansion_reaches_no_cycle"
             }
             DiagnosticCode::GenericParameterIsNamedOnce => "generic_parameter_is_named_once",
+            DiagnosticCode::ComparisonOperandIsIntFloatBoolOrChar => {
+                "comparison_operand_is_int_float_bool_or_char"
+            }
         }
     }
 }
@@ -1013,7 +1028,7 @@ mod tests {
     fn every_code_is_in_all() {
         assert_eq!(
             DiagnosticCode::ALL.len(),
-            74,
+            75,
             "a code was added to the enum without being added to ALL (or this \
              literal was not updated with the new count)"
         );

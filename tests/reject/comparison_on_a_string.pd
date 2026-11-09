@@ -1,0 +1,15 @@
+// NEGATIVE TEST — `==` on two Strings, PD0080. The well-typed-but-WRONG half.
+//
+// A String is a `const char*` in C and code generation emitted C's `==`, so the
+// comparison was of two ADDRESSES. gcc accepted it and the program answered
+// wrong with no diagnostic anywhere: on d5166e8 this printed 0. Two identical
+// literals only looked right because gcc pools them into one address. The
+// refusal points at the builtin that compares characters, `string_eq`.
+fn main() {
+    let s = int_to_string(12);
+    if s == "12" {
+        print_int(1);
+    } else {
+        print_int(0);
+    }
+}

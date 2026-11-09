@@ -1037,6 +1037,10 @@ pub struct StructInstantiation {
 /// generics for a round, and a program was diagnosed against a declaration the
 /// output never contained. Which body an INSTANTIATION carries is a different
 /// question with a different answer, and it is decided here alone.
+///
+/// `Clone` so that a generic instantiation's body can be checked on a copy
+/// whose side effects are discarded (`refuse_instantiated_comparisons`).
+#[derive(Clone)]
 pub struct TypeChecker {
     /// A PUBLIC imported `async fn main`, recorded at import-registration time
     /// and raised by `check` — but only if it is the EFFECTIVE ENTRY POINT.
@@ -2966,6 +2970,9 @@ impl TypeChecker {
             return Err(refusal.with_code(DiagnosticCode::AsyncFnIsNotImplemented));
         }
 
+        // PD0080 in generic bodies, which nothing above checked (#89, #92).
+        self.refuse_instantiated_comparisons()?;
+
         Ok(())
     }
 
@@ -4187,6 +4194,11 @@ impl TypeChecker {
                                 found: Self::told(&right_type, &left_type),
                                 span: None,
                             });
+                        }
+                        // ...and a type that HAS a comparison (#89, #92). Both
+                        // sides are one type here, so the left one decides.
+                        if let Some(refusal) = self.no_comparison_on(*op, &left_type) {
+                            return Err(refusal);
                         }
                         // Comparison operations return Bool
                         Ok(CheckerType::BOOL)
@@ -7531,6 +7543,199 @@ impl TypeChecker {
         let b = self.name_read_as_declared(b, a.as_ref());
         let one = *a == *b && !self.names_another_type(&a, &b) && !self.names_another_type(&b, &a);
         one.then(|| self.agreed(a.into_owned(), &b))
+    }
+
+    /// The refusal of `op` between two values of `ty`, or `None` when `ty` has
+    /// a comparison (PD0080; #89, #92).
+    ///
+    /// THE SET ADMITTED IS THE SET C ANSWERS CORRECTLY. Code generation emits
+    /// C's own operator between the two operands, whatever they are, so a type
+    /// has a comparison here exactly when C's operator on its carrier IS the
+    /// comparison of the values: the integers, the floats, `bool` (`int`) and
+    /// `char` (`long long`). No requirement row and no specification text
+    /// defines a comparison on anything else (N5-10 is witnessed over the
+    /// primitives only), and measured on d5166e8 everything else was one of
+    /// two failures, neither of them this compiler's diagnostic: gcc refused
+    /// the C (a tuple, a struct, an enum, a range, a unit), or gcc accepted it
+    /// and the program answered WRONG — a String and an array compare their
+    /// addresses (`int_to_string(12) == "12"` was 0, `[1, 2] == [1, 2]` was 0,
+    /// `"b" < "a"` was 1), and so does a function name. Each is refused with
+    /// the way to compare instead; none is given a structural meaning.
+    ///
+    /// A TYPE PARAMETER is admitted: `check_function` does not check a generic
+    /// body, and when one IS checked — at each instantiation, by
+    /// `refuse_instantiated_comparisons` — its parameters have their
+    /// arguments' types. A `Struct` name that names no struct, enum or alias
+    /// is admitted rather than guessed at, so that this rule can only refuse a
+    /// type it knows.
+    fn no_comparison_on(&self, op: BinOp, ty: &CheckerType) -> Option<CompileError> {
+        let mut named = ty.clone();
+        loop {
+            let next = self.through_alias_name(&named);
+            if next == named {
+                break;
+            }
+            named = next;
+        }
+        const ENUM: (&str, &str) = (
+            "an enum has no comparison operator, and C has none for the struct an enum is \
+             emitted as",
+            "Test which variant it is with `match`",
+        );
+        const STRUCT: (&str, &str) = (
+            "a struct has no comparison operator, and C has none for a struct",
+            "Compare it field by field: `a.x == b.x && a.y == b.y`",
+        );
+        let (why, instead) = match &named {
+            CheckerType::Int(_)
+            | CheckerType::Float(_)
+            | CheckerType::Bool(_)
+            | CheckerType::Char(_)
+            | CheckerType::TypeParam(_) => return None,
+            CheckerType::Enum(..) => ENUM,
+            CheckerType::Struct(name, _) | CheckerType::Generic { name, .. }
+                if self.path_names_an_enum(name) =>
+            {
+                ENUM
+            }
+            CheckerType::Struct(name, _)
+                if !self.structs.contains_key(name) && !self.generic_structs.contains_key(name) =>
+            {
+                return None
+            }
+            CheckerType::Struct(..) | CheckerType::Generic { .. } => STRUCT,
+            CheckerType::Tuple(..) => (
+                "a tuple has no comparison operator, and C has none for the struct a tuple is \
+                 emitted as",
+                "Compare it element by element: `a.0 == b.0 && a.1 == b.1`",
+            ),
+            CheckerType::String(_) if matches!(op, BinOp::Eq | BinOp::Ne) => (
+                "C would compare the two strings' addresses, not their characters, so two equal \
+                 strings built at run time compare unequal",
+                "Use `string_eq(a, b)`, or `!string_eq(a, b)` for `!=`",
+            ),
+            CheckerType::String(_) => (
+                "C would compare the two strings' addresses, not their characters",
+                "No builtin orders strings; compare them character by character with \
+                 `string_char_at`",
+            ),
+            CheckerType::Array(..) => (
+                "C would compare the two arrays' addresses, not their elements, so two equal \
+                 arrays compare unequal",
+                "Compare them element by element: `a[i] == b[i]`",
+            ),
+            CheckerType::Range => (
+                "a range has no operation beyond being iterated (N5-14)",
+                "Compare the bounds it was built from",
+            ),
+            CheckerType::Unit => (
+                "`()` has one value, so there is nothing to compare, and C cannot compare two \
+                 `void`s",
+                "Drop the comparison",
+            ),
+            CheckerType::Function(..) => (
+                "a function name is not a value that compares: function types are not \
+                 implemented, and C would compare the two functions' addresses",
+                "Compare what the functions return",
+            ),
+        };
+        let shown = match ty {
+            CheckerType::Range => "a range".to_string(),
+            _ => format!("`{}`", ty),
+        };
+        Some(
+            CompileError::Generic(format!(
+                "`{}` is not defined on {}: {}. {}",
+                op, shown, why, instead
+            ))
+            .with_code(DiagnosticCode::ComparisonOperandIsIntFloatBoolOrChar),
+        )
+    }
+
+    /// PD0080 inside the body of every generic function instantiation.
+    ///
+    /// A GENERIC BODY IS NEVER TYPE-CHECKED: `check_function` returns before
+    /// the walk for any function with type parameters, and instantiation
+    /// substitutes the signature only. So `fn same<T>(a: T, c: T) -> bool
+    /// { a == c }` reached gcc at a struct (`invalid operands`) and, at two
+    /// equal Strings, compiled and answered 0. This checks each instantiated
+    /// body at the types it was instantiated with — on a CLONE of the checker,
+    /// so nothing the walk records (instantiations, struct literals, scopes)
+    /// reaches code generation — and keeps that walk's verdict for this rule
+    /// ONLY. Any other refusal it meets is dropped: main never checked these
+    /// bodies, and a refusal under another rule here would refuse a program
+    /// main ran. A walk that stops on such a refusal before it reaches a
+    /// comparison leaves that comparison as main left it.
+    ///
+    /// Run once every body has been walked, because only then is every call
+    /// site — and so every instantiation — known: a generic defined after its
+    /// caller is instantiated before it is declared to anyone. Over
+    /// `get_instantiations`, which is what code generation monomorphises — the
+    /// bodies checked here are exactly the bodies emitted — in its name order,
+    /// so which instantiation a diagnostic names is a function of the program
+    /// and not of the hash seed.
+    fn refuse_instantiated_comparisons(&self) -> Result<()> {
+        'instantiations: for (name, type_args, generic) in self.get_instantiations() {
+            let subst: HashMap<String, String> = generic
+                .type_params
+                .iter()
+                .cloned()
+                .zip(type_args.iter().cloned())
+                .collect();
+            let mut params = Vec::new();
+            for (name, ty) in &generic.params {
+                let Ok(ty) = self.substitute_type(ty, &subst) else {
+                    continue 'instantiations;
+                };
+                // Mutable: the signature here carries no `mut`, and a write to
+                // a parameter is not this rule's business.
+                params.push(Param {
+                    name: name.clone(),
+                    ty,
+                    mutable: true,
+                });
+            }
+            let return_type = match &generic.return_type {
+                Some(ty) => match self.substitute_type(ty, &subst) {
+                    Ok(ty) => Some(ty),
+                    Err(_) => continue,
+                },
+                None => None,
+            };
+            let instantiated = Function {
+                visibility: Visibility::Private,
+                is_async: false,
+                name: name.clone(),
+                lifetime_params: Vec::new(),
+                type_params: Vec::new(),
+                const_params: Vec::new(),
+                params,
+                return_type,
+                body: generic.body.clone(),
+                span: generic.span,
+                effects: None,
+            };
+            let Err(refusal) = self.clone().check_function(&instantiated) else {
+                continue;
+            };
+            if refusal.code() != Some(DiagnosticCode::ComparisonOperandIsIntFloatBoolOrChar) {
+                continue;
+            }
+            let at: Vec<String> = generic
+                .type_params
+                .iter()
+                .zip(&type_args)
+                .map(|(param, arg)| format!("{} = {}", spelled(param), spelled(arg)))
+                .collect();
+            return Err(CompileError::Generic(format!(
+                "in `{}`, instantiated with {}: {}",
+                spelled(&name),
+                at.join(", "),
+                refusal
+            ))
+            .with_code(DiagnosticCode::ComparisonOperandIsIntFloatBoolOrChar));
+        }
+        Ok(())
     }
 
     /// `ty`, as the type it and `other` — which compares equal to it — have

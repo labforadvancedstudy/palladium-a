@@ -1,0 +1,18 @@
+// NEGATIVE TEST — `==` on a tuple (#89). A comparison operator applies only to
+// a type with a comparison: an integer, a float, a bool or a char (PD0080).
+//
+// No requirement row and no specification text defines equality on a tuple
+// (N5-10 is witnessed over the primitives only), and code generation emits C's
+// own `==` between the operands: a tuple is a C struct, so on d5166e8 this
+// program type-checked and gcc refused it ("invalid operands to binary ==").
+// Refused by name now, with the way to compare instead (element by element);
+// no structural equality is invented.
+fn main() {
+    let a = (1, 2);
+    let b = (1, 2);
+    if a == b {
+        print_int(1);
+    } else {
+        print_int(0);
+    }
+}

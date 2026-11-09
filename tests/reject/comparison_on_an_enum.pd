@@ -1,0 +1,21 @@
+// NEGATIVE TEST — `==` on two values of a user enum (#92), PD0080.
+//
+// An enum is emitted as a C struct (a tag and a payload union), so on d5166e8
+// this type-checked and gcc refused it: "invalid operands to binary expression
+// ('struct K' and 'struct K')", pdc exit 3. Fieldless or not, no specification
+// text gives an enum a comparison; the refusal says to test the variant with
+// `match`.
+enum K {
+    A,
+    B,
+}
+
+fn main() {
+    let a = K::A;
+    let b = K::A;
+    if a == b {
+        print_int(1);
+    } else {
+        print_int(0);
+    }
+}

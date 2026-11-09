@@ -4,6 +4,7 @@
 use crate::errors::{suggestions::SuggestionEngine, CompileError, Span};
 
 /// Enhanced type error creation with suggestions
+#[derive(Clone)]
 pub struct TypeErrorHelper {
     available_variables: Vec<String>,
     available_functions: Vec<String>,
