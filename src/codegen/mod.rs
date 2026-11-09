@@ -339,6 +339,10 @@ pub struct CodeGenerator {
     /// own parameters (`half<T>`), and is the instantiation they stand for here
     /// (`through_instantiation`).
     emitting_instantiation: std::collections::HashMap<String, String>,
+    /// The names that denote a generic function's template where a call is resolved: an
+    /// imported public generic, unless a local function of the name overwrites it, and a
+    /// local generic. A call of one is emitted only as one of its instantiations.
+    generic_templates: std::collections::HashSet<String>,
 }
 
 /// What `open_binding_scope` saves and `close_binding_scope` restores: the
@@ -931,6 +935,7 @@ impl CodeGenerator {
             struct_literals: StructLiterals::default(),
             call_records: crate::typeck::CallRecords::default(),
             emitting_instantiation: std::collections::HashMap::new(),
+            generic_templates: std::collections::HashSet::new(),
         })
     }
 
@@ -3128,6 +3133,9 @@ impl CodeGenerator {
                                 func.name.clone(),
                                 (func.params.clone(), func.return_type.clone()),
                             );
+                            if !func.type_params.is_empty() {
+                                self.generic_templates.insert(func.name.clone());
+                            }
                             if func.is_async {
                                 self.async_functions.insert(func.name.clone());
                             }
@@ -3173,6 +3181,11 @@ impl CodeGenerator {
                         func.name.clone(),
                         (func.params.clone(), func.return_type.clone()),
                     );
+                    if func.type_params.is_empty() {
+                        self.generic_templates.remove(&func.name);
+                    } else {
+                        self.generic_templates.insert(func.name.clone());
+                    }
                     if func.is_async {
                         self.async_functions.insert(func.name.clone());
                     }
@@ -8090,8 +8103,10 @@ impl CodeGenerator {
     /// A call the checker recorded nothing for — one it could not infer the
     /// type arguments of, in a generic body it walks without refusing (an
     /// argument that is itself a call: `half(id(x))`) — is of the one
-    /// instantiation that takes its arguments (`takes_arguments`), and is
-    /// refused by name where none or more than one does. Never the first.
+    /// instantiation that takes its arguments as C converts them without
+    /// changing them (`fits`), and is refused by name where none or more than
+    /// one does. Never the first. A recorded call is of its record only where
+    /// the record is faithful to its arguments (see the body).
     fn instantiation_called(
         &self,
         func_name: &str,
@@ -8115,7 +8130,7 @@ impl CodeGenerator {
             return Ok(None);
         }
         let spelled = |type_args: &[String]| format!("`{}<{}>`", func_name, type_args.join(", "));
-        let mut own: Vec<&Vec<String>> = candidates
+        let own: Vec<&Vec<String>> = candidates
             .iter()
             .copied()
             .filter(|type_args| recorded.contains(type_args))
@@ -8128,93 +8143,178 @@ impl CodeGenerator {
                 spelled(&recorded[0])
             )));
         }
-        // One call the checker met twice (one node, checked in two places) can carry two
-        // records; it is the one of them that takes its arguments.
-        let unrecorded = own.is_empty();
-        if own.len() != 1 {
-            let pool = if unrecorded { candidates.clone() } else { own.clone() };
-            own = pool
-                .into_iter()
-                .filter(|type_args| self.takes_arguments(func_name, type_args, args))
+        if own.is_empty() {
+            // No record: the one instantiation that takes the arguments as C converts them
+            // without changing them, and none where more than one or none does.
+            let taking: Vec<&Vec<String>> = candidates
+                .iter()
+                .copied()
+                .filter(|type_args| self.fits(func_name, type_args, args, Fit::Lossless, false))
                 .collect();
-        }
-        match own.as_slice() {
-            [one] => {
-                self.array_arguments_held(func_name, one, args)?;
-                Ok(Some(self.mangle_generic_name(func_name, one)))
+            if let [one] = taking.as_slice() {
+                return Ok(Some(self.mangle_generic_name(func_name, one)));
             }
-            taking => {
-                let named: Vec<String> = taking.iter().map(|a| spelled(a)).collect();
-                let all: Vec<String> = candidates.iter().map(|a| spelled(a)).collect();
-                Err(CompileError::Generic(format!(
-                    "cannot tell which instantiation of the generic function `{}` this call is \
-                     of: the type checker {} its type arguments, and {}. Pass the argument as a \
-                     variable or a literal, from which the type arguments are inferred where \
-                     the call is written",
-                    func_name,
-                    if unrecorded { "could not infer" } else { "recorded more than one set of" },
-                    if taking.is_empty() {
-                        if all.is_empty() {
-                            "it is instantiated at nothing".to_string()
-                        } else {
-                            format!("none of {} takes these arguments", all.join(", "))
-                        }
+            let named: Vec<String> = taking.iter().map(|a| spelled(a)).collect();
+            let all: Vec<String> = candidates.iter().map(|a| spelled(a)).collect();
+            return Err(CompileError::Generic(format!(
+                "cannot tell which instantiation of the generic function `{}` this call is of: \
+                 the type checker could not infer its type arguments, and {}. Pass the argument \
+                 as a variable or a literal, from which the type arguments are inferred where \
+                 the call is written",
+                func_name,
+                if taking.is_empty() {
+                    if all.is_empty() {
+                        "it is instantiated at nothing".to_string()
                     } else {
-                        format!("{} each take these arguments", named.join(" and "))
+                        format!("none of {} takes these arguments", all.join(", "))
                     }
-                )))
+                } else {
+                    format!("{} each take these arguments", named.join(" and "))
+                }
+            )));
+        }
+        // THE RECORD, WHERE IT IS FAITHFUL TO THE ARGUMENTS (review round 1). The record keeps
+        // no integer width and reads a reference as its referent (#82), so `half(v)` with
+        // `v: u64` is recorded `half<i64>` and `id(r)` with `r: &i64` is `id<i64>`. Emitted as
+        // recorded, `half__i64` halved 9223372036854775808 as a `long long` (main, whose only
+        // instantiation was the `unsigned long long` one, printed 4611686018427387904), and
+        // `id__i64` was handed a pointer (gcc, where main ran). A record is used as it is where
+        // every argument is the C type of its parameter there. Where one is not, the call is
+        // of the ONE instantiation whose parameters are the arguments' C types exactly — on C
+        // types alone the function the record's lost width or reference would have named —
+        // else of the record where C converts every argument into it without changing it
+        // (`u32` into `long long`, #86), and is refused by name where neither holds. A call
+        // is never emitted with an argument its parameter does not hold.
+        let fitting = |pool: &[&Vec<String>], fit: Fit| -> Vec<Vec<String>> {
+            pool.iter()
+                .filter(|type_args| self.fits(func_name, type_args, args, fit, true))
+                .map(|type_args| (*type_args).clone())
+                .collect()
+        };
+        for (pool, fit) in [(&own, Fit::Exact), (&candidates, Fit::Exact), (&own, Fit::Lossless)] {
+            if let [one] = fitting(pool, fit).as_slice() {
+                return Ok(Some(self.mangle_generic_name(func_name, one)));
             }
         }
+        if let [one] = own.as_slice() {
+            if let Some((param, wanted, given)) = self.lossy_argument(func_name, one, args) {
+                return Err(CompileError::CodegenError {
+                    message: format!(
+                        "the call of `{}` is of {}, the instantiation the type checker recorded \
+                         for it, whose parameter `{}` is a `{}`; the argument is a `{}`, which C \
+                         does not convert into it without changing it, and no instantiation of \
+                         `{}` takes it exactly. The type checker records an integer of every \
+                         width as `i64` and a reference as the type it refers to, so the record \
+                         does not say which of those the argument is. Pass a value of the type \
+                         the record names: an `i64` integer, an array of `i64`, or a value \
+                         rather than a reference",
+                        func_name,
+                        spelled(one),
+                        param,
+                        wanted,
+                        given,
+                        func_name
+                    ),
+                });
+            }
+        }
+        let named: Vec<String> = own.iter().map(|a| spelled(a)).collect();
+        Err(CompileError::Generic(format!(
+            "cannot tell which instantiation of the generic function `{}` this call is of: the \
+             type checker recorded {} for it, and not exactly one of them takes its arguments",
+            func_name,
+            named.join(" and ")
+        )))
     }
 
-    /// Refuse by name a recorded call one of whose ARRAY arguments is not the
-    /// array its parameter is in the recorded instantiation.
-    ///
-    /// The type checker records every integer as `i64` (#82), so `first(xs)`
-    /// with `xs: [u32; 2]` is `first<i64>`, whose parameter is a `long long[2]`:
-    /// C converts an integer of one width into another, but not an array of
-    /// one into an array of another. Before #86 the call was lowered to
-    /// whichever instantiation the substring match met first — `first__bool`
-    /// beside a `first(bs)`, printing `-647483648` for `3000000000 / 2` — and
-    /// emitted exactly as recorded it is C the backend's own check refuses.
-    fn array_arguments_held(&self, func_name: &str, type_args: &[String], args: &[Expr]) -> Result<()> {
-        let Some((_, _, template)) = self
+    /// Do `args` fit the parameters of the instantiation `type_args` of
+    /// `func_name`: each argument's C type the C type of its parameter there
+    /// (`Fit::Exact`), or one C converts into it without changing it
+    /// (`Fit::Lossless`, `converts_losslessly`)? An argument whose C type this
+    /// pass cannot say fits as `unknown_fits` says: for a recorded call it is
+    /// no evidence against the record; for a call with no record it is taken
+    /// by nothing, so such a call is refused rather than guessed.
+    fn fits(
+        &self,
+        func_name: &str,
+        type_args: &[String],
+        args: &[Expr],
+        fit: Fit,
+        unknown_fits: bool,
+    ) -> bool {
+        let Some(params) = self.instantiated_parameters(func_name, type_args) else {
+            return false;
+        };
+        params.len() == args.len()
+            && params
+                .iter()
+                .zip(args)
+                .all(|((_, wanted), arg)| match self.try_infer_expr_type(arg) {
+                    None => unknown_fits,
+                    Some(given) => match fit {
+                        Fit::Exact => Self::same_c_type(wanted, &given),
+                        Fit::Lossless => Self::converts_losslessly(&given, wanted),
+                    },
+                })
+    }
+
+    /// The first parameter of the instantiation `type_args` of `func_name`
+    /// whose argument C does not convert into it without changing it: its
+    /// name, its C type and the argument's.
+    fn lossy_argument(
+        &self,
+        func_name: &str,
+        type_args: &[String],
+        args: &[Expr],
+    ) -> Option<(String, String, String)> {
+        let params = self.instantiated_parameters(func_name, type_args)?;
+        params.into_iter().zip(args).find_map(|((param, wanted), arg)| {
+            let given = self.try_infer_expr_type(arg)?;
+            (!Self::converts_losslessly(&given, &wanted)).then_some((param, wanted, given))
+        })
+    }
+
+    /// The parameters of the instantiation `type_args` of `func_name`, each
+    /// with its C type there.
+    fn instantiated_parameters(
+        &self,
+        func_name: &str,
+        type_args: &[String],
+    ) -> Option<Vec<(String, String)>> {
+        let (_, _, template) = self
             .generic_instantiations
             .iter()
-            .find(|(name, a, _)| name == func_name && a.as_slice() == type_args)
-        else {
-            return Ok(());
-        };
+            .find(|(name, a, _)| name == func_name && a.as_slice() == type_args)?;
         let type_map: std::collections::HashMap<String, String> = template
             .type_params
             .iter()
             .cloned()
             .zip(type_args.iter().cloned())
             .collect();
-        for ((param, ty), arg) in template.params.iter().zip(args) {
-            let Some(given) = self.try_infer_expr_type(arg) else {
-                continue;
-            };
-            let wanted = self.type_to_c(&self.substitute_type(ty, &type_map));
-            if given.contains('[') && !Self::same_c_type(&given, &wanted) {
-                return Err(CompileError::CodegenError {
-                    message: format!(
-                        "the call of `{}` is of `{}<{}>`, the instantiation the type checker \
-                         recorded for it, whose parameter `{}` is a `{}`; the argument is a `{}`. \
-                         The type checker records an integer of every width as `i64`, and C \
-                         converts an integer of one width into another but not an array of one \
-                         into an array of another. Declare the array with the element type `i64`",
-                        func_name,
-                        func_name,
-                        type_args.join(", "),
-                        param,
-                        wanted,
-                        given
-                    ),
-                });
-            }
-        }
-        Ok(())
+        Some(
+            template
+                .params
+                .iter()
+                .map(|(param, ty)| (param.clone(), self.type_to_c(&self.substitute_type(ty, &type_map))))
+                .collect(),
+        )
+    }
+
+    /// Does C convert a value of the C type `from` into `to` without changing
+    /// it? The same type; an integer into a wider one that holds every value
+    /// of it; a `float` into a `double`; a pointer into one to `const`. Never a
+    /// narrowing, a change of signedness that loses values, a pointer into an
+    /// integer, or an array of one element type into another.
+    fn converts_losslessly(from: &str, to: &str) -> bool {
+        Self::same_c_type(from, to)
+            || matches!(
+                (from, to),
+                ("int", "long long")
+                    | ("unsigned int", "long long")
+                    | ("unsigned int", "unsigned long long")
+                    | ("float", "double")
+            )
+            || (from.ends_with('*') && to == format!("const {}", from))
     }
 
     /// A type checker's record `written` in the type parameters of the generic
@@ -8227,63 +8327,16 @@ impl CodeGenerator {
         crate::typeck::TypeChecker::through(written, &self.emitting_instantiation)
     }
 
-    /// Is `func_name` a generic function's template: its signature, as this
-    /// pass registered it, names a type parameter? Every generic the type
-    /// checker can instantiate names one in a parameter (a type argument is
-    /// inferred from the arguments, or the call is refused).
+    /// Is `func_name` a generic function's template (`generic_templates`)?
+    ///
+    /// It asked whether the signature this pass registered names a type
+    /// parameter, which a generic whose parameter is in no parameter's or the
+    /// result's type does not (`fn mk<U>() -> i64`): called in a generic body,
+    /// where the type checker's walk records nothing for a call it cannot
+    /// infer, that call was emitted as the bare `mk()` and gcc met an
+    /// undeclared function (main too). It is refused by name instead.
     fn is_generic_template(&self, func_name: &str) -> bool {
-        self.functions.get(func_name).is_some_and(|(params, ret)| {
-            params.iter().any(|p| Self::mentions_type_param(&p.ty))
-                || ret.as_ref().is_some_and(Self::mentions_type_param)
-        })
-    }
-
-    fn mentions_type_param(ty: &Type) -> bool {
-        match ty {
-            Type::TypeParam(_) => true,
-            Type::Array(inner, _) | Type::Reference { inner, .. } => {
-                Self::mentions_type_param(inner)
-            }
-            Type::Tuple(types) => types.iter().any(Self::mentions_type_param),
-            Type::Generic { args, .. } => args
-                .iter()
-                .any(|arg| matches!(arg, GenericArg::Type(t) if Self::mentions_type_param(t))),
-            _ => false,
-        }
-    }
-
-    /// Does the instantiation `type_args` of `func_name` take `args` — each
-    /// argument's C type the C type of its parameter there, or an integer
-    /// handed to a 64-bit integer parameter, which C widens and which is what
-    /// the type checker records every integer as (`i64`)? An argument whose C
-    /// type this pass cannot say is taken by nothing. ONLY for a call no
-    /// record decides: it is how such a call is refused rather than guessed,
-    /// never how one is chosen over its record.
-    fn takes_arguments(&self, func_name: &str, type_args: &[String], args: &[Expr]) -> bool {
-        let Some((_, _, template)) = self
-            .generic_instantiations
-            .iter()
-            .find(|(name, a, _)| name == func_name && a.as_slice() == type_args)
-        else {
-            return false;
-        };
-        if template.params.len() != args.len() {
-            return false;
-        }
-        let type_map: std::collections::HashMap<String, String> = template
-            .type_params
-            .iter()
-            .cloned()
-            .zip(type_args.iter().cloned())
-            .collect();
-        template.params.iter().zip(args).all(|((_, ty), arg)| {
-            let param = self.type_to_c(&self.substitute_type(ty, &type_map));
-            self.try_infer_expr_type(arg).is_some_and(|arg| {
-                Self::same_c_type(&param, &arg)
-                    || (Self::is_c_integer(&arg)
-                        && matches!(param.as_str(), "long long" | "unsigned long long"))
-            })
-        })
+        self.generic_templates.contains(func_name)
     }
 
     /// Substitute type parameters with concrete types in a type
@@ -8561,9 +8614,29 @@ impl CodeGenerator {
                 .copied()
                 .filter(|(args, _)| own.contains(args))
                 .collect();
+            // Of its own records, one holding the values exactly, else one C converts them into
+            // without changing them (W2a: the record keeps no width, so a `u32` is held by an
+            // `i64` field). Where its records hold a value only by changing it (a `u64` in a
+            // `long long`, as #82 records it), the literal is of the ONE instantiation holding
+            // its values exactly, and none where not exactly one does (review round 1): main
+            // built such a literal in a generic body as that instantiation and printed the
+            // value; the record would wrap it.
+            let lossless = |mangled: &String| {
+                values.iter().all(|(field, value)| {
+                    field_type(mangled, field)
+                        .is_some_and(|c| Self::converts_losslessly(value, &c))
+                })
+            };
             let held = of_own.iter().find(|(_, m)| exactly(m));
-            if let Some((_, mangled)) = held.or_else(|| of_own.iter().find(|(_, m)| converts(m))) {
+            if let Some((_, mangled)) = held.or_else(|| of_own.iter().find(|(_, m)| lossless(m))) {
                 return Some(mangled.clone());
+            }
+            if of_own.iter().any(|(_, m)| converts(m)) {
+                let mut exact = instantiations.iter().filter(|(_, m)| exactly(m));
+                return match (exact.next(), exact.next()) {
+                    (Some((_, mangled)), None) => Some(mangled.clone()),
+                    _ => None,
+                };
             }
             // The parameter a field is written as, where it is written as one.
             let parameter = |field: &String| {
@@ -8757,8 +8830,10 @@ impl CodeGenerator {
                     "`{} {{ .. }}` is a literal of the generic struct `{}`, and code generation \
                      emits a literal as the instantiation the type checker recorded for it, \
                      whose fields of a type parameter hold its values exactly or as C converts \
-                     an integer of one width into another (a reference the record reads as its \
-                     referent, where an instantiation keeps it); none holds these values.{} \
+                     an integer into a wider one without changing it (a reference the record \
+                     reads as its referent, where an instantiation keeps it; where the record \
+                     holds a value only by changing it, the one instantiation that holds it \
+                     exactly); none holds these values.{} \
                      Write a non-generic struct for this argument",
                     name, name, record
                 ),
@@ -9048,6 +9123,16 @@ impl CodeGenerator {
         }
         crate::ast::expand_type_aliases_for_c(program, &aliases, &opaque)
     }
+}
+
+/// How the arguments of a call must fit an instantiation's parameters
+/// (`CodeGenerator::fits`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fit {
+    /// Each argument is the C type of its parameter.
+    Exact,
+    /// Each argument is one C converts into its parameter's without changing it.
+    Lossless,
 }
 
 /// The instantiation each generic struct literal is of: the type checker's

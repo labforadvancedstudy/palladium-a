@@ -310,6 +310,20 @@ fn a_use_no_record_decides_is_refused_by_name_when_two_instantiations_take_it() 
          print_int(w); }}\n"
     );
     assert_eq!(outcome(&program, "unrecorded_one"), "RUN: 4\n");
+
+    // A generic whose type parameter is in no parameter's type cannot be
+    // inferred, so a call of it in a generic body has no record and no
+    // instantiation. It was emitted as the bare `mk()` (gcc: undeclared
+    // function, on d5166e8 too); it is refused by name.
+    let program = "fn mk<U>() -> i64 { return 3; }\n\
+                   fn wrap<T>(t: T) -> i64 { return mk(); }\n\
+                   fn main() { print_int(wrap(1)); }\n";
+    let got = outcome(program, "unrecorded_none");
+    assert!(
+        got.starts_with("REFUSED: ") && got.contains("`mk`"),
+        "a generic call no instantiation can take must be refused by name; got {}",
+        got
+    );
 }
 
 /// A recorded call whose ARRAY argument is not the array its parameter is in
@@ -338,4 +352,92 @@ fn an_array_argument_its_recorded_instantiation_does_not_take_is_refused_by_name
                    fn main() { let bs = [true, false]; let b: bool = first(bs); \
                    let xs: [i64; 2] = [3000000000, 1]; print_int(first(xs) / 2); }\n";
     assert_eq!(outcome(program, "array_arg_i64"), "RUN: 1500000000\n");
+}
+
+/// A RECORD IS USED ONLY WHERE IT IS FAITHFUL TO THE ARGUMENTS (review round 1).
+///
+/// The type checker records every integer as `i64` and a reference as its
+/// referent (#82, not this unit), so `half(v)` with `v: u64` is recorded
+/// `half<i64>` and `id(r)` with `r: &i64` is `id<i64>`. Round 0 emitted the
+/// record: `half__i64` halved 9223372036854775808 as a `long long`, where main
+/// — whose only instantiation was the `unsigned long long` one, from a value
+/// typed by the alias's name — printed 4611686018427387904; and `id__i64` was
+/// handed a pointer (gcc, where main printed 8 and 7). A call is now of its
+/// record where each argument is its parameter's C type, else of the one
+/// instantiation whose parameters are the arguments' C types exactly, else of
+/// the record where C converts each argument without changing it (#86's `u32`
+/// into `long long`), and refused by name where none holds. Rows refused here
+/// printed a wrong value on main or failed in gcc.
+#[test]
+fn a_record_is_used_only_where_it_is_faithful_to_the_arguments() {
+    let u64_head = "type z = u64;\nstruct S { n: i64 }\nimpl S { fn get(&self) -> z { return 8; } }\n";
+    let u32_head = "type z = u32;\nstruct S { n: i64 }\nimpl S { fn get(&self) -> z { return 8; } }\n";
+    let invert = "fn invert<T>(x: T) -> T { return ~x; }\n";
+    let big = "let mut v: u64 = 9223372036854775807; v = v + 1; ";
+    let rows: Vec<(&str, String, &str)> = vec![
+        (
+            "a u64 halved in a body beside the alias's u64 instantiation (main: right)",
+            format!("{u64_head}{HALF}fn wrap<T>(x: T) -> i64 {{ {big}return half(v); }}\n\
+                     fn main() {{ let s = S {{ n: 0 }}; let zval = s.get(); print_int(half(zval)); \
+                     print_int(wrap(1)); }}\n"),
+            "RUN: 4\n4611686018427387904\n",
+        ),
+        (
+            "a u64 halved in main beside the alias's u64 instantiation (main: wrong)",
+            format!("{u64_head}{HALF}fn main() {{ let s = S {{ n: 0 }}; let zval = s.get(); \
+                     let h = half(zval); {big}print_int(half(v)); }}\n"),
+            "RUN: 4611686018427387904\n",
+        ),
+        (
+            "a reference given to `id` in a body beside a reference alias's instantiation",
+            format!("type R = &i64;\n{ID}fn wrap<T>(x: T) -> i64 {{ let n = 7; let r = &n; \
+                     let p = id(r); return *p; }}\n\
+                     fn main() {{ let n = 8; let r: R = &n; let p = id(r); print_int(*p); \
+                     print_int(wrap(1)); }}\n"),
+            "RUN: 8\n7\n",
+        ),
+        (
+            "a u32 inverted in a body beside the alias's u32 instantiation (main: right)",
+            format!("{u32_head}{invert}fn wrap<T>(x: T) -> i64 {{ let v: u32 = 7; return invert(v); }}\n\
+                     fn main() {{ let s = S {{ n: 0 }}; let zval = s.get(); print_int(invert(zval)); \
+                     print_int(wrap(1)); }}\n"),
+            "RUN: 4294967287\n4294967288\n",
+        ),
+        (
+            "an i32 halved in a body: no exact instantiation, widened without change",
+            format!("{HALF}fn wrap<T>(t: T) -> i64 {{ let v: i32 = -10; return half(v); }}\n\
+                     fn main() {{ print_int(wrap(1)); }}\n"),
+            "RUN: -5\n",
+        ),
+    ];
+    table(&rows, "faithful");
+
+    // No instantiation holds the argument exactly, and the record's would
+    // change it: refused by name, never emitted.
+    for (shape, program, wanted) in [
+        (
+            "a u64 with only the record's i64 instantiation (main: -4611686018427387904)",
+            format!("{HALF}fn main() {{ {big}print_int(half(v)); }}\n"),
+            "unsigned long long",
+        ),
+        (
+            "a reference with only the record's i64 instantiation (main: gcc)",
+            format!("{ID}fn main() {{ let v: i64 = 5; let r = &v; let p = id(r); print_int(*p); }}\n"),
+            "long long*",
+        ),
+        (
+            "a reference in a body with only the record's instantiation (main: gcc)",
+            format!("{ID}fn wrap<T>(t: T) -> i64 {{ let v: u32 = 5; let r = &v; let p = id(r); \
+                     return *p; }}\nfn main() {{ print_int(wrap(1)); }}\n"),
+            "unsigned int*",
+        ),
+    ] {
+        let got = outcome(&program, "lossy_record");
+        assert!(
+            got.starts_with("REFUSED: ") && got.contains("recorded") && got.contains(wanted),
+            "{}: a record that would change its argument must be refused by name; got {}",
+            shape,
+            got
+        );
+    }
 }

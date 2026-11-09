@@ -85,7 +85,7 @@ src/ast/mod.rs	572-572	docs/reference/features/feature-index.toml	8a1bdbb2637d	p
 src/ast/mod.rs	572-572	docs/specification/language-spec.md	8a1bdbb2637d	pub enum Pattern {
 src/ast/mod.rs	9-9	tests/d3b_tail_if.rs	a76a1901b634	pub imports: Vec<Import>,
 src/ast/mod.rs	9-9	tests/m3_imported_calls.rs	a76a1901b634	pub imports: Vec<Import>,
-src/ast/mod.rs	927-934	src/errors/reporter.rs	e547daf47848	pub fn span(&self) -> Span { match self { Expr::String(_) => Span::dummy(), / ... pan::dummy(), Expr::Bool(_) => Span::dummy(), Expr::Ident(_) => Span::dummy(),
+src/ast/mod.rs	928-935	src/errors/reporter.rs	e547daf47848	pub fn span(&self) -> Span { match self { Expr::String(_) => Span::dummy(), / ... pan::dummy(), Expr::Bool(_) => Span::dummy(), Expr::Ident(_) => Span::dummy(),
 src/builtins.rs	1-1	docs/reference/features/feature-index.toml	b2040a84f342	// Built-in function registry for Palladium
 src/builtins.rs	200-200	docs/contributing/MILESTONES.md	7de86aef2459	use crate::effects::Effect;
 src/cli.rs	31-31	docs/reference/features/feature-index.toml	701dcf50c0cc	"Turing's Proofs Meet von Neumann's Performance"
@@ -285,7 +285,7 @@ src/ownership/borrow_checker.rs	83-83	docs/specification/language-spec.md	d6fcad
 src/ownership/borrow_checker.rs	84-86	docs/specification/language-spec.md	3f7c8868ce02	/// /// The borrowing modes carry no lifetime: the caller-side borrow always  ...  exactly for the call expression, so `check_call_args` supplies that lifetime.
 src/ownership/borrow_checker.rs	937-937	tests/m3_imported_calls.rs	3ca7efc9179c	Expr::Ident(name) => {
 src/ownership/borrow_checker.rs	990-990	tests/m3_imported_calls.rs	e4a8f92b213a	return Err(CompileError::UseOfUninitializedValue {
-src/ownership/borrow_checker.rs	998-998	tests/d3b_tail_if.rs	4379d6381a6b	Expr::Call { func, args, span } => {
+src/ownership/borrow_checker.rs	998-998	tests/d3b_tail_if.rs	7167f320e3dd	Expr::Call { func, args, span, .. } => {
 src/ownership/mod.rs	101-133	docs/reference/features/feature-index.toml	a0bf00097abb	constraints: Vec<LifetimeConstraint>, /// How many loop bodies enclose the st ... ] pub struct LifetimeConstraint { pub longer: Lifetime, pub shorter: Lifetime,
 src/ownership/mod.rs	178-228	docs/specification/bootstrap-subset.md	bbba92332589	pub fn exit_scope(&mut self) { // End every borrow this scope (or anything ne ... .release_borrows(|borrow| borrow.scope >= closing); self.current_scope -= 1; }
 src/ownership/mod.rs	184-185	docs/reference/features/feature-index.toml	6bb90e116f0c	let closing = self.current_scope; self.release_borrows(|borrow| borrow.scope >= closing);

@@ -12,7 +12,7 @@
 // by tests/reject/function_collides_with_const.pd.
 //
 // WHY THE RULE COVERS TYPES TOO, and not only functions. A struct and an enum
-// each emit `typedef struct <Name> { … } <Name>;` (src/codegen/mod.rs:2725 for
+// each emit `typedef struct <Name> { … } <Name>;` (src/codegen/mod.rs:2738 for
 // structs, and generate_enum for enums), so the NAME becomes a C typedef at
 // file scope -- the same scope the item's `static const long long <Name>`
 // lands in. Six directions exist and all six are refused before gcc sees
