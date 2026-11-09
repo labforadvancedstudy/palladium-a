@@ -647,10 +647,14 @@ pub enum DiagnosticCode {
     /// Code generation emits C's own operator between the operands, which is
     /// ill-typed C for a tuple, struct, enum, range or unit, and well-typed but
     /// WRONG for a String or an array (both compare addresses) and a function
-    /// name. Two sites, one rule: the comparison arm of `check_expression`
-    /// (`src/typeck/mod.rs`), and the post-pass that checks each generic
+    /// name. Three sites, one rule: the comparison arm of `check_expression`
+    /// (`src/typeck/mod.rs`); the post-pass that checks each generic
     /// instantiation's body at the types it was instantiated with, because a
-    /// generic body is otherwise never type-checked (#89, #92).
+    /// generic body is otherwise never type-checked; and the BACKSTOP in the
+    /// code generator's comparison emitter, which refuses an operand whose
+    /// emitted C type is not a by-value scalar (`refuse_a_comparison_without_one`,
+    /// `src/codegen/mod.rs`) — the one place the type is known rather than
+    /// reconstructed, so no front-end path can let one through (#89, #92).
     ComparisonOperandIsIntFloatBoolOrChar,
 }
 

@@ -6213,8 +6213,9 @@ impl CodeGenerator {
                 }
             }
             Expr::Binary {
-                left, op, right, ..
+                left, op, right, span,
             } => {
+                self.refuse_a_comparison_without_one(*op, left, right, *span)?;
                 // `&&` AND `||` DO NOT EVALUATE THEIR RIGHT OPERAND WHEN THE
                 // LEFT DECIDES, and a hoisted right operand did.
                 //
@@ -8757,5 +8758,143 @@ mod tuple_shape_tests {
             .register_tuple(&["long long".to_string(), "const char*".to_string()])
             .expect("second registration of the same shape is not a collision");
         assert_eq!(a, b);
+    }
+}
+
+/// PD0079's BACKSTOP (#89/#92, review round 3).
+///
+/// The type checker refuses a comparison on a type with no comparison, and it
+/// is where the good message comes from. But it reasons about Palladium types
+/// and must reconstruct them — inside a generic body it never otherwise checks,
+/// across a statement it refuses under another rule — and three review rounds
+/// each found an operand form the reconstruction missed, every one of them a
+/// String or an array compared by ADDRESS with no diagnostic. This is the place
+/// the answer is not reconstructed: the operator is being emitted, and the C
+/// type of each operand is the one this generator gives it. So the rule is
+/// enforced here by construction, for every comparison any front-end path lets
+/// through, monomorphised and imported bodies included.
+///
+/// The C comparison operators emitted ELSEWHERE are all scalar by
+/// construction, which is why this is the one site: an enum pattern compares
+/// `.tag` (an integer), an integer, bool or char literal pattern compares a
+/// scrutinee the checker holds to the literal's type (PD0009), a range pattern
+/// an integer or a char (PD0072), a `for` over a range its `long long` bound;
+/// a String literal pattern is `__pd_string_eq`, not `==`.
+impl CodeGenerator {
+    /// `Err` with PD0079 when `op` compares and either operand's C type is
+    /// KNOWN and is not one C compares by value. An operand whose C type this
+    /// generator cannot name is left alone: refusing what it does not know
+    /// would be a guess, and the type checker has already judged it.
+    fn refuse_a_comparison_without_one(
+        &self,
+        op: BinOp,
+        left: &Expr,
+        right: &Expr,
+        span: Span,
+    ) -> Result<()> {
+        if !matches!(
+            op,
+            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge
+        ) {
+            return Ok(());
+        }
+        let Some(c_type) = [left, right]
+            .into_iter()
+            .filter_map(|operand| self.try_infer_expr_type(operand))
+            .find(|c_type| !Self::c_compares_by_value(c_type))
+        else {
+            return Ok(());
+        };
+        let (shown, why, instead) = Self::no_c_comparison(op, &c_type);
+        let at = if span.line == 0 {
+            String::new()
+        } else {
+            format!(" (line {}, column {})", span.line, span.column)
+        };
+        Err(CompileError::CodegenError {
+            message: format!(
+                "`{}` is not defined on {}{}: {}. {}",
+                op, shown, at, why, instead
+            ),
+        }
+        .with_code(DiagnosticCode::ComparisonOperandIsIntFloatBoolOrChar))
+    }
+
+    /// The C types whose operators ARE the comparison of the values: every
+    /// carrier `type_to_c` gives an integer, a float, a `bool` (`int`) or a
+    /// `char` (`long long`), and the other spellings of a C integer. Anything
+    /// written with a `*` or a `[` is an address once it is an operand.
+    fn c_compares_by_value(c_type: &str) -> bool {
+        if c_type.contains('*') || c_type.contains('[') {
+            return false;
+        }
+        let bare = c_type.trim();
+        let bare = bare.strip_prefix("const ").unwrap_or(bare).trim();
+        matches!(
+            bare,
+            "long long"
+                | "unsigned long long"
+                | "long"
+                | "unsigned long"
+                | "int"
+                | "unsigned int"
+                | "unsigned"
+                | "short"
+                | "unsigned short"
+                | "char"
+                | "signed char"
+                | "unsigned char"
+                | "_Bool"
+                | "double"
+                | "float"
+        )
+    }
+
+    /// The type as the programmer knows it, why C cannot compare it, and what
+    /// to write instead — the type checker's sentences, told from the C type.
+    fn no_c_comparison(op: BinOp, c_type: &str) -> (String, String, String) {
+        let bare = c_type.trim();
+        if bare == "const char*" || bare == "char*" {
+            let instead = if matches!(op, BinOp::Eq | BinOp::Ne) {
+                "Use `string_eq(a, b)`, or `!string_eq(a, b)` for `!=`"
+            } else {
+                "No builtin orders strings; compare them character by character with \
+                 `string_char_at`"
+            };
+            return (
+                "`String`".to_string(),
+                "C would compare the two strings' addresses, not their characters".to_string(),
+                instead.to_string(),
+            );
+        }
+        if bare.contains('[') {
+            return (
+                format!("an array (C `{}`)", bare),
+                "C would compare the two arrays' addresses, not their elements".to_string(),
+                "Compare them element by element: `a[i] == b[i]`".to_string(),
+            );
+        }
+        if bare.contains('*') {
+            return (
+                format!("a pointer (C `{}`)", bare),
+                "C would compare two addresses, not the values behind them".to_string(),
+                "Compare the values: dereference both sides".to_string(),
+            );
+        }
+        if bare == "void" {
+            return (
+                "`()`".to_string(),
+                "`()` has one value, and C cannot compare two `void`s".to_string(),
+                "Drop the comparison".to_string(),
+            );
+        }
+        let name = bare.strip_prefix("struct ").unwrap_or(bare);
+        (
+            format!("`{}`", name),
+            "C has no comparison operator for the struct it is emitted as".to_string(),
+            "Compare it field by field, element by element for a tuple, or test an enum's \
+             variant with `match`"
+                .to_string(),
+        )
     }
 }

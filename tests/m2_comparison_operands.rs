@@ -721,3 +721,124 @@ fn a_same_scope_rebinding_is_not_read_as_the_parameter() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Review round 3: aggregates, a `break` inside a branch, a `match` whose arms
+// disagree — and the code-generation BACKSTOP that makes the next such shape
+// impossible rather than the next round's finding.
+// ---------------------------------------------------------------------------
+
+/// `same<T>` beside a struct and an enum over String, called after `setup`.
+fn generic_r3(body: &str, setup: &str) -> String {
+    format!(
+        "struct S {{ v: String }}\nenum E {{ V(String), N }}\n\
+         fn same<T>(a: T, b: T) -> bool {{ {} }}\n\
+         fn main() {{ {} if same(x, y) {{ print_int(1); }} else {{ print_int(0); }} }}",
+        body, setup
+    )
+}
+
+/// An aggregate built from a refused block lost its part's String, and C
+/// compared `v[0]` (or `v.0`, `v.v`, the payload) by address: 0 on 3a9567e.
+#[test]
+fn an_aggregate_of_a_refused_block_keeps_its_parts_types() {
+    for body in [
+        "let v = [{ let n: bool = 1; a }]; v[0] == b",
+        "let v = [{ let n: bool = 1; a }; 2]; v[0] == b",
+        "let v = ({ let n: bool = 1; a }, 1); v.0 == b",
+        "let v = S { v: { let n: bool = 1; a } }; v.v == b",
+        "let v = E::V({ let n: bool = 1; a }); match v { E::V(s) => s == b, E::N => false }",
+    ] {
+        let text = refused(&generic_r3(body, AT_STRINGS), "cmp_r3_aggregate");
+        assert!(text.contains("`==` is not defined on `String`"), "{}: {}", body, text);
+    }
+    for body in [
+        "let v = [{ let n: bool = 1; a }]; v[0] == b",
+        "let v = [{ let n: bool = 1; a }; 2]; v[0] == b",
+        "let v = ({ let n: bool = 1; a }, 1); v.0 == b",
+    ] {
+        assert_eq!(run(&generic_r3(body, AT_INTS), "cmp_r3_aggregate_int"), "1\n", "{}", body);
+    }
+}
+
+/// A `break` inside an `if` or `match` arm gives its loop a value; the walk
+/// restored the loop frames wholesale on leaving the arm and lost it.
+#[test]
+fn a_break_inside_a_branch_still_gives_its_loop_a_type() {
+    for body in [
+        "(loop { if true { let n: bool = 1; break a; } else { break b; } }) == b",
+        "(loop { match 1 { _ => { let n: bool = 1; break a; } } }) == b",
+    ] {
+        let text = refused(&generic_r3(body, AT_STRINGS), "cmp_r3_break");
+        assert!(text.contains("`==` is not defined on `String`"), "{}: {}", body, text);
+        assert_eq!(run(&generic_r3(body, AT_INTS), "cmp_r3_break_int"), "1\n", "{}", body);
+    }
+}
+
+/// Arms that disagree have no type the checker can name. The two shapes the
+/// panel measured: C lowered the first to a `const char*` temporary and printed
+/// 0 (astra), and the second reached gcc (fable). Either way the comparison is
+/// emitted with a non-scalar operand, which the code-generation backstop refuses
+/// — that is what this test witnesses, so it asserts the backstop's own words.
+#[test]
+fn a_match_whose_arms_disagree_is_judged_by_the_c_it_becomes() {
+    for body in [
+        "(match 1 { 1 => { let n: bool = 1; a }, _ => 0 }) == b",
+        "(match 1 { 1 => { let n: bool = 1; a } _ => { 2 } }) == b",
+    ] {
+        let text = refused(&generic_r3(body, AT_STRINGS), "cmp_r3_disagree");
+        assert!(text.contains("Code generation failed"), "{}: {}", body, text);
+    }
+    let out = run(
+        &generic_r3("(match 1 { 1 => { let n: bool = 1; a }, _ => 0 }) == b", AT_INTS),
+        "cmp_r3_disagree_int",
+    );
+    assert_eq!(out, "1\n");
+}
+
+/// THE BACKSTOP, on a program the type checker passes. A reference LOCAL is
+/// typed as its referent by the checker, and code generation keeps it a
+/// pointer: `r == s` compared two addresses and printed 0 for `x == y == 5`.
+/// Comparing what they point at is a comparison of two integers, and runs.
+#[test]
+fn two_references_compared_as_addresses_are_refused_by_the_backstop() {
+    let text = refused(
+        "fn main() { let x = 5; let y = 5; let r = &x; let s = &y; \
+         if r == s { print_int(1); } else { print_int(0); } }",
+        "cmp_r3_pointer",
+    );
+    assert!(text.contains("Code generation failed"), "{}", text);
+    assert!(text.contains("a pointer"), "{}", text);
+    let out = run(
+        "fn main() { let x = 5; let y = 5; let r = &x; let s = &y; \
+         if *r == *s { print_int(1); } else { print_int(0); } }",
+        "cmp_r3_pointer_deref",
+    );
+    assert_eq!(out, "1\n");
+}
+
+/// The same rule over an imported generic's body (review round 3).
+#[test]
+fn an_imported_generic_is_held_to_the_rule() {
+    let dir = TempDir::new().unwrap();
+    fs::write(
+        dir.path().join("libcmp.pd"),
+        "pub fn same<T>(a: T, b: T) -> bool { let x = [{ let n: bool = 1; a }]; x[0] == b }\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("main.pd"),
+        "import libcmp;\nfn main() { let a = int_to_string(12); let b = \"12\"; \
+         if same(a, b) { print_int(1); } else { print_int(0); } }\n",
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
+        .args(["compile", "main.pd", "-o", "prog"])
+        .current_dir(dir.path())
+        .output()
+        .expect("failed to run pdc");
+    let text = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(!out.status.success(), "accepted: {}", text);
+    assert!(text.contains("error[PD0079]"), "{}", text);
+    assert!(!text.contains("gcc"), "{}", text);
+}

@@ -7777,6 +7777,25 @@ impl TypeChecker {
         (self.symbols, self.loop_depth, self.break_targets, self.unsafe_depth) = at;
     }
 
+    /// `probe_restore` on leaving a scope the walk entered, KEEPING what it
+    /// told the loops around it: a `break a;` inside an `if` arm gives its
+    /// loop a value, and restoring the frames wholesale threw that away, so
+    /// `(loop { if c { break a; } else { break b; } }) == b` had no type
+    /// (review round 3). Frames the scope pushed are dropped; frames it found
+    /// keep the values it recorded in them.
+    fn probe_leave(&mut self, at: (SymbolTable, usize, Vec<BreakTarget>, usize)) {
+        let depth = at.2.len();
+        let mut targets = std::mem::take(&mut self.break_targets);
+        targets.truncate(depth);
+        let kept = if targets.len() == depth {
+            targets
+        } else {
+            at.2.clone()
+        };
+        self.probe_restore(at);
+        self.break_targets = kept;
+    }
+
     /// `check_statement` over `stmts`, except that a statement refused under
     /// ANOTHER rule is not the end of the walk: its parts are walked instead
     /// (`probe_statement`), so every comparison in the block is checked. Only
@@ -8027,7 +8046,7 @@ impl TypeChecker {
             Some(value) => self.probe_expr(value),
             None => Ok(()),
         });
-        self.probe_restore(at);
+        self.probe_leave(at);
         walked
     }
 
@@ -8053,7 +8072,7 @@ impl TypeChecker {
             Some(value) => self.probe_expr(value),
             None => Ok(()),
         });
-        self.probe_restore(at);
+        self.probe_leave(at);
         walked
     }
 
@@ -8240,6 +8259,41 @@ impl TypeChecker {
                 )
             }),
             Expr::Reference { expr, .. } | Expr::Deref { expr, .. } => self.probe_type(expr),
+            // AN AGGREGATE CARRIES ITS PARTS' RECOVERED TYPES (review round 3):
+            // `let x = [{ let n: bool = 1; a }]; x[0] == b` lost the element's
+            // String at the array, and C compared `x[0]` by address.
+            Expr::ArrayLiteral { elements, .. } => {
+                let mut element: Option<CheckerType> = None;
+                for value in elements {
+                    let ty = self.probe_type(value)?;
+                    element = Some(match element {
+                        None => ty,
+                        Some(so_far) => self.merged(&so_far, &ty)?,
+                    });
+                }
+                let size = ArraySizeValue::Literal(elements.len());
+                Some(CheckerType::Array(Box::new(element?), size))
+            }
+            Expr::ArrayRepeat { value, count, .. } => match count.as_ref() {
+                Expr::Integer(n) => {
+                    let size = ArraySizeValue::Literal(usize::try_from(*n).ok()?);
+                    Some(CheckerType::Array(Box::new(self.probe_type(value)?), size))
+                }
+                _ => None,
+            },
+            Expr::Tuple { elements, .. } => {
+                let mut parts = Vec::new();
+                for value in elements {
+                    parts.push(self.probe_type(value)?);
+                }
+                Some(CheckerType::Tuple(parts, DeclaredAs(None, false)))
+            }
+            Expr::StructLiteral { name, .. } if self.structs.contains_key(name) => {
+                Some(CheckerType::Struct(name.clone(), DeclaredAs(None, false)))
+            }
+            Expr::EnumConstructor { enum_name, .. } if self.enums.contains_key(enum_name) => {
+                Some(CheckerType::Enum(enum_name.clone(), DeclaredAs(None, false)))
+            }
             _ => None,
         };
         recovered.filter(|ty| !Self::is_unknown(ty))
@@ -8261,7 +8315,7 @@ impl TypeChecker {
         }
         let _ = self.probe_block(stmts);
         let ty = value.and_then(|value| self.probe_type(value));
-        self.probe_restore(at);
+        self.probe_leave(at);
         ty
     }
 
