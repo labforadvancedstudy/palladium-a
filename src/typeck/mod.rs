@@ -7852,14 +7852,29 @@ impl TypeChecker {
         Ok(())
     }
 
-    /// The parts of a statement whose check failed under another rule. A `let`
-    /// still binds its name — at the type it was written with, which is the
-    /// type code generation declares it at, or else its value's — so that the
-    /// statements after it can be checked.
+    /// The parts of a statement whose check failed under another rule.
+    ///
+    /// A `let` ALWAYS BINDS ITS NAME (review round 2): at the type it was
+    /// written with, which is the type code generation declares it at, else at
+    /// its value's type as recovered (`probe_type`), else at a type this walk
+    /// does not know (`unknown_type`), which nothing refuses. A failed `let`
+    /// that bound nothing left the name to an OUTER binding — a generic's
+    /// String parameter `a`, shadowed by `let a = { let n: bool = 1; 12 };`,
+    /// was compared as the String, and a program main ran was refused.
     fn probe_statement(&mut self, stmt: &Stmt) -> Result<()> {
         match stmt {
-            Stmt::Expr(e) | Stmt::Return(Some(e)) | Stmt::Break { value: Some(e), .. } => {
-                self.probe_expr(e)
+            Stmt::Expr(e) | Stmt::Return(Some(e)) => self.probe_expr(e),
+            // A `break` refused under another rule still hands its loop the
+            // value's recovered type, as a checked one would.
+            Stmt::Break {
+                value: Some(e),
+                span,
+            } => {
+                self.probe_expr(e)?;
+                if let Some(ty) = self.probe_type(e) {
+                    let _ = self.record_break_value(ty, *span);
+                }
+                Ok(())
             }
             Stmt::Return(None) | Stmt::Break { value: None, .. } | Stmt::Continue { .. } => Ok(()),
             Stmt::Let {
@@ -7872,11 +7887,9 @@ impl TypeChecker {
                 self.probe_expr(value)?;
                 let bound = match ty {
                     Some(ty) => Some(self.written_type(ty)),
-                    None => self.probe_type_of(value),
+                    None => self.probe_type(value),
                 };
-                if let Some(bound) = bound {
-                    let _ = self.symbols.define(name.clone(), bound, *mutable);
-                }
+                self.probe_bind(name, bound, *mutable);
                 Ok(())
             }
             Stmt::Assign { target, value, .. } => {
@@ -7918,20 +7931,16 @@ impl TypeChecker {
                 var, iter, body, ..
             } => {
                 self.probe_expr(iter)?;
-                let element = match self.probe_type_of(iter) {
+                let element = match self.probe_type(iter) {
                     Some(CheckerType::Range) => Some(CheckerType::INT),
                     Some(CheckerType::Array(element, _)) => Some(*element),
                     _ => None,
                 };
-                self.probe_scoped(body, None, |probe| {
-                    if let Some(element) = element {
-                        let _ = probe.symbols.define(var.clone(), element, false);
-                    }
-                })
+                self.probe_scoped(body, None, |probe| probe.probe_bind(var, element, false))
             }
             Stmt::Match { expr, arms, .. } => {
                 self.probe_expr(expr)?;
-                let scrutinee = self.probe_type_of(expr);
+                let scrutinee = self.probe_type(expr);
                 for arm in arms {
                     self.probe_arm(&arm.pattern, arm.guard.as_ref(), &arm.body, None, &scrutinee)?;
                 }
@@ -7952,6 +7961,27 @@ impl TypeChecker {
             Err(_) => self.probe_restore(at),
         }
         match e {
+            // A COMPARISON THE CHECKER REFUSED UNDER ANOTHER RULE is judged
+            // again on its operands' RECOVERED types (`probe_type`): with
+            // `({ let n: bool = 1; a }) == b` the block's refusal hid that both
+            // sides are Strings, and C compared their addresses (review round
+            // 2). An operand whose type is not known is never refused.
+            Expr::Binary {
+                op: op @ (BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge),
+                left,
+                right,
+                ..
+            } => {
+                self.probe_expr(left)?;
+                self.probe_expr(right)?;
+                let (Some(l), Some(r)) = (self.probe_type(left), self.probe_type(right)) else {
+                    return Ok(());
+                };
+                match self.merged(&l, &r) {
+                    Some(_) => self.no_comparison_on(*op, &l).map_or(Ok(()), Err),
+                    None => Ok(()),
+                }
+            }
             Expr::Binary { left, right, .. }
             | Expr::Range {
                 start: left,
@@ -8015,7 +8045,7 @@ impl TypeChecker {
             Expr::Loop { body, .. } => self.probe_scoped(body, None, |_| {}),
             Expr::Match { expr, arms, .. } => {
                 self.probe_expr(expr)?;
-                let scrutinee = self.probe_type_of(expr);
+                let scrutinee = self.probe_type(expr);
                 for arm in arms {
                     self.probe_arm(
                         &arm.pattern,
@@ -8069,9 +8099,7 @@ impl TypeChecker {
     ) -> Result<()> {
         let at = self.probe_position();
         self.symbols.enter_scope();
-        if let Some(scrutinee) = scrutinee {
-            let _ = self.bind_pattern_variables(pattern, scrutinee);
-        }
+        self.probe_bind_pattern(pattern, scrutinee);
         let walked = match guard {
             Some(guard) => self.probe_expr(guard),
             None => Ok(()),
@@ -8085,12 +8113,237 @@ impl TypeChecker {
         walked
     }
 
-    /// The type `e` checks at, or `None`, leaving the walk where it was.
-    fn probe_type_of(&mut self, e: &Expr) -> Option<CheckerType> {
+    /// The name this walk binds a value it cannot type to. Not a name any
+    /// program can write, and a type parameter, so `no_comparison_on` admits
+    /// it and it agrees with nothing but itself: a comparison that reaches it
+    /// is never refused.
+    const UNKNOWN_TYPE: &'static str = "<unknown>";
+
+    fn unknown_type() -> CheckerType {
+        CheckerType::TypeParam(Self::UNKNOWN_TYPE.to_string())
+    }
+
+    fn is_unknown(ty: &CheckerType) -> bool {
+        matches!(ty, CheckerType::TypeParam(name) if name == Self::UNKNOWN_TYPE)
+    }
+
+    /// Bind `name` in the innermost scope at `ty`, or at `unknown_type`,
+    /// REPLACING a binding of the same name there: a same-scope `let a = 1;`
+    /// over a parameter `a` is refused by `define`, and the stale binding it
+    /// left was the one a later comparison read (review round 2).
+    fn probe_bind(&mut self, name: &str, ty: Option<CheckerType>, mutable: bool) {
+        if let Some(scope) = self.symbols.scopes.last_mut() {
+            let ty = ty.unwrap_or_else(Self::unknown_type);
+            scope.insert(name.to_string(), VarInfo { ty, mutable });
+        }
+    }
+
+    /// A pattern's names bound at the scrutinee's type where that is known,
+    /// and every name it did not bind at `unknown_type` — a name a pattern
+    /// introduces shadows whatever was outside, whether or not it was typed.
+    fn probe_bind_pattern(&mut self, pattern: &Pattern, scrutinee: &Option<CheckerType>) {
+        if let Some(scrutinee) = scrutinee {
+            let _ = self.bind_pattern_variables(pattern, scrutinee);
+        }
+        let mut names = Vec::new();
+        Self::pattern_names(pattern, &mut names);
+        for name in names {
+            let bound = self
+                .symbols
+                .scopes
+                .last()
+                .is_some_and(|scope| scope.contains_key(&name));
+            if !bound {
+                self.probe_bind(&name, None, false);
+            }
+        }
+    }
+
+    /// Every name `pattern` can bind.
+    fn pattern_names(pattern: &Pattern, out: &mut Vec<String>) {
+        match pattern {
+            Pattern::Ident(name) => out.push(name.clone()),
+            Pattern::Binding { name, inner } => {
+                out.push(name.clone());
+                Self::pattern_names(inner, out);
+            }
+            Pattern::Or(alternatives) | Pattern::Tuple(alternatives) => alternatives
+                .iter()
+                .for_each(|p| Self::pattern_names(p, out)),
+            Pattern::EnumPattern { data, .. } => match data {
+                Some(PatternData::Tuple(patterns)) => {
+                    patterns.iter().for_each(|p| Self::pattern_names(p, out))
+                }
+                Some(PatternData::Struct(fields)) => fields
+                    .iter()
+                    .for_each(|(_, p)| Self::pattern_names(p, out)),
+                None => {}
+            },
+            Pattern::Wildcard | Pattern::Literal(_) | Pattern::Range { .. } => {}
+        }
+    }
+
+    /// The type `e` has, leaving the walk where it was — RECOVERED, where the
+    /// checker refuses `e` under another rule, from the form of `e` (review
+    /// round 2): a block is its tail, an `if` or a `match` the type its arms
+    /// agree on, a `loop` the type its `break`s carry, a cast its target, a
+    /// field, an element or a call what the checker would give it. `None` is
+    /// a type this walk does not know, and it is never refused.
+    fn probe_type(&mut self, e: &Expr) -> Option<CheckerType> {
         let at = self.probe_position();
-        let ty = self.check_expression(e).ok();
+        let checked = self.check_expression(e);
+        self.probe_restore(at);
+        if let Ok(ty) = checked {
+            return (!Self::is_unknown(&ty)).then_some(ty);
+        }
+        let recovered = match e {
+            Expr::Block { stmts, value, .. } => {
+                self.probe_tail_type(stmts, value.as_deref(), None, &None)
+            }
+            Expr::If {
+                then_branch,
+                then_value,
+                else_branch,
+                else_value,
+                ..
+            } => {
+                let then = self.probe_tail_type(then_branch, then_value.as_deref(), None, &None);
+                let otherwise = self.probe_tail_type(
+                    else_branch.as_deref().unwrap_or(&[]),
+                    else_value.as_deref(),
+                    None,
+                    &None,
+                );
+                match (then, otherwise) {
+                    (Some(then), Some(otherwise)) => self.merged(&then, &otherwise),
+                    _ => None,
+                }
+            }
+            Expr::Match { expr, arms, .. } => {
+                let scrutinee = self.probe_type(expr);
+                let mut agreed: Option<CheckerType> = None;
+                for arm in arms {
+                    // An arm with no value leaves the match (a `return`, a
+                    // `panic`); the others must all be known and agree.
+                    let Some(value) = &arm.value else { continue };
+                    let ty = self.probe_tail_type(
+                        &arm.body,
+                        Some(value),
+                        Some(&arm.pattern),
+                        &scrutinee,
+                    )?;
+                    agreed = Some(match agreed {
+                        None => ty,
+                        Some(so_far) => self.merged(&so_far, &ty)?,
+                    });
+                }
+                agreed
+            }
+            Expr::Loop { body, .. } => {
+                let at = self.probe_position();
+                self.symbols.enter_scope();
+                self.enter_loop(BreakTarget::Value(None));
+                let _ = self.probe_block(body);
+                let target = self.break_targets.pop();
+                self.probe_restore(at);
+                match target {
+                    Some(BreakTarget::Value(Some(ty))) => Some(ty),
+                    _ => None,
+                }
+            }
+            Expr::Cast { ty, .. } => Some(self.written_type(ty)),
+            Expr::FieldAccess { object, field, .. } => {
+                match self.probe_type(object).map(|ty| self.through_alias_name(&ty)) {
+                    Some(CheckerType::Struct(name, _)) => self
+                        .structs
+                        .get(&name)
+                        .and_then(|fields| fields.iter().find(|(f, _)| f == field))
+                        .map(|(_, ty)| ty.clone()),
+                    _ => None,
+                }
+            }
+            Expr::Index { array, .. } => match self.probe_type(array) {
+                Some(CheckerType::Array(element, _)) => Some(*element),
+                _ => None,
+            },
+            Expr::TupleIndex { expr, index, .. } => match self.probe_type(expr) {
+                Some(CheckerType::Tuple(elements, _)) => elements.get(*index).cloned(),
+                _ => None,
+            },
+            Expr::Call { func, .. } => self.probe_call_type(func),
+            Expr::Unary {
+                op: UnaryOp::Not, ..
+            } => Some(CheckerType::BOOL),
+            Expr::Unary { operand, .. } => self
+                .probe_type(operand)
+                .filter(|ty| matches!(ty, CheckerType::Int(_) | CheckerType::Float(_))),
+            Expr::Binary {
+                op:
+                    BinOp::Eq
+                    | BinOp::Ne
+                    | BinOp::Lt
+                    | BinOp::Gt
+                    | BinOp::Le
+                    | BinOp::Ge
+                    | BinOp::And
+                    | BinOp::Or,
+                ..
+            } => Some(CheckerType::BOOL),
+            Expr::Binary { left, .. } => self.probe_type(left).filter(|ty| {
+                matches!(
+                    ty,
+                    CheckerType::Int(_) | CheckerType::Float(_) | CheckerType::String(_)
+                )
+            }),
+            Expr::Reference { expr, .. } | Expr::Deref { expr, .. } => self.probe_type(expr),
+            _ => None,
+        };
+        recovered.filter(|ty| !Self::is_unknown(ty))
+    }
+
+    /// The recovered type of `value` after `stmts`, in a scope of their own
+    /// that `pattern` binds into first.
+    fn probe_tail_type(
+        &mut self,
+        stmts: &[Stmt],
+        value: Option<&Expr>,
+        pattern: Option<&Pattern>,
+        scrutinee: &Option<CheckerType>,
+    ) -> Option<CheckerType> {
+        let at = self.probe_position();
+        self.symbols.enter_scope();
+        if let Some(pattern) = pattern {
+            self.probe_bind_pattern(pattern, scrutinee);
+        }
+        let _ = self.probe_block(stmts);
+        let ty = value.and_then(|value| self.probe_type(value));
         self.probe_restore(at);
         ty
+    }
+
+    /// The return type of a call the checker refused: a function's, a
+    /// built-in's, or a method's on a receiver whose type is recovered. A
+    /// generic callee's depends on its instantiation, and is not guessed.
+    fn probe_call_type(&mut self, func: &Expr) -> Option<CheckerType> {
+        let name = match func {
+            Expr::Ident(name) => name.clone(),
+            Expr::FieldAccess { object, field, .. } => {
+                match self.probe_type(object).map(|ty| self.through_alias_name(&ty)) {
+                    Some(CheckerType::Struct(owner, _) | CheckerType::Enum(owner, _)) => {
+                        format!("{}::{}", owner, field)
+                    }
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        if self.generic_functions.contains_key(&name) {
+            return None;
+        }
+        if let Some(CheckerType::Function(_, ret)) = self.functions.get(&name) {
+            return Some(ret.as_ref().clone());
+        }
+        crate::builtins::lookup(&name).map(|builtin| builtin_type(builtin.ret))
     }
 
     /// `ty`, as the type it and `other` — which compares equal to it — have

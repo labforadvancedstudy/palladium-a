@@ -617,3 +617,107 @@ fn an_imported_bodys_refusal_names_its_module_and_function() {
         text
     );
 }
+
+// ---------------------------------------------------------------------------
+// Review round 2: every `let` binds its name, and every operand's type is
+// recovered from its form when the checker refuses it under another rule.
+// ---------------------------------------------------------------------------
+
+/// `same<T>` with `body`, called after `setup` binds `x` and `y`.
+fn generic_with(body: &str, setup: &str) -> String {
+    format!(
+        "fn pick(s: String) -> String {{ s }}\n\
+         fn same<T>(a: T, b: T) -> bool {{ {} }}\n\
+         fn main() {{ {} if same(x, y) {{ print_int(1); }} else {{ print_int(0); }} }}",
+        body, setup
+    )
+}
+
+const AT_STRINGS: &str = "let x = int_to_string(12); let y = \"12\";";
+const AT_INTS: &str = "let x = 3; let y = 3;";
+
+/// Each operand below is a String whose type the checker could not give —
+/// a block, a local inferred from one, an `if`, `loop` or `match` value, a
+/// cast, a call whose argument is refused — so on bb324cd the comparison was
+/// never judged, and C compared two addresses (0 for two equal Strings).
+#[test]
+fn an_operand_whose_type_is_recovered_is_judged() {
+    for body in [
+        "({ let n: bool = 1; a }) == b",
+        "a == ({ let n: bool = 1; b })",
+        "let v = { let n: bool = 1; a }; v == b",
+        "(if true { let n: bool = 1; a } else { b }) == b",
+        "(loop { let n: bool = 1; break a; }) == b",
+        "(match 1 { _ => { let n: bool = 1; a } }) == b",
+        "let v = a as String; v == b",
+        "pick({ let n: bool = 1; a }) == b",
+    ] {
+        let text = refused(&generic_with(body, AT_STRINGS), "cmp_recovered");
+        assert!(
+            text.contains("T = String") && text.contains("`==` is not defined on `String`"),
+            "{}: {}",
+            body,
+            text
+        );
+    }
+}
+
+/// The controls: the same shapes at `i64` have a comparison, and each printed
+/// 1 on d5166e8. Recovery must not turn them into refusals.
+#[test]
+fn the_same_recovered_operands_at_an_integer_still_run() {
+    for body in [
+        "({ let n: bool = 1; a }) == b",
+        "a == ({ let n: bool = 1; b })",
+        "let v = { let n: bool = 1; a }; v == b",
+        "(if true { let n: bool = 1; a } else { b }) == b",
+        "(loop { let n: bool = 1; break a; }) == b",
+        "(match 1 { _ => { let n: bool = 1; a } }) == b",
+    ] {
+        let out = run(&generic_with(body, AT_INTS), "cmp_recovered_int");
+        assert_eq!(out, "1\n", "{}", body);
+    }
+}
+
+/// THE FALSE REFUSAL bb324cd made. The String parameters `a` and `b` are
+/// shadowed by integers whose `let` the checker refuses (the block holds a
+/// `let n: bool = 1`); a failed `let` bound nothing, so the comparison read the
+/// OUTER Strings and was refused. d5166e8 printed 1 for each.
+#[test]
+fn a_shadowing_local_whose_let_is_refused_still_shadows() {
+    for body in [
+        "{ let a = { let n: bool = 1; 12 }; let b = { let n: bool = 1; 12 }; a == b }",
+        "if true { let a = { let n: bool = 1; 12 }; let b = { let n: bool = 1; 12 }; \
+         return a == b; } false",
+        "{ let a = { let n: bool = 1; 12 }; a == a }",
+        "{ let a = { let n: bool = 1; 12 }; let b = a; a == b }",
+    ] {
+        let out = run(&generic_with(body, AT_STRINGS), "cmp_shadow");
+        assert_eq!(out, "1\n", "{}", body);
+    }
+}
+
+/// The same in ONE scope: `let a = 1;` over the parameter `a` is refused by
+/// the checker (`already defined in this scope`), and the parameter's String
+/// binding it left was what the comparison read. Not this rule's program to
+/// refuse: d5166e8 handed it to gcc, which refuses the redefinition, and so
+/// does this compiler now — with no PD0079 naming a String that is not there.
+#[test]
+fn a_same_scope_rebinding_is_not_read_as_the_parameter() {
+    let name = unique_module_name("cmp_rebind");
+    let dir = TempDir::new().unwrap();
+    let src = dir.path().join(format!("{}.pd", name));
+    fs::write(
+        &src,
+        generic_with("let a = 1; let b = 1; a == b", AT_STRINGS),
+    )
+    .unwrap();
+    if let Err(e) = Driver::new().compile_file(&src) {
+        assert_ne!(
+            e.code().map(|c| c.to_string()),
+            Some("PD0079".to_string()),
+            "{}",
+            e
+        );
+    }
+}
