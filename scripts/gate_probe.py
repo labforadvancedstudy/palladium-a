@@ -880,7 +880,7 @@ def emitted_c_path(file: str, cwd=None) -> Path:
     """Where codegen writes the translation unit for `file`.
 
     `build_output/<file_stem>.c`, relative to the process's working directory
-    (src/codegen/mod.rs:3650-3655). Derived from the BASENAME, so two inputs
+    (src/codegen/mod.rs:3676-3681). Derived from the BASENAME, so two inputs
     with the same stem share it — every caller must clear it first, or a
     previous run's C answers for this one.
     """

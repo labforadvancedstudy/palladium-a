@@ -1125,7 +1125,7 @@ show.
 is where both the bootstrap compiler and the standard library become multi-file.
 
 **Owns 8 requirement rows** — N3-11 and N11-01…N11-07 — plus the one `xfail` of the corpus's six that
-M4 owns (`tests/conformance-manifest.txt:130`, cross-file imports; the other five are su3's
+M4 owns (`tests/conformance-manifest.txt:131`, cross-file imports; the other five are su3's
 type-alias rows, owned by M3) and the vacuous `12_modules_imports`.
 
 A `mod` item, file-based nesting, **enforced** visibility (N11-02 is a `reject` row: a private item

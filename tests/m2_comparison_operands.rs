@@ -506,7 +506,7 @@ fn a_string_literal_pattern_still_compares_characters() {
 // ---------------------------------------------------------------------------
 // Review round 1: the instantiated body is the WHOLE body, and another rule's
 // refusal does not end the walk. Each program below compiled on 71c4d6f and
-// printed 0 for two equal Strings (or reached gcc), with no PD0079.
+// printed 0 for two equal Strings (or reached gcc), with no PD0080.
 // ---------------------------------------------------------------------------
 
 /// A generic body over `T`, called at two equal Strings bound to locals (a
@@ -612,7 +612,7 @@ fn an_imported_bodys_refusal_names_its_module_and_function() {
     let text = String::from_utf8_lossy(&out.stderr).to_string();
     assert!(!out.status.success(), "accepted: {}", text);
     assert!(
-        text.contains("error[PD0079]") && text.contains("in `lib2::pair_is_one`, imported:"),
+        text.contains("error[PD0080]") && text.contains("in `lib2::pair_is_one`, imported:"),
         "{}",
         text
     );
@@ -701,7 +701,7 @@ fn a_shadowing_local_whose_let_is_refused_still_shadows() {
 /// the checker (`already defined in this scope`), and the parameter's String
 /// binding it left was what the comparison read. Not this rule's program to
 /// refuse: d5166e8 handed it to gcc, which refuses the redefinition, and so
-/// does this compiler now — with no PD0079 naming a String that is not there.
+/// does this compiler now — with no PD0080 naming a String that is not there.
 #[test]
 fn a_same_scope_rebinding_is_not_read_as_the_parameter() {
     let name = unique_module_name("cmp_rebind");
@@ -715,7 +715,7 @@ fn a_same_scope_rebinding_is_not_read_as_the_parameter() {
     if let Err(e) = Driver::new().compile_file(&src) {
         assert_ne!(
             e.code().map(|c| c.to_string()),
-            Some("PD0079".to_string()),
+            Some("PD0080".to_string()),
             "{}",
             e
         );
@@ -839,6 +839,87 @@ fn an_imported_generic_is_held_to_the_rule() {
         .expect("failed to run pdc");
     let text = String::from_utf8_lossy(&out.stderr).to_string();
     assert!(!out.status.success(), "accepted: {}", text);
-    assert!(text.contains("error[PD0079]"), "{}", text);
+    assert!(text.contains("error[PD0080]"), "{}", text);
     assert!(!text.contains("gcc"), "{}", text);
+}
+
+// ---------------------------------------------------------------------------
+// Review round 4: the backstop judges the carrier C actually RECEIVES — the
+// type each hoisted value form was declared with — not a reconstruction.
+// ---------------------------------------------------------------------------
+
+/// THE FALSE REFUSAL 9dca568 made. The reconstruction typed `break x` outside
+/// the loop, found the outer String `x`, and refused; the C declared the loop's
+/// temporary `long long` and compared `__pd_val0 == 1LL`. d5166e8 printed 1.
+#[test]
+fn a_loop_value_is_judged_by_the_temporary_it_is_declared_as() {
+    let out = run(
+        "fn main() { let x = \"hi\"; \
+         if (loop { let x = 1; break x; }) == 1 { print_int(1); } else { print_int(0); } }",
+        "cmp_r4_loop_shadow",
+    );
+    assert_eq!(out, "1\n");
+    let out = run(
+        "fn main() { let x = \"hi\"; \
+         let v = { let x = 1; x }; if v == 1 { print_int(1); } else { print_int(0); } }",
+        "cmp_r4_block_shadow",
+    );
+    assert_eq!(out, "1\n");
+}
+
+/// Two loop values whose break operands the reconstruction could not type:
+/// the temporaries were declared `const char*` and compared by address (0 for
+/// two equal Strings on 9dca568). At `i64` the same program runs.
+#[test]
+fn loop_values_the_reconstruction_could_not_type_are_still_judged() {
+    let body = "(loop { let x = match 1 { 1 => a, _ => 0 }; break x; }) == \
+                (loop { let y = match 1 { 1 => b, _ => 0 }; break y; })";
+    let text = refused(&generic_with(body, AT_STRINGS), "cmp_r4_unknown_loops");
+    assert!(text.contains("`==` is not defined on `String`"), "{}", text);
+    assert_eq!(run(&generic_with(body, AT_INTS), "cmp_r4_unknown_loops_int"), "1\n");
+}
+
+/// No generic and no refused statement: two loop values that are references
+/// are `long long*` temporaries, compared by address (0 for `12 == 12` on
+/// d5166e8 and 9dca568). The dereferenced comparison is of two integers.
+#[test]
+fn loop_values_that_are_pointers_are_refused_and_their_targets_compare() {
+    let text = refused(
+        "fn main() { let a = 12; let b = 12; \
+         if (loop { let x = &a; break x; }) == (loop { let y = &b; break y; }) \
+         { print_int(1); } else { print_int(0); } }",
+        "cmp_r4_loop_pointer",
+    );
+    assert!(text.contains("a pointer"), "{}", text);
+    let out = run(
+        "fn main() { let a = 12; let b = 12; \
+         if *(loop { let x = &a; break x; }) == *(loop { let y = &b; break y; }) \
+         { print_int(1); } else { print_int(0); } }",
+        "cmp_r4_loop_pointer_deref",
+    );
+    assert_eq!(out, "1\n");
+}
+
+/// A `break` in a statement `loop` nested in a value `loop` belongs to the
+/// inner loop. The type checker's walk recorded it on the OUTER one, typed both
+/// operands `(Int, Int)` and refused under this rule (fable, review round 4);
+/// the program is refused for its own reason, as d5166e8 refused it.
+#[test]
+fn a_break_in_a_nested_statement_loop_is_not_the_outer_loops_value() {
+    let name = unique_module_name("cmp_r4_nested_loop");
+    let dir = TempDir::new().unwrap();
+    let src = dir.path().join(format!("{}.pd", name));
+    fs::write(
+        &src,
+        generic_with(
+            "(loop { loop { break (1, 2); } break a; }) == \
+             (loop { loop { break (1, 2); } break b; })",
+            AT_INTS,
+        ),
+    )
+    .unwrap();
+    let e = Driver::new()
+        .compile_file(&src)
+        .expect_err("d5166e8 refused this program too");
+    assert_ne!(e.code().map(|c| c.to_string()), Some("PD0080".to_string()), "{}", e);
 }

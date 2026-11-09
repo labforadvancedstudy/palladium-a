@@ -7720,7 +7720,7 @@ impl TypeChecker {
         Ok(())
     }
 
-    /// The first PD0079 refusal in `generic`'s body instantiated at
+    /// The first PD0080 refusal in `generic`'s body instantiated at
     /// `type_args`, walked on `self` — a probe, never the checker itself.
     fn comparison_in_instantiation(
         &mut self,
@@ -7799,7 +7799,7 @@ impl TypeChecker {
     /// `check_statement` over `stmts`, except that a statement refused under
     /// ANOTHER rule is not the end of the walk: its parts are walked instead
     /// (`probe_statement`), so every comparison in the block is checked. Only
-    /// PD0079 comes back as an error.
+    /// PD0080 comes back as an error.
     fn probe_block(&mut self, stmts: &[Stmt]) -> Result<()> {
         for stmt in stmts {
             let at = self.probe_position();
@@ -7885,11 +7885,17 @@ impl TypeChecker {
                 condition, body, ..
             } => {
                 self.probe_expr(condition)?;
-                self.probe_scoped(body, None, |_| {})
+                self.probe_scoped(body, None, |probe| probe.enter_loop(BreakTarget::Statement))
             }
-            Stmt::Loop { body, .. } | Stmt::Unsafe { body, .. } => {
-                self.probe_scoped(body, None, |_| {})
+            // A LOOP'S BODY GETS ITS OWN `break` FRAME, as `check_statement`
+            // gives it: without one a `break (1, 2)` in a statement `loop`
+            // nested in a value `loop` was recorded on the OUTER loop, which was
+            // then typed `(Int, Int)` (review round 4). `probe_leave` drops the
+            // frame with the scope.
+            Stmt::Loop { body, .. } => {
+                self.probe_scoped(body, None, |probe| probe.enter_loop(BreakTarget::Statement))
             }
+            Stmt::Unsafe { body, .. } => self.probe_scoped(body, None, |_| {}),
             Stmt::For {
                 var, iter, body, ..
             } => {
@@ -7899,7 +7905,10 @@ impl TypeChecker {
                     Some(CheckerType::Array(element, _)) => Some(*element),
                     _ => None,
                 };
-                self.probe_scoped(body, None, |probe| probe.probe_bind(var, element, false))
+                self.probe_scoped(body, None, |probe| {
+                    probe.enter_loop(BreakTarget::Statement);
+                    probe.probe_bind(var, element, false)
+                })
             }
             Stmt::Match { expr, arms, .. } => {
                 self.probe_expr(expr)?;
@@ -8005,7 +8014,9 @@ impl TypeChecker {
                 )
             }
             Expr::Block { stmts, value, .. } => self.probe_scoped(stmts, value.as_deref(), |_| {}),
-            Expr::Loop { body, .. } => self.probe_scoped(body, None, |_| {}),
+            Expr::Loop { body, .. } => {
+                self.probe_scoped(body, None, |probe| probe.enter_loop(BreakTarget::Value(None)))
+            }
             Expr::Match { expr, arms, .. } => {
                 self.probe_expr(expr)?;
                 let scrutinee = self.probe_type(expr);
@@ -10354,7 +10365,7 @@ impl TypeChecker {
     }
 }
 
-/// A PD0079 refusal raised in an imported module's public body, named by where
+/// A PD0082 refusal raised in an imported module's public body, named by where
 /// it is (review round 1). That body is checked whether or not anything calls
 /// it, so the refusal can concern a file the importer never opened, and the
 /// operator and type alone did not say which. Every other refusal keeps its

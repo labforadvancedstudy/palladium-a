@@ -282,6 +282,14 @@ pub struct CodeGenerator {
     /// type is recorded as each assignment is emitted — the one moment the
     /// bindings still exist — and read back afterwards.
     hoist_types: std::collections::HashMap<String, String>,
+    /// PD0080's backstop (#89/#92, review round 4): while a comparison's
+    /// operands are generated, the C type each value form among them was
+    /// DECLARED with, keyed by the node's address — the carrier C receives,
+    /// not a reconstruction of it. `None` outside a comparison, and read only
+    /// by the check (`carrier_type`), so it cannot change any emitted C.
+    comparison_carriers: Option<std::collections::HashMap<usize, String>>,
+    /// The check is reading `comparison_carriers` (see there).
+    reading_carriers: bool,
     /// Temporaries currently being lowered into, so `Stmt::Assign` knows which assignments to
     /// record a type for. Membership, not a name prefix: the prefix is reserved, but a set says
     /// what is true rather than what is merely conventional.
@@ -341,6 +349,8 @@ impl CodeGenerator {
             pending_hoists: String::new(),
             hoist_counter: 0,
             hoist_types: std::collections::HashMap::new(),
+            comparison_carriers: None,
+            reading_carriers: false,
             open_hoists: std::collections::HashSet::new(),
             break_temps: Vec::new(),
             struct_literals: StructLiterals::default(),
@@ -533,9 +543,11 @@ impl CodeGenerator {
                     Some(t) => Some(self.type_to_c(t)),
                     None => self.try_infer_expr_type_in(value, &locals),
                 };
-                if let Some(c_type) = inferred {
-                    locals.insert(name.clone(), c_type);
-                }
+                // A `let` SHADOWS whether or not its type is known (review
+                // round 4): skipping an untyped one left the name to an OUTER
+                // binding, and `{ let x = <untyped>; x }` was typed as the
+                // outer `x`. `UNTYPED` reads as `None` (`Expr::Ident` below).
+                locals.insert(name.clone(), inferred.unwrap_or_else(|| UNTYPED.to_string()));
             }
         }
         locals
@@ -546,6 +558,17 @@ impl CodeGenerator {
         expr: &Expr,
         locals: &std::collections::HashMap<String, String>,
     ) -> Option<String> {
+        if self.reading_carriers
+            && matches!(
+                expr,
+                Expr::If { .. } | Expr::Block { .. } | Expr::Match { .. } | Expr::Loop { .. }
+            )
+        {
+            let key = expr as *const Expr as usize;
+            if let Some(carrier) = self.comparison_carriers.as_ref().and_then(|m| m.get(&key)) {
+                return Some(carrier.clone());
+            }
+        }
         match expr {
             Expr::Integer(_) => Some("long long".to_string()),
             Expr::Float(_) => Some("double".to_string()),
@@ -608,10 +631,11 @@ impl CodeGenerator {
             // Every binder (let, parameter, for-loop variable, match binding)
             // records its C type in `self.variables`, so a name we cannot find
             // means codegen genuinely does not know the type.
-            Expr::Ident(name) => locals
-                .get(name)
-                .or_else(|| self.variables.get(name))
-                .cloned(),
+            Expr::Ident(name) => match locals.get(name) {
+                Some(c_type) if c_type == UNTYPED => None,
+                Some(c_type) => Some(c_type.clone()),
+                None => self.variables.get(name).cloned(),
+            },
             Expr::Call { func, args, .. } => {
                 // A METHOD CALL IS A CALL (N5-17), and it has to be typed here
                 // as well as emitted, because a method call can itself be a
@@ -876,17 +900,19 @@ impl CodeGenerator {
                 let scrutinee = self.try_infer_expr_type_in(expr, locals);
                 arms.iter().find_map(|arm| {
                     let mut env = locals.clone();
-                    if let Some(scrutinee) = scrutinee.as_deref() {
-                        self.bind_pattern_locals(&arm.pattern, scrutinee, &mut env);
-                    }
+                    self.bind_pattern_shadowing(&arm.pattern, scrutinee.as_deref(), &mut env);
                     let arm_locals = self.locals_of(&arm.body, &env);
                     arm.value
                         .as_ref()
                         .and_then(|v| self.try_infer_expr_type_in(v, &arm_locals))
                 })
             }
-            Expr::Loop { body, .. } => Self::first_break_value(body)
-                .and_then(|expr| self.try_infer_expr_type_in(expr, locals)),
+            // THE `break` IS TYPED WHERE IT IS (review round 4): with
+            // `let x = "hi"; (loop { let x = 1; break x; })` this asked what
+            // `x` was OUTSIDE the loop and answered `const char*`.
+            Expr::Loop { body, .. } => self
+                .break_value_in(body, locals)
+                .and_then(|(expr, env)| self.try_infer_expr_type_in(expr, &env)),
             // No rule yet: ranges are only meaningful inside `for`, `?` and
             // macros are lowered elsewhere, and await/async is unimplemented.
             Expr::Range { .. } => Some("__pd_range".to_string()),
@@ -4826,37 +4852,6 @@ impl CodeGenerator {
         generated
     }
 
-    /// The operand of the first value-carrying `break` that binds to this loop.
-    ///
-    /// Used only as a CHEAP GUESS for the temporary's C type before the body is
-    /// generated; the authoritative answer is recorded by
-    /// [`CodeGenerator::emit_hoist_assignment`] while the body's bindings are
-    /// live. Skips nested loops, because a `break` in one of those binds there.
-    fn first_break_value(stmts: &[Stmt]) -> Option<&Expr> {
-        for stmt in stmts {
-            let found = match stmt {
-                Stmt::Break { value, .. } => value.as_ref(),
-                Stmt::If {
-                    then_branch,
-                    else_branch,
-                    ..
-                } => Self::first_break_value(then_branch)
-                    .or_else(|| else_branch.as_deref().and_then(Self::first_break_value)),
-                Stmt::Match { arms, .. } => arms
-                    .iter()
-                    .find_map(|arm| Self::first_break_value(&arm.body)),
-                Stmt::Unsafe { body, .. } => Self::first_break_value(body),
-                // A `break` in here belongs to THAT loop.
-                Stmt::Loop { .. } | Stmt::While { .. } | Stmt::For { .. } => None,
-                _ => None,
-            };
-            if found.is_some() {
-                return found;
-            }
-        }
-        None
-    }
-
     /// Emit `<temp> = <expr>;` and record the temporary's C type the first time.
     ///
     /// The recording is the whole reason this is not an inline `push_str`: this
@@ -5701,6 +5696,7 @@ impl CodeGenerator {
         // this box has (GNU gcc is not installed here, so that half is unmeasured
         // and is claimed as a possibility rather than a fact). If someone wants
         // it gone, the measurement above is the argument for deleting it.
+        self.record_carrier(expr, &c_type);
         self.pending_hoists.push_str(&format!(
             "    {} {} = {};\n",
             c_type,
@@ -5748,7 +5744,7 @@ impl CodeGenerator {
         let c_type = self.hoist_temp_type(
             [
                 c_type,
-                Self::first_break_value(body).and_then(|e| self.try_infer_expr_type(e)),
+                self.try_infer_expr_type(expr),
             ],
             "`loop`",
         )?;
@@ -5756,6 +5752,7 @@ impl CodeGenerator {
         // No initialiser here: the only way out of a `loop` is a `break`, and
         // the type checker has proved every one of them carries a value, so
         // control cannot reach the use without having written it.
+        self.record_carrier(expr, &c_type);
         self.pending_hoists
             .push_str(&format!("    {} {};\n", c_type, temp));
         self.pending_hoists.push_str(&text);
@@ -5839,6 +5836,7 @@ impl CodeGenerator {
             self.generate_hoisted_block(else_branch, else_value.as_deref(), &temp, "        ")?;
 
         let c_type = self.hoist_temp_type([then_type, else_type], "`if`")?;
+        self.record_carrier(expr, &c_type);
 
         self.pending_hoists
             .push_str(&format!("    {} {};\n", c_type, temp));
@@ -5868,6 +5866,7 @@ impl CodeGenerator {
         let (body, c_type) =
             self.generate_hoisted_block(stmts, value.as_deref(), &temp, "        ")?;
         let c_type = self.hoist_temp_type([c_type, None], "block")?;
+        self.record_carrier(expr, &c_type);
 
         self.pending_hoists
             .push_str(&format!("    {} {};\n", c_type, temp));
@@ -6215,7 +6214,6 @@ impl CodeGenerator {
             Expr::Binary {
                 left, op, right, span,
             } => {
-                self.refuse_a_comparison_without_one(*op, left, right, *span)?;
                 // `&&` AND `||` DO NOT EVALUATE THEIR RIGHT OPERAND WHEN THE
                 // LEFT DECIDES, and a hoisted right operand did.
                 //
@@ -6279,6 +6277,34 @@ impl CodeGenerator {
                     self.output.push_str(", ");
                     self.generate_expression(right)?;
                     self.output.push(')');
+                } else if matches!(
+                    op,
+                    BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge
+                ) {
+                    // PD0080's backstop judges the operands AS EMITTED, so both
+                    // are generated first (their hoists land in order, exactly
+                    // as before) and only then checked.
+                    let outer = self.comparison_carriers.replace(Default::default());
+                    let generated = (|| -> Result<(String, String)> {
+                        let lhs = self.capture_output(|g| g.generate_expression(left))?;
+                        let rhs = self.capture_output(|g| g.generate_expression(right))?;
+                        Ok((lhs, rhs))
+                    })();
+                    let checked = generated.and_then(|texts| {
+                        self.refuse_a_comparison_without_one(*op, left, right, *span)
+                            .map(|()| texts)
+                    });
+                    self.comparison_carriers = outer;
+                    let (lhs, rhs) = checked?;
+                    let c_op = match op {
+                        BinOp::Eq => " == ",
+                        BinOp::Ne => " != ",
+                        BinOp::Lt => " < ",
+                        BinOp::Gt => " > ",
+                        BinOp::Le => " <= ",
+                        _ => " >= ",
+                    };
+                    self.output.push_str(&format!("({}{}{})", lhs, c_op, rhs));
                 } else {
                     // Regular binary operation
                     self.output.push('(');
@@ -7682,7 +7708,7 @@ mod tests {
     #[test]
     fn test_codegen_break_continue() {
         let source = r#"
-        fn main() {
+        fn main() { let x = 0;
             while true {
                 if x > 10 {
                     break;
@@ -8761,7 +8787,7 @@ mod tuple_shape_tests {
     }
 }
 
-/// PD0079's BACKSTOP (#89/#92, review round 3).
+/// PD0080's BACKSTOP (#89/#92, review round 3).
 ///
 /// The type checker refuses a comparison on a type with no comparison, and it
 /// is where the good message comes from. But it reasons about Palladium types
@@ -8781,12 +8807,19 @@ mod tuple_shape_tests {
 /// an integer or a char (PD0072), a `for` over a range its `long long` bound;
 /// a String literal pattern is `__pd_string_eq`, not `==`.
 impl CodeGenerator {
-    /// `Err` with PD0079 when `op` compares and either operand's C type is
-    /// KNOWN and is not one C compares by value. An operand whose C type this
-    /// generator cannot name is left alone: refusing what it does not know
-    /// would be a guess, and the type checker has already judged it.
+    /// `Err` with PD0080 when `op` compares and an operand's EMITTED carrier is
+    /// not a C type that compares by value (review round 4).
+    ///
+    /// Called after both operands have been generated, so every value form
+    /// among them — an `if`, block, `match` or `loop`, at any depth — has been
+    /// declared as a temporary, and its carrier is the type it was DECLARED
+    /// with (`comparison_carriers`), not a reconstruction of it. Everything
+    /// else is typed as code generation types the `let` it would be bound to,
+    /// in the scope the comparison is generated in. An operand with no
+    /// nameable C type is refused too: admitting what cannot be typed is how
+    /// three review rounds of address comparisons got through.
     fn refuse_a_comparison_without_one(
-        &self,
+        &mut self,
         op: BinOp,
         left: &Expr,
         right: &Expr,
@@ -8798,26 +8831,110 @@ impl CodeGenerator {
         ) {
             return Ok(());
         }
-        let Some(c_type) = [left, right]
-            .into_iter()
-            .filter_map(|operand| self.try_infer_expr_type(operand))
-            .find(|c_type| !Self::c_compares_by_value(c_type))
-        else {
-            return Ok(());
-        };
-        let (shown, why, instead) = Self::no_c_comparison(op, &c_type);
+        self.reading_carriers = true;
+        let carriers = [self.try_infer_expr_type(left), self.try_infer_expr_type(right)];
+        self.reading_carriers = false;
         let at = if span.line == 0 {
             String::new()
         } else {
             format!(" (line {}, column {})", span.line, span.column)
         };
-        Err(CompileError::CodegenError {
-            message: format!(
-                "`{}` is not defined on {}{}: {}. {}",
-                op, shown, at, why, instead
-            ),
+        for carrier in &carriers {
+            // NO NAMEABLE CARRIER IS NOT AN ADMISSION. Measured over every
+            // program the review rounds collected (952) and the tree: two
+            // reach here — a payload of a generic enum built inside a generic
+            // body — and both died in gcc on d5166e8 (`incomplete type
+            // 'struct O'`), so the refusal costs no program that ran.
+            let Some(c_type) = carrier else {
+                return Err(CompileError::CodegenError {
+                    message: format!(
+                        "`{}` cannot be shown to compare values{}: code generation has no C \
+                         type for one of its operands, so it cannot tell whether C would \
+                         compare the values or their addresses. Bind the operand to a `let` \
+                         with a written type first",
+                        op, at
+                    ),
+                }
+                .with_code(DiagnosticCode::ComparisonOperandIsIntFloatBoolOrChar));
+            };
+            if Self::c_compares_by_value(c_type) {
+                continue;
+            }
+            let (shown, why, instead) = Self::no_c_comparison(op, c_type);
+            return Err(CompileError::CodegenError {
+                message: format!("`{}` is not defined on {}{}: {}. {}", op, shown, at, why, instead),
+            }
+            .with_code(DiagnosticCode::ComparisonOperandIsIntFloatBoolOrChar));
         }
-        .with_code(DiagnosticCode::ComparisonOperandIsIntFloatBoolOrChar))
+        Ok(())
+    }
+
+    /// Note the carrier a value form was declared with, while a comparison's
+    /// operands are being generated (`comparison_carriers`).
+    fn record_carrier(&mut self, expr: &Expr, c_type: &str) {
+        if let Some(carriers) = self.comparison_carriers.as_mut() {
+            carriers.insert(expr as *const Expr as usize, c_type.to_string());
+        }
+    }
+
+    /// The first valued `break` out of the loop whose body is `stmts`, with
+    /// the C types of the names in scope WHERE IT IS: the body's `let`s before
+    /// it, and the pattern names of a `match` arm it is in (review round 4).
+    /// A `break` inside a nested loop belongs to that loop and is skipped.
+    fn break_value_in<'e>(
+        &self,
+        stmts: &'e [Stmt],
+        outer: &std::collections::HashMap<String, String>,
+    ) -> Option<(&'e Expr, std::collections::HashMap<String, String>)> {
+        let mut env = outer.clone();
+        for stmt in stmts {
+            let found = match stmt {
+                Stmt::Break { value: Some(value), .. } => Some((value, env.clone())),
+                Stmt::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => self.break_value_in(then_branch, &env).or_else(|| {
+                    else_branch
+                        .as_deref()
+                        .and_then(|branch| self.break_value_in(branch, &env))
+                }),
+                Stmt::Match { expr, arms, .. } => {
+                    let scrutinee = self.try_infer_expr_type_in(expr, &env);
+                    arms.iter().find_map(|arm| {
+                        let mut arm_env = env.clone();
+                        self.bind_pattern_shadowing(&arm.pattern, scrutinee.as_deref(), &mut arm_env);
+                        self.break_value_in(&arm.body, &arm_env)
+                    })
+                }
+                Stmt::Unsafe { body, .. } => self.break_value_in(body, &env),
+                _ => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+            env = self.locals_of(std::slice::from_ref(stmt), &env);
+        }
+        None
+    }
+
+    /// `bind_pattern_locals`, after first shadowing EVERY name the pattern
+    /// binds as `UNTYPED`: a name a pattern introduces hides the outer one
+    /// whether or not its type can be named (review round 4).
+    fn bind_pattern_shadowing(
+        &self,
+        pattern: &Pattern,
+        subject: Option<&str>,
+        out: &mut std::collections::HashMap<String, String>,
+    ) {
+        let mut names = Vec::new();
+        pattern_names(pattern, &mut names);
+        for name in names {
+            out.insert(name, UNTYPED.to_string());
+        }
+        if let Some(subject) = subject {
+            self.bind_pattern_locals(pattern, subject, out);
+        }
     }
 
     /// The C types whose operators ARE the comparison of the values: every
@@ -8896,5 +9013,31 @@ impl CodeGenerator {
              variant with `match`"
                 .to_string(),
         )
+    }
+}
+
+/// The C type inference records for a name whose type it cannot name, so that
+/// the name still SHADOWS an outer one (`locals_of`, `bind_pattern_shadowing`);
+/// `Expr::Ident` reads it as `None`. Not a C type and not a spelling any
+/// declaration can carry.
+const UNTYPED: &str = "\u{0}untyped";
+
+/// Every name `pattern` can bind.
+fn pattern_names(pattern: &Pattern, out: &mut Vec<String>) {
+    match pattern {
+        Pattern::Ident(name) => out.push(name.clone()),
+        Pattern::Binding { name, inner } => {
+            out.push(name.clone());
+            pattern_names(inner, out);
+        }
+        Pattern::Or(alternatives) | Pattern::Tuple(alternatives) => {
+            alternatives.iter().for_each(|p| pattern_names(p, out))
+        }
+        Pattern::EnumPattern { data, .. } => match data {
+            Some(PatternData::Tuple(patterns)) => patterns.iter().for_each(|p| pattern_names(p, out)),
+            Some(PatternData::Struct(fields)) => fields.iter().for_each(|(_, p)| pattern_names(p, out)),
+            None => {}
+        },
+        Pattern::Wildcard | Pattern::Literal(_) | Pattern::Range { .. } => {}
     }
 }

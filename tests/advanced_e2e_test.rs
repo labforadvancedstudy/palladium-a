@@ -261,7 +261,7 @@ fn test_result_error_handling() {
     
     fn parse_int(s: String) -> Result<int, String> {
         // Simplified - just check if it's "42". `string_eq`, not `==`: a
-        // String has no `==` (PD0079, #89/#92), which compared addresses.
+        // String has no `==` (PD0080, #89/#92), which compared addresses.
         if string_eq(s, "42") {
             Result::Ok(42)
         } else {
@@ -490,7 +490,7 @@ fn test_pattern_matching_guards() {
             Message::Move { x, y } => {
                 print("Moving to other location");
             },
-            // `string_eq`, not `==`: a String has no `==` (PD0079, #89/#92).
+            // `string_eq`, not `==`: a String has no `==` (PD0080, #89/#92).
             // `text == "hello"` compared two addresses and passed only because
             // gcc pools the two identical literals into one.
             Message::Write(text) if string_eq(text, "hello") => {

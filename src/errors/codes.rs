@@ -651,10 +651,12 @@ pub enum DiagnosticCode {
     /// (`src/typeck/mod.rs`); the post-pass that checks each generic
     /// instantiation's body at the types it was instantiated with, because a
     /// generic body is otherwise never type-checked; and the BACKSTOP in the
-    /// code generator's comparison emitter, which refuses an operand whose
-    /// emitted C type is not a by-value scalar (`refuse_a_comparison_without_one`,
-    /// `src/codegen/mod.rs`) — the one place the type is known rather than
-    /// reconstructed, so no front-end path can let one through (#89, #92).
+    /// code generator's comparison emitter, which, once both operands are
+    /// generated, refuses one whose EMITTED carrier is not a by-value scalar
+    /// or has no nameable C type (`refuse_a_comparison_without_one`,
+    /// `src/codegen/mod.rs`): a hoisted value form is judged by the type its
+    /// temporary was declared with, not by a reconstruction, so no front-end
+    /// path can let one through (#89, #92).
     ComparisonOperandIsIntFloatBoolOrChar,
 }
 
