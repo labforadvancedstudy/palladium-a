@@ -44,7 +44,7 @@ such thing. Verified 2026-08-23 by reading each line:
 | C1 | `src/codegen/mod.rs:1982` | a comment about unrecognised constant values | yes |
 | C2 | `src/codegen/mod.rs:1905` | `self.output.push_str("    return __pd_empty_owned();\n");` | yes |
 | C3 | `src/codegen/mod.rs:2223` | `for (_, module_info) in &imported_modules {` — the loop header, not the visibility test inside it | yes, narrowly |
-| — | `src/typeck/mod.rs:1940` | the private-import registration comment | no |
+| — | `src/typeck/mod.rs:1909` | the private-import registration comment | no |
 | — | `src/codegen/mod.rs:2390` | `!crate::ast::local_definition_shadows_import(program, &func.name)` | no |
 
 All three were **pre-existing on `main`** before the recursive-data-types work,
@@ -67,8 +67,8 @@ what the amendment above says preserves a wrongness exactly.
 
 | # | Cites | What is actually there | Wrong? |
 |---|---|---|---|
-| C4 | `src/typeck/mod.rs:2049-2050` | `fields .iter()`, the walk over an enum variant's named fields — not an insert of any kind | yes |
-| C5 | the `src/typeck/mod.rs:1940` row of the C1–C3 table above | `self.functions.insert(func.name.clone(), func_type.clone());` — an insert, not "the private-import registration comment" as that row's third column says | the ROW's description is; the citation is not |
+| C4 | `src/typeck/mod.rs:2018-2019` | `fields .iter()`, the walk over an enum variant's named fields — not an insert of any kind | yes |
+| C5 | the `src/typeck/mod.rs:1909` row of the C1–C3 table above | `self.functions.insert(func.name.clone(), func_type.clone());` — an insert, not "the private-import registration comment" as that row's third column says | the ROW's description is; the citation is not |
 
 C4 is cited from the doc comment in `src/typeck/mod.rs` beginning "Set imported
 modules for type checking", whose sentence reads "Every insert below is under the
@@ -97,7 +97,7 @@ it is the range the sentence means.
 
 | # | Cites | What is actually there | Wrong? |
 |---|---|---|---|
-| C6 | `src/typeck/mod.rs:5581-5581`, from the "empty array literal `[]`" row of the PBS-1 exclusion table in `docs/specification/bootstrap-subset.md` | `GenericArgValue::Type(t) => match t {`, inside the generic-struct instantiation's type-argument stringifier. The refusal the row describes is the one `fn main() { let xs = []; }` prints — `Empty array literals are not supported (cannot infer type)` — raised from the array-literal arm of `check_expression`, not from this line | yes |
+| C6 | `src/typeck/mod.rs:5924-5924`, from the "empty array literal `[]`" row of the PBS-1 exclusion table in `docs/specification/bootstrap-subset.md` | `GenericArgValue::Type(t) => match t {`, inside the generic-struct instantiation's type-argument stringifier. The refusal the row describes is the one `fn main() { let xs = []; }` prints — `Empty array literals are not supported (cannot infer type)` — raised from the array-literal arm of `check_expression`, not from this line | yes |
 
 Re-derivable by content, unlike C1–C5 — the message is quoted above and appears at
 one raising site — so it is a repair any change touching that table row should make;

@@ -25,6 +25,13 @@
 //     the unrelated `Type mismatch: expected N, found Int` was kept as a
 //     refusal of the reference rules because an unused alias was named
 //     `Type`, and `wide(x)` was refused.
+//
+// And the way round 3 got them wrong:
+//
+//   * A REFUSAL IS JUDGED BY ITS OWN PAIR. In a generic body a `true` given
+//     for an `i64` — beside a correct `&m` for a parameter or a field declared
+//     `Type` — was judged by the reference beside it, and `siblings(x)` was
+//     refused. Main runs it and prints what this prints.
 struct G<T> {
     n: T,
 }
@@ -42,6 +49,28 @@ type N = u32;
 
 fn wide<T>(t: T) -> N {
     7
+}
+
+struct Holder {
+    n: i64,
+    p: Type,
+}
+
+struct Adder {
+    n: i64,
+}
+
+impl Adder {
+    fn add(&self, k: i64, p: Type) -> i64 {
+        *p + 2
+    }
+}
+
+fn siblings<T>(t: T) -> i64 {
+    let m = 5;
+    let a = Adder { n: 1 };
+    let h = Holder { n: true, p: &m };
+    a.add(true, &m) + *h.p
 }
 
 fn main() {
@@ -83,6 +112,8 @@ fn main() {
     print_int(*rk);
 
     print_int(wide(x) as i64);
+
+    print_int(siblings(x));
 
     print_int(x as i64);
 }

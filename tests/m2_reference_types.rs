@@ -664,3 +664,71 @@ fn a_refusal_is_classified_by_its_types_not_its_words() {
     ];
     check_table(&rows, "ref_refusal_kind");
 }
+
+/// REVIEW ROUND 3: A WALKED EXPRESSION KEEPS ITS TYPE. Where the walk of a
+/// generic body met an expression refused for an unrelated reason, it walked
+/// the parts and answered no type, so `let r = { if false { return 7; } &a };`
+/// bound nothing and the `r == s` after it went unjudged: two borrowed fives
+/// compared by address, `ne` on main and on round 3. The type is recovered
+/// from the parts — a block's value, a branch, an arm, a `loop`'s `break`, a
+/// tuple's elements — and the binding is made.
+#[test]
+fn a_walked_expression_keeps_its_type() {
+    let rows: Vec<(&str, &str, &str)> = vec![
+        ("a value block refused for an unrelated `return 7`", "type N = u32;\nfn f<T>(a: T, b: T) -> N { let r = { if false { return 7; } &a }; let s = &b; if r == s { print(\"eq\"); } else { print(\"ne\"); } 7 }\nfn main() { print_int(f(5, 5)); }\n", "REFUSED[PD0083]: in `f` instantiated at `i64`"),
+        ("a value block refused for its `let`", "fn same<T>(a: T, b: T) -> bool { let r = { let k: i64 = true; &a }; let s = &b; r == s }\nfn main() { if same(5, 5) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]"),
+        ("a value `if`", "fn same<T>(a: T, b: T) -> bool { let r = if true { let k: i64 = true; &a } else { &b }; let s = &b; r == s }\nfn main() { if same(5, 5) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]"),
+        ("a value `match`", "fn same<T>(a: T, b: T) -> bool { let r = match true { true => { let k: i64 = true; &a } false => &b }; let s = &b; r == s }\nfn main() { if same(5, 5) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]"),
+        ("a value `loop`", "fn same<T>(a: T, b: T) -> bool { let r = loop { let k: i64 = true; break &a; }; let s = &b; r == s }\nfn main() { if same(5, 5) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]"),
+        ("a tuple element", "type N = u32;\nfn f<T>(a: T, b: T) -> N { let pair = ({ if false { return 7; } &a }, &b); if pair.0 == pair.1 { print(\"eq\"); } else { print(\"ne\"); } 7 }\nfn main() { print_int(f(5, 5)); }\n", "REFUSED[PD0083]"),
+        ("a recovered value meets its annotation", "fn f<T>(x: T) -> i64 { let r: &i64 = { let k: i64 = true; 7 }; 7 }\nfn main() { print_int(f(1)); }\n", "REFUSED[PD0022]"),
+        ("a recovered value meets the return type", "fn f<T>(x: T) -> &i64 { { let k: i64 = true; 7 } }\nfn main() { let r = f(1); print_int(*r); }\n", "REFUSED[-]: in `f` instantiated at `i64`"),
+        ("a recovered branch meets the other branch", "fn f<T>(x: T) -> i64 { let m = 5; let z = if true { let k: i64 = true; &m } else { 0 }; print_int(z); 7 }\nfn main() { print_int(f(1)); }\n", "REFUSED[PD0058]"),
+        ("a recovered element meets the next element", "fn f<T>(x: T) -> i64 { let m = 5; let a = [{ let k: i64 = true; 1 }, &m]; 7 }\nfn main() { print_int(f(1)); }\n", "REFUSED[-]: in `f` instantiated at `i64`"),
+        ("the same blocks, no reference compared: still runs", "fn f<T>(x: T) -> i64 { let n: i64 = 4294967297; let r = if true { let k: i64 = true; &n } else { &n }; *r }\nfn main() { print_int(f(1)); }\n", "RUN: 4294967297\n"),
+    ];
+    check_table(&rows, "ref_kept_type");
+    let module = [("zlost.pd", "pub fn same<T>(a: T, b: T) -> bool { let r = { let k: i64 = true; &a }; let s = &b; r == s }\n")];
+    let got = outcome_with(&module, "import zlost;\nfn main() { if same(5, 5) { print(\"eq\"); } else { print(\"ne\"); } }\n", "ref_kept_type_import");
+    assert!(got.starts_with("REFUSED[PD0083]: in `same` instantiated at `i64`"), "an imported generic body\n    got: {}", got);
+}
+
+/// REVIEW ROUND 3: EVERY ACTUAL MEETS ITS OWN EXPECTED TYPE. Where a
+/// construct was refused for an unrelated reason, its comparisons with
+/// declared types were not asked: an integer reached a field or payload
+/// declared `&i64`, and a `&i64` reached a method's, a path call's or a
+/// generic's parameter declared `&u32` or `i64` — gcc or the ill-typed-C trap
+/// on main and on round 3. Each pair is asked again.
+#[test]
+fn every_actual_meets_its_own_expected_type() {
+    let rows: Vec<(&str, &str, &str)> = vec![
+        ("an integer for a struct field declared `&i64`", "type A = &i64;\nstruct H { p: A }\nfn f<T>(x: T) -> i64 { let h = H { p: 5 }; 7 }\nfn main() { print_int(f(1)); }\n", "REFUSED[-]: in `f` instantiated at `i64`: Type mismatch: expected &i64, found Int"),
+        ("the same after an unrelated `return 7`", "type A = &i64;\ntype N = u32;\nstruct H { p: A }\nfn f<T>(x: T) -> N { if false { return 7; } let h = H { p: 5 }; 7 }\nfn main() { print_int(f(1)); }\n", "REFUSED[-]: in `f` instantiated at `i64`: Type mismatch: expected &i64, found Int"),
+        ("an integer for an enum payload declared `&i64`", "type A = &i64;\nenum E { A(A), B }\nfn f<T>(x: T) -> i64 { let e = E::A(5); 7 }\nfn main() { print_int(f(1)); }\n", "REFUSED[-]: in `f` instantiated at `i64`: Type mismatch: expected &i64, found Int"),
+        ("a `&i64` for a method's `&u32`, beside a refused argument", "type N = u32;\nstruct S { n: i64 }\nimpl S { fn take(&self, n: i64, p: &u32) -> i64 { p as i64 } }\nfn f<T>(x: T) -> N { let s = S { n: 1 }; let n: i64 = 4294967297; let v = s.take({ if false { return 7; } 1 }, &n); print_int(v); 7 }\nfn main() { print_int(f(1)); }\n", "REFUSED[PD0042]: in `f` instantiated at `i64`"),
+        ("a held `&i64` for a method's `i64`", "struct S { n: i64 }\nimpl S { fn use(&self, a: i64, b: i64) -> i64 { b } }\nfn f<T>(x: T) -> i64 { let s = S { n: 1 }; let m = 5; let r = &m; s.use({ let k: i64 = true; 1 }, r) }\nfn main() { print_int(f(1)); }\n", "REFUSED[PD0042]"),
+        ("a `&i64` for a path call's `&u32`", "struct S { n: i64 }\nimpl S { fn take(n: i64, p: &u32) -> i64 { p as i64 } }\nfn f<T>(x: T) -> i64 { let n: i64 = 4294967297; S::take({ let k: i64 = true; 1 }, &n) }\nfn main() { print_int(f(1)); }\n", "REFUSED[PD0042]"),
+        ("a held `&i64` for a generic's concrete `i64`", "fn take<T>(a: T, b: i64) -> i64 { b }\nfn f<U>(x: U) -> i64 { let m = 5; let r = &m; take({ let k: i64 = true; 1 }, r) }\nfn main() { print_int(f(1)); print_int(take(1, 1)); }\n", "REFUSED[-]: in `f` instantiated at `i64`: Type mismatch: expected Int, found &i64"),
+        ("a generic instantiated at `&i64`, beside an unrelated argument", "fn pair<T>(x: T, k: i64) -> T { x }\nfn g<T>(a: T) -> i64 { let r = &a; let s = pair(r, true); *s }\nfn main() { print_int(g(5)); }\n", "REFUSED[-]: in `g` instantiated at `i64`: a generic function instantiated at `&i64`"),
+        ("an integer `0` for a field declared `&i64` (C's null pointer)", "type A = &i64;\nstruct H { p: A }\nfn f<T>(x: T) -> i64 { let h = H { p: 0 }; 7 }\nfn main() { print_int(f(1)); }\n", "REFUSED[-]: in `f` instantiated at `i64`: Type mismatch: expected &i64, found Int"),
+    ];
+    check_table(&rows, "ref_every_pair");
+}
+
+/// REVIEW ROUND 3: A REFUSAL IS JUDGED BY ITS OWN PAIR, NEVER BY ITS
+/// SIBLINGS. A construct refused for an unrelated reason was judged by the
+/// types of ALL its parts, so a correct reference argument or field beside a
+/// `true` for an `i64` made the `true` a refusal of the reference rules:
+/// each of these ran on main and printed this, and round 3 refused it.
+#[test]
+fn a_refusal_is_judged_by_its_own_pair() {
+    let rows: Vec<(&str, &str, &str)> = vec![
+        ("a method: `true` for `i64` beside a correct `&i64`", "type A = &i64;\nstruct S { n: i64 }\nimpl S { fn add(&self, k: i64, p: A) -> i64 { *p + 2 } }\nfn f<T>(x: T) -> i64 { let a = 5; let s = S { n: 1 }; s.add(true, &a) }\nfn main() { print_int(f(1)); }\n", "RUN: 7\n"),
+        ("a method: an integer for `N = u32` beside a correct `&i64`", "type A = &i64;\ntype N = u32;\nstruct S { n: i64 }\nimpl S { fn take(&self, n: N, p: A) -> i64 { *p } }\nfn f<T>(x: T) -> i64 { let n = 5; let s = S { n: 1 }; s.take(7, &n) }\nfn main() { print_int(f(1)); }\n", "RUN: 5\n"),
+        ("a path call", "type A = &i64;\nstruct S { n: i64 }\nimpl S { fn take(n: i64, p: A) -> i64 { *p } }\nfn f<T>(x: T) -> i64 { let n = 5; S::take(true, &n) }\nfn main() { print_int(f(1)); }\n", "RUN: 5\n"),
+        ("a struct literal", "type A = &i64;\nstruct H { n: i64, p: A }\nfn f<T>(x: T) -> i64 { let m = 5; let h = H { n: true, p: &m }; *h.p }\nfn main() { print_int(f(1)); }\n", "RUN: 5\n"),
+        ("an enum payload", "type A = &i64;\nenum E { A(i64, A), B }\nfn f<T>(x: T) -> i64 { let m = 5; let e = E::A(true, &m); match e { E::A(n, r) => *r, E::B => 0 } }\nfn main() { print_int(f(1)); }\n", "RUN: 5\n"),
+        ("a free function", "type A = &i64;\nfn take(n: i64, p: A) -> i64 { *p }\nfn f<T>(x: T) -> i64 { let n = 5; take(true, &n) }\nfn main() { print_int(f(1)); }\n", "RUN: 5\n"),
+    ];
+    check_table(&rows, "ref_own_pair");
+}

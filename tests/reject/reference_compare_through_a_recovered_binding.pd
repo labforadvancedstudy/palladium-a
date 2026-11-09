@@ -1,0 +1,32 @@
+// #88, review round 3: a walked expression keeps its type, so a binding made
+// from a value the walk of a generic body recovered is still made — and the
+// comparison after it is refused by name.
+//
+// The walk enforces the reference rules only, and `return 7` at `-> N` (an
+// alias of `u32`, told apart from `Int` there) is refused for another reason.
+// The value block holding it was walked part by part but answered no type, so
+// `let u = { .. &a }` bound nothing, `u == w` read an undefined name, and the
+// comparison of two borrowed fives went unjudged. Measured on main (2ca5eb5)
+// and on round 3 alike: it compiled, ran and printed `ne`, then `7`. The
+// block's type is recovered from its value, and `u` is bound.
+type N = u32;
+
+fn g<T>(a: T, b: T) -> N {
+    let u = {
+        if false {
+            return 7;
+        }
+        &a
+    };
+    let w = &b;
+    if u == w {
+        print("eq");
+    } else {
+        print("ne");
+    }
+    7
+}
+
+fn main() {
+    print_int(g(5, 5));
+}
