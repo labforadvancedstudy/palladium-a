@@ -1,6 +1,6 @@
 # Milestones
 
-**Updated**: 2026-11-08 · **Released**: v0.3.0 and v0.4.0 (both M1) · **Target**: 1.0.0 = `make thesis-exit`
+**Updated**: 2026-11-09 · **Released**: v0.3.0 and v0.4.0 (both M1), v0.5.0 (M2) · **Target**: 1.0.0 = `make thesis-exit`
 
 Ordered by what unblocks what, not by theme. Every milestone exits on one command that covers its
 whole goal, and every milestone ships.
@@ -322,7 +322,7 @@ Both statements are true about different questions, and the sequencing one gover
 | Milestone | Version | What it is | What it waits on, and why it moved |
 |---|---|---|---|
 | M1 ✅ | v0.3.0 · v0.4.0 | The compiler stops lying | — |
-| M2 | v0.5.0 | The surface, and M1's unpaid debt | M1. Unchanged: everything is written in this surface, and M1's debt is a live miscompile |
+| M2 ✅ | v0.5.0 | The surface, and M1's unpaid debt | M1. Unchanged: everything is written in this surface, and M1's debt is a live miscompile |
 | M3 | v0.6.0 | **Traits and generics** | M2 → **C0**. *Moved from 6th to 2nd*: the effect system needs signatures that carry bounds, and the thesis needs a compiler that can grow |
 | M4 | v0.7.0 | **Modules** | C0. *Split out of the old M6*: the bootstrap compiler and the library both become multi-file here |
 | M5 | v0.8.0 | **Effects, static half** · differentiator 1 | C0, C2. *Moved later by two*: not because it cannot be built earlier, but because building it earlier means building it twice |
@@ -339,7 +339,7 @@ TWO. `v0.3.0` (2026-08-22) went out under M1's name while `make m1-exit` was RED
 `m1-exit` first reached 0. This table went on mapping M2 to `v0.4.0` for eleven weeks after that tag
 was published, so the M2 release had no name it could take: a published tag is not moved. **Every
 milestone from M2 on moved one minor up on 2026-11-08**, by the owner's decision, and nothing else
-in the table changed. **M9 ships as 1.0.0** rather than as a further `0.x`, because M9's exit
+in the table changed. M2 shipped as `v0.5.0` on 2026-11-09. **M9 ships as 1.0.0** rather than as a further `0.x`, because M9's exit
 criterion *is* the definition of 1.0. v0.11.0 is therefore the last prerelease.
 
 **Self-hosting is a floor throughout.** `make selfhost` stays green at every commit, and PBS-1 grows
@@ -545,7 +545,18 @@ Not paid, and re-owned by M2: three M1 `#[ignore]` rows
 
 ---
 
-## M2 — The surface, and M1's unpaid debt (v0.5.0)
+### M2 — The surface, and M1's unpaid debt (v0.5.0, released 2026-11-09)
+
+**DONE ON 2026-11-09 BY THE OWNER'S DECLARATION, AND NOT BY THE GATE — the gate cannot say it.**
+`make m2-exit` reports 0 rows `OWED_TO_M2` and exits **2 (NO_VERDICT)**, because steps 3 and 4 of
+its own specification do not run (item 8 and the Exit line below). The owner read that verdict and
+declared M2 finished, and `v0.5.0` is cut at the commit that records the declaration. What it rests
+on, stated so it can be checked rather than remembered: every one of the 51 rows M2 owns is
+`satisfied` by a status column the ledger gate re-derives; no `#[ignore]` row and no vacuous
+fixture is tagged M2; and M2's first witness, WT-01, **was not paid** — it left for M8 on
+2026-11-08 with three live workarounds owned elsewhere (item 7). M2 ships with its witness
+written and running, not workaround-free. The heading moved under *Completed* with this line; the
+text below is unchanged by the release.
 
 **Waits on**: M1. **Delivers**: the surface everything else is written in, **C3**, the attribute
 token N8 sits below, and the first witness program.
@@ -872,8 +883,8 @@ enum-owned method is unreachable by its path form. Each row carries a
    contain the tolerated sentence is still OWED, and another milestone's abstention is not M1's.
    Each of those controls was proved able to fail by mutating the classifier.
    **The row's evidence column moved from `make m2-exit` to `make test-requirements-runner`**, and
-   that is a correction rather than a convenience: `m2-exit` is RED by design until M2 lands, so it
-   can never witness a `satisfied` row, and it says nothing about `m1-exit` either way. The runner
+   that is a correction rather than a convenience: `m2-exit` is nonzero by design — RED while M2
+   owed a row, NO_VERDICT since it owes none, and never 0 — so it can never witness a `satisfied` row, and it says nothing about `m1-exit` either way. The runner
    RUNS BOTH targets and requires each of the four inventories, per target, to have left evidence
    of its own invocation.
    **`m1-exit`'s contract widened from two values to three** at the same time and for the same
@@ -887,7 +898,8 @@ enum-owned method is unreachable by its path form. Each row carries a
    to 36, and item 5 (lexical completion) from 43 to 36 with N2-03, N2-04, N2-08, N2-09, N2-10,
    N2-11 and N4-02. A green `m2-exit` before M2 is done would be the defect. With no row owed it
    exits **2 (NO_VERDICT)** and not 0 — steps 3 and 4 below still do not run — so what declares M2
-   done is the owner, reading this gate, and not the gate alone.
+   done is the owner, reading this gate, and not the gate alone. The owner did, on 2026-11-09 (the
+   status line at the top of this section).
 
    *The 0, read off `REQ_MILESTONE=M2 python3 scripts/requirements.py` rather than off this list:*
    nothing is owed. It was ONE — WT-01, item 7 — until that row moved to M8 on 2026-11-08, TWO
