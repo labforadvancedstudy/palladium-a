@@ -8922,6 +8922,20 @@ impl StructLiteralRecords {
     pub fn of(&self, id: LiteralId) -> Option<&[Vec<String>]> {
         self.records.get(&id).map(Vec::as_slice)
     }
+
+    /// Every recorded type argument rewritten by `f`: code generation's C
+    /// spelling of the names in it (`c_ident::escape_type_argument`), applied
+    /// where the instantiations' own type arguments are, so the two compare.
+    pub fn with_type_args_mapped(mut self, f: impl Fn(&str) -> String) -> Self {
+        for lists in self.records.values_mut() {
+            for list in lists.iter_mut() {
+                for arg in list.iter_mut() {
+                    *arg = f(arg);
+                }
+            }
+        }
+        self
+    }
 }
 
 #[cfg(test)]

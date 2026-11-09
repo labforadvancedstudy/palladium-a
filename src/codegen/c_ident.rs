@@ -850,9 +850,12 @@ fn escape_in_place(name: &mut String) {
 /// prefix (injective), and their images all begin with `_u_`, which no name
 /// that does not begin with `_` can. A bare `_` is left alone (it is not a name
 /// anything generated could be). Applied at every ingress — the program, each
-/// imported module, each generic template — through `escape_in_place`, so a
-/// declaration and every use of it agree; every diagnostic still names the
-/// identifier as written, because this runs after the last check.
+/// imported module, each generic template, and (`escape_type_argument`) the
+/// type arguments and struct-literal records that travel beside a template —
+/// so a declaration and every use of it agree. Every diagnostic raised before
+/// code generation names the identifier as written; code generation's own
+/// (PD0082's) names a function as written (`spelled_c_fn` undoes the prefix)
+/// and a C type in its C spelling.
 pub fn c_name(name: &str) -> Cow<'_, str> {
     let keyword_safe = c_ident(name);
     if keyword_safe.starts_with('_') && keyword_safe != "_" {
@@ -860,6 +863,52 @@ pub fn c_name(name: &str) -> Cow<'_, str> {
     } else {
         keyword_safe
     }
+}
+
+/// A TYPE ARGUMENT as the type checker hands it to code generation —
+/// `checker_type_to_string`'s spelling: `_S`, `Box<_S>`, `[_S; 2]`,
+/// `(i64, _E)`, `fn(_S) -> i64` — with every user name in it in its C
+/// spelling (`c_name`) and nothing else touched (#89/#92 review round 9).
+///
+/// THE ROUTE THE AST PASS DID NOT COVER. A generic's template is
+/// escaped on its way in (`escape_generic_function`), but the instantiations'
+/// type arguments and the struct-literal records arrive as STRINGS beside it,
+/// and monomorphisation substitutes them into the escaped template: round 8
+/// declared `struct _u_S` and instantiated `id<T>` at `struct _S` (astra: main
+/// printed 7; gcc "incomplete struct"). Both arrive through
+/// `set_generic_instantiations` / `set_generic_struct_instantiations`, which
+/// pass every argument — the instantiations' and the records' alike — through
+/// this, once, so every name inside code generation is in one spelling and a
+/// recorded argument still equals the instantiation it was recorded for.
+/// Primitive spellings, sizes and the unnamed-argument placeholder pass through.
+pub fn escape_type_argument(arg: &str) -> String {
+    const BUILTIN: &[&str] = &[
+        "String", "str", "i64", "i32", "i16", "i8", "u64", "u32", "u16", "u8", "isize", "usize",
+        "f64", "f32", "bool", "char", "fn", "range", "Int", "Float", "Bool", "Char",
+    ];
+    let mut out = String::with_capacity(arg.len());
+    let mut word = String::new();
+    let flush = |word: &mut String, out: &mut String| {
+        if word.is_empty() {
+            return;
+        }
+        if BUILTIN.contains(&word.as_str()) || word.starts_with(|c: char| c.is_ascii_digit()) {
+            out.push_str(word);
+        } else {
+            out.push_str(&c_name(word));
+        }
+        word.clear();
+    };
+    for ch in arg.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            word.push(ch);
+        } else {
+            flush(&mut word, &mut out);
+            out.push(ch);
+        }
+    }
+    flush(&mut word, &mut out);
+    out
 }
 
 #[cfg(test)]
@@ -1080,6 +1129,31 @@ mod tests {
             if let Some(other) = seen.insert(c_name(n).into_owned(), n) {
                 panic!("`{}` and `{}` both spell `{}`", other, n, c_name(n));
             }
+        }
+    }
+
+    /// A type argument's user names take their C spelling and nothing else
+    /// moves (review round 9): primitives, sizes, punctuation and the
+    /// unnamed-argument placeholder pass through, and a name is escaped once.
+    #[test]
+    fn a_type_argument_spells_its_user_names_as_code_generation_does() {
+        for (arg, c) in [
+            ("_S", "_u_S"),
+            ("S", "S"),
+            ("i64", "i64"),
+            ("String", "String"),
+            ("bool", "bool"),
+            ("char", "char"),
+            ("Box<_S>", "Box<_u_S>"),
+            ("Box<Box<_S>>", "Box<Box<_u_S>>"),
+            ("[_S; 2]", "[_u_S; 2]"),
+            ("(i64, _E)", "(i64, _u_E)"),
+            ("fn(_S) -> i64", "fn(_u_S) -> i64"),
+            ("register", "register_"),
+            ("?", "?"),
+        ] {
+            assert_eq!(escape_type_argument(arg), c, "{}", arg);
+            assert_eq!(escape_type_argument(arg), escape_type_argument(arg));
         }
     }
 }

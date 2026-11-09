@@ -1364,3 +1364,76 @@ fn a_program_may_name_anything_code_generation_invents() {
         assert_eq!(run(program, "cmp_r8_names"), *expected, "{}", program);
     }
 }
+
+/// THE TYPE ARGUMENTS ARE NAMES TOO (review round 9). Round 8 spelled a
+/// program's `_S` as `_u_S` where it was declared but left the instantiations'
+/// type arguments — strings beside the escaped template — as written, so
+/// `id<T>` was instantiated at an undeclared `struct _S` and a generic struct
+/// literal matched no instantiation (astra: main printed 7 and 1; round 8
+/// failed in gcc or refused). Every type argument, and every struct-literal
+/// record, now takes the same spelling at the same door
+/// (`c_ident::escape_type_argument`). Each of these printed this on main.
+#[test]
+fn a_generic_instantiated_at_an_underscore_name_runs() {
+    let cases = [
+        ("struct _S{x:i64}fn id<T>(x:T)->T{x}fn main(){let s=_S{x:7};let q=id(s);print_int(q.x);}", "7\n"),
+        ("enum _E{A,B}fn id<T>(x:T)->T{x}fn main(){let e=_E::A;let q=id(e);match q{_E::A=>{print_int(1);}_E::B=>{print_int(0);}}}", "1\n"),
+        ("struct _S{x:i64}struct Box<T>{v:T}fn main(){let x=Box{v:_S{x:7}};print_int(x.v.x);}", "7\n"),
+        ("struct _S { x: i64 }\nfn _id<T>(x: T) -> T { x }\nfn main() { let s = _S { x: 7 }; let q = _id(s); print_int(q.x); }", "7\n"),
+        ("struct _S { x: i64 }\nstruct _B<T> { v: T }\nfn main() { let b = _B { v: _S { x: 7 } }; print_int(b.v.x); }", "7\n"),
+        ("struct _S { x: i64 }\nimpl _S { fn get(self) -> i64 { self.x } }\nfn id<T>(x: T) -> T { x }\nfn main() { let s = _S { x: 7 }; let q = id(s); print_int(q.get()); }", "7\n"),
+        ("enum _E { _A(i64), B }\nfn id<T>(x: T) -> T { x }\nfn main() { let e = _E::_A(7); let q = id(e); match q { _E::_A(v) => { print_int(v); } _E::B => { print_int(0); } } }", "7\n"),
+        ("struct _S { x: i64 }\nenum _E { A, B }\nfn first<A, B>(a: A, b: B) -> A { a }\nfn main() { let s = _S { x: 7 }; let e = _E::B; let q = first(s, e); print_int(q.x); }", "7\n"),
+        ("struct _S{_v:i64}type _A=_S;fn f(x:_A)->i64{x._v}fn main(){print_int(f(_S{_v:7}));}", "7\n"),
+        ("fn main(){let _x=1;let _u_x=2;let __x=3;let _u__x=4;let _Bool=5;let _Bool_=6;print_int(_x+_u_x+__x+_u__x+_Bool+_Bool_);}", "21\n"),
+    ];
+    for (program, expected) in cases {
+        assert_eq!(run(program, "cmp_r9_generic"), expected, "{}", program);
+    }
+}
+
+/// An imported module's `_`-named items, generic and not, at a program's
+/// `_`-named type: the module's AST and the instantiation's type arguments
+/// take the one spelling (astra r8: `import libx` with `_S` and `id` printed 7
+/// on main and failed in gcc on round 8).
+#[test]
+fn an_imported_underscore_item_and_generic_run() {
+    for (module, module_source, program, expected) in [
+        (
+            "libx",
+            "pub struct _S{x:i64}pub fn id<T>(x:T)->T{x}\n",
+            "import libx;fn main(){let s=_S{x:7};let q=id(s);print_int(q.x);}\n",
+            "7\n",
+        ),
+        (
+            "_lib",
+            "pub fn _f(x:i64)->i64{x+1} pub struct _S{_v:i64}\n",
+            "import _lib;fn main(){print_int(_f(6));let s=_S{_v:7};print_int(s._v);}\n",
+            "7\n7\n",
+        ),
+    ] {
+        // The resolver searches `.` and the driver writes `build_output/` there
+        // (tests/m3_imported_calls.rs does the same), so the scratch directory
+        // is the working directory.
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(format!("{}.pd", module)), module_source).unwrap();
+        fs::write(dir.path().join("main.pd"), program).unwrap();
+        let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
+            .args(["compile", "main.pd", "-o", "prog"])
+            .current_dir(dir.path())
+            .output()
+            .expect("pdc");
+        assert!(
+            out.status.success(),
+            "{}: {}{}",
+            module,
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let ran = Command::new(dir.path().join("build_output").join("prog"))
+            .current_dir(dir.path())
+            .output()
+            .expect("run");
+        assert_eq!(String::from_utf8_lossy(&ran.stdout), expected, "{}", module);
+    }
+}

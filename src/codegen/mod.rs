@@ -410,7 +410,7 @@ impl CodeGenerator {
             .into_iter()
             .map(|(name, type_args, f)| {
                 let (name, f) = c_ident::escape_generic_function(&name, &f);
-                (name, type_args, f)
+                (name, type_args.iter().map(|a| c_ident::escape_type_argument(a)).collect(), f)
             })
             .collect();
     }
@@ -424,12 +424,12 @@ impl CodeGenerator {
         instantiations: Vec<(String, Vec<String>, crate::typeck::GenericStruct)>,
         literals: crate::typeck::StructLiteralRecords,
     ) {
-        self.struct_literals.records = literals;
+        self.struct_literals.records = literals.with_type_args_mapped(c_ident::escape_type_argument);
         self.generic_struct_instantiations = instantiations
             .into_iter()
             .map(|(name, type_args, s)| {
                 let (name, s) = c_ident::escape_generic_struct(&name, &s);
-                (name, type_args, s)
+                (name, type_args.iter().map(|a| c_ident::escape_type_argument(a)).collect(), s)
             })
             .collect();
     }
@@ -9263,6 +9263,8 @@ fn scalar_mask(lhs: &str, rhs: &str) -> String {
 /// A function's name as the comparison check records it: only the characters
 /// a C string literal can hold without escaping, so the marker always parses.
 fn spelled_c_fn(name: &str) -> String {
+    // A name the `_u` prefix moved (`c_ident::c_name`) is shown as written.
+    let name = name.strip_prefix("_u").filter(|rest| rest.starts_with('_')).unwrap_or(name);
     name.chars()
         .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == ':' { c } else { '_' })
         .collect()
