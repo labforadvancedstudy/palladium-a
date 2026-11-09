@@ -502,3 +502,118 @@ fn a_string_literal_pattern_still_compares_characters() {
     );
     assert_eq!(out, "1\n");
 }
+
+// ---------------------------------------------------------------------------
+// Review round 1: the instantiated body is the WHOLE body, and another rule's
+// refusal does not end the walk. Each program below compiled on 71c4d6f and
+// printed 0 for two equal Strings (or reached gcc), with no PD0079.
+// ---------------------------------------------------------------------------
+
+/// A generic body over `T`, called at two equal Strings bound to locals (a
+/// call expression as the argument is a different, older refusal: the type
+/// argument cannot be inferred from it).
+fn generic_at_strings(body: &str) -> String {
+    format!(
+        "fn marker() -> i64 {{ 1 }}\n\
+         fn same<T>(a: T, b: T) -> bool {{ {} }}\n\
+         fn main() {{ let aa = int_to_string(12); let bb = \"12\"; \
+         if same(aa, bb) {{ print_int(1); }} else {{ print_int(0); }} }}",
+        body
+    )
+}
+
+/// `let x: T = a;` — only the signature was substituted, so `x` stayed a
+/// type parameter (which compares) while code generation emitted `void* x`.
+#[test]
+fn a_local_written_with_the_type_parameter_is_instantiated_too() {
+    let text = refused(
+        &generic_at_strings("let x: T = a; let y: T = b; x == y"),
+        "cmp_generic_typed_locals",
+    );
+    assert!(text.contains("T = String"), "{}", text);
+    assert!(text.contains("`==` is not defined on `String`"), "{}", text);
+}
+
+/// The walk stopped at the first refusal of ANY rule, and main never checked
+/// these bodies, so each of these hid the comparison after it.
+#[test]
+fn another_rules_refusal_before_the_comparison_does_not_hide_it() {
+    for body in [
+        "let n: bool = 1; a == b",
+        "if false { return 1; } a == b",
+        "let n: i8 = 1; a == b",
+        "let marker = 1; a == b",
+        "if true { let n: bool = 1; return a == b; } false",
+        "let n: bool = 1; let c = n; if c { return a != b; } a == b",
+    ] {
+        let text = refused(&generic_at_strings(body), "cmp_generic_after_refusal");
+        assert!(text.contains("T = String"), "{}: {}", body, text);
+    }
+}
+
+/// A generic called from a generic is instantiated at its caller's types and
+/// its body checked in turn. On d5166e8 and 71c4d6f this reached gcc.
+#[test]
+fn a_generic_called_from_a_generic_is_checked_at_the_callers_types() {
+    let text = refused(
+        "fn same<T>(a: T, b: T) -> bool { a == b }\n\
+         fn forward<T>(a: T, b: T) -> bool { same(a, b) }\n\
+         fn main() { let aa = int_to_string(12); let bb = \"12\"; \
+         if forward(aa, bb) { print_int(1); } else { print_int(0); } }",
+        "cmp_generic_nested",
+    );
+    assert!(text.contains("in `same`, instantiated with T = String"), "{}", text);
+}
+
+/// The other half of "another rule's refusal does not end the walk": it is not
+/// RAISED either. At `i64` each of these bodies ran on d5166e8 and printed 1,
+/// although the checker would refuse a statement in every one of them.
+#[test]
+fn another_rules_refusal_in_a_generic_body_is_still_not_raised() {
+    for body in [
+        "let n: bool = 1; a == b",
+        "if false { return 1; } a == b",
+        "let marker = 1; a == b",
+        "if true { let n: bool = 1; return a == b; } false",
+    ] {
+        let out = run(
+            &format!(
+                "fn marker() -> i64 {{ 1 }}\n\
+                 fn same<T>(a: T, b: T) -> bool {{ {} }}\n\
+                 fn main() {{ if same(3, 3) {{ print_int(1); }} else {{ print_int(0); }} }}",
+                body
+            ),
+            "cmp_generic_other_rule",
+        );
+        assert_eq!(out, "1\n", "{}", body);
+    }
+}
+
+/// An imported public body is checked whether or not anything calls it, so its
+/// refusal names the module and the function it is in (review round 1).
+#[test]
+fn an_imported_bodys_refusal_names_its_module_and_function() {
+    let dir = TempDir::new().unwrap();
+    fs::write(
+        dir.path().join("lib2.pd"),
+        "pub fn pair_is_one(a: i64) -> bool { let t = (a, a); t == (1, 1) }\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("main.pd"),
+        "import lib2;\n\nfn main() {\n    print_int(1);\n}\n",
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
+        .args(["compile", "main.pd", "-o", "prog"])
+        .current_dir(dir.path())
+        .output()
+        .expect("failed to run pdc");
+    let text = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(!out.status.success(), "accepted: {}", text);
+    assert!(
+        text.contains("error[PD0079]") && text.contains("in `lib2::pair_is_one`, imported:"),
+        "{}",
+        text
+    );
+}
