@@ -67,8 +67,8 @@ what the amendment above says preserves a wrongness exactly.
 
 | # | Cites | What is actually there | Wrong? |
 |---|---|---|---|
-| C4 | `src/typeck/mod.rs:1743-1744` | `fields .iter()`, the walk over an enum variant's named fields — not an insert of any kind | yes |
-| C5 | the `src/typeck/mod.rs:1643` row of the C1–C3 table above | `self.functions.insert(func.name.clone(), func_type.clone());` — an insert, not "the private-import registration comment" as that row's third column says | the ROW's description is; the citation is not |
+| C4 | `src/typeck/mod.rs:1755-1756` | `fields .iter()`, the walk over an enum variant's named fields — not an insert of any kind | yes |
+| C5 | the `src/typeck/mod.rs:1655` row of the C1–C3 table above | `self.functions.insert(func.name.clone(), func_type.clone());` — an insert, not "the private-import registration comment" as that row's third column says | the ROW's description is; the citation is not |
 
 C4 is cited from the doc comment in `src/typeck/mod.rs` beginning "Set imported
 modules for type checking", whose sentence reads "Every insert below is under the
@@ -97,7 +97,7 @@ it is the range the sentence means.
 
 | # | Cites | What is actually there | Wrong? |
 |---|---|---|---|
-| C6 | `src/typeck/mod.rs:4443-4443`, from the "empty array literal `[]`" row of the PBS-1 exclusion table in `docs/specification/bootstrap-subset.md` | `GenericArgValue::Type(t) => match t {`, inside the generic-struct instantiation's type-argument stringifier. The refusal the row describes is the one `fn main() { let xs = []; }` prints — `Empty array literals are not supported (cannot infer type)` — raised from the array-literal arm of `check_expression`, not from this line | yes |
+| C6 | `src/typeck/mod.rs:4466-4466`, from the "empty array literal `[]`" row of the PBS-1 exclusion table in `docs/specification/bootstrap-subset.md` | `GenericArgValue::Type(t) => match t {`, inside the generic-struct instantiation's type-argument stringifier. The refusal the row describes is the one `fn main() { let xs = []; }` prints — `Empty array literals are not supported (cannot infer type)` — raised from the array-literal arm of `check_expression`, not from this line | yes |
 
 Re-derivable by content, unlike C1–C5 — the message is quoted above and appears at
 one raising site — so it is a repair any change touching that table row should make;

@@ -1,0 +1,91 @@
+// A GENERIC USE IS OF THE C TYPE ITS VALUE HAS IN THE EMITTED C (#86, #87,
+// review round 3).
+//
+// Code generation emits a call or a struct literal at the instantiation the
+// type checker recorded for it where every value is EXACTLY its parameter's or
+// field's C type, and the record keeps no integer width (#82). Three things
+// decide a value's C type here, and each was wrong before this round:
+//
+// - A parameter is declared at its own C type (`w: u32` is an `unsigned int`)
+//   while the generator tracks it as a `long long`, and the declared type was
+//   kept in a flat map: an inner block's or a `for`'s `w` over an outer `i64`
+//   `w` left a `u32` entry behind, so `inv(w)` of the outer 4294967297 was
+//   `inv__z` (4294967294 where `~` of the i64 is -4294967298), and an inner
+//   `let w = 9` dropped the parameter's entry for good (-8 where the C
+//   `unsigned int` 7 inverts to 4294967288). It is scoped like every binding.
+// - A literal is the `long long` it is emitted as, and a `let` the C type it
+//   is declared at: `let w = v * 2` over a `u32` is the `long long` C computes,
+//   and `inv(w)` agrees with the `~w` written beside it.
+// - A value `if`, `match`, `loop` or block is of the one C type its values
+//   have, where each is also the type of the temporary that carries it out;
+//   these were refused although their record `G<i64>` holds them exactly.
+type z = u32;
+
+struct S {
+    n: i64,
+}
+
+impl S {
+    fn get(&self) -> z {
+        return 8;
+    }
+}
+
+struct G<T> {
+    v: T,
+}
+
+fn inv<T>(x: T) -> T {
+    return ~x;
+}
+
+fn inner_block<T>(t: T) -> i64 {
+    let w = 4294967297;
+    if true {
+        let v: u32 = 7;
+        let w = v + 0;
+    }
+    return inv(w);
+}
+
+fn for_over_param<T>(t: T, w: u32) -> i64 {
+    let xs = [4294967297];
+    for w in xs {
+        return inv(w);
+    }
+    return 0;
+}
+
+fn param_after_shadow<T>(t: T, w: u32) -> i64 {
+    if true {
+        let w = 9;
+    }
+    return inv(w);
+}
+
+fn main() {
+    let s = S { n: 0 };
+    let zval = s.get();
+    print_int(inv(zval));
+    let a = inv(8);
+
+    print_int(inner_block(1));
+    print_int(for_over_param(1, 7));
+    print_int(param_after_shadow(1, 7));
+
+    let v: u32 = 3000000000;
+    let w = v * 2;
+    print_int(w);
+    print_int(~w);
+    print_int(inv(w));
+
+    let g1 = G { v: if true { 1 } else { 2 } };
+    let g2 = G { v: { let x = 1; x + 1 } };
+    let n = 3;
+    let g3 = G { v: match n { 0 => 10, _ => 20 } };
+    let g4 = G { v: loop { break 5; } };
+    print_int(g1.v);
+    print_int(g2.v);
+    print_int(g3.v);
+    print_int(g4.v);
+}

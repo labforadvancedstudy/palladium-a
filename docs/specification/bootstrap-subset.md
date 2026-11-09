@@ -126,7 +126,7 @@ Absent from the lexer, therefore absent from PBS-1: `+= -= *= /= %=` (no compoun
 - Trait bounds (`<T: Display>`) — a parse error; `parse_generic_params` accepts bare names only.
 - `Option<T>` / `Result<T,E>` as built-ins — they do not exist. Declaring your own does not
   enable `?`: nothing lowers the operator onto the representation enums are compiled to, so it
-  is rejected outright (`src/typeck/mod.rs:4991-4991`). It used to emit a C `struct Result` layout
+  is rejected outright (`src/typeck/mod.rs:5018-5018`). It used to emit a C `struct Result` layout
   that no other part of codegen ever defines.
 
 **Generics**: excluded from PBS-1. They monomorphize in limited cases, but generic-argument
@@ -228,10 +228,10 @@ precedence.
 | Construct | Why |
 |---|---|
 | closures | no closure token path, no closure AST node (`try { }` likewise) |
-| `?` operator | rejected: "the `?` operator is not implemented" (`src/typeck/mod.rs:4991-4991`). It used to emit C referencing an undefined `struct Result`. |
-| `.await` / `async` | `.await` rejected: "`.await` is not implemented" (`src/typeck/mod.rs:4999-4999`). It used to emit a `poll` member call that is never generated. |
+| `?` operator | rejected: "the `?` operator is not implemented" (`src/typeck/mod.rs:5018-5018`). It used to emit C referencing an undefined `struct Result`. |
+| `.await` / `async` | `.await` rejected: "`.await` is not implemented" (`src/typeck/mod.rs:5026-5026`). It used to emit a `poll` member call that is never generated. |
 | the `&self` receiver | emits a `const T*` parameter while the call site passes the value; the C compiler refuses it |
-| empty array literal `[]` | typeck error — element type uninferrable (`src/typeck/mod.rs:4443-4443`) |
+| empty array literal `[]` | typeck error — element type uninferrable (`src/typeck/mod.rs:4466-4466`) |
 | tuple expressions, `.0` indexing | PARSE AND RUN since N4-12; excluded from PBS-1 by choice, not by the compiler. A CHAINED index needs parentheses — `(p.0).1` — because `.0.1` lexes as one float literal |
 | `dbg!` | expands to `print_debug`, which is not defined anywhere (`src/macros/mod.rs:107`) |
 

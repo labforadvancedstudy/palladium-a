@@ -1286,8 +1286,8 @@ impl TypeChecker {
     /// emitted C.
     ///
     /// Every insert below is under the BARE name as well as the qualified one
-    /// (`src/typeck/mod.rs:1643-1644`, `src/typeck/mod.rs:1646-1648`,
-    /// `src/typeck/mod.rs:1743-1744`), and the map is last-writer-wins. So when two
+    /// (`src/typeck/mod.rs:1655-1656`, `src/typeck/mod.rs:1658-1660`,
+    /// `src/typeck/mod.rs:1755-1756`), and the map is last-writer-wins. So when two
     /// imported modules export the same name, iteration order decides which
     /// signature — and, for a generic, which BODY — survives. `get_instantiations`
     /// reads `generic_functions` by bare name and hands the winner to codegen's
@@ -2898,7 +2898,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:3167-3170`), and walking an imported
+        // return (`src/typeck/mod.rs:3185-3188`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -8685,7 +8685,7 @@ mod tests {
     ///
     /// Postfix spans cover the whole suffix, so `?` is reported over `(x)?` and
     /// `.await` over `(3).await` rather than over the operator alone
-    /// (`src/parser/mod.rs:4692-4700`, `src/parser/mod.rs:4455-4463`). That is not
+    /// (`src/parser/mod.rs:4693-4701`, `src/parser/mod.rs:4456-4464`). That is not
     /// what these diagnostics
     /// *should* point at — it is what they currently point at. Narrowing the
     /// span to the operator is a welcome change: it will fail exactly this

@@ -618,26 +618,73 @@ fn width_sensitive_operators_compute_at_the_values_own_width_or_are_refused() {
     assert_eq!(got, want);
 }
 
-/// A value computed with an untyped literal is of its OTHER operand's width:
-/// `v + 0` with `v: u32` is a `u32`, though C computes `v + 0LL` as a `long
-/// long`. The rule above read that `long long` as proof the value is an i64,
-/// so the dispatcher's p87 shape written `p: v + 0` printed `~` of an i64, -8,
-/// where `~7` of a `u32` is 4294967288 (main printed 4294967288 beside the
-/// unread literal and met gcc without it), and so did `let w = v + 0;
-/// invert(w)` in a body (gcc on main): the binding is declared `long long`.
-/// Each is refused by name, as `p: v` is. The controls run: an i64 operand, and
-/// a `u64` one with its own instantiation by the alias's name.
+/// A VALUE IS OF THE C TYPE THE EMITTED C GIVES IT (review round 3, fable).
+///
+/// An integer literal is emitted as a `long long` (`2LL`), so `v * 2` and
+/// `(v - 1) / 2` over a `u32` are `long long`s in C — `(v - 1) / 2` of a `u32`
+/// 0 is -1 / 2 = 0, whose `~` is -1 — and a `let` is of the C type it is
+/// declared at. Round 2 gave the literal its other operand's width and recorded
+/// the `let` at it: `invert(w)` became `invert__z`, and printed 4294967295 and
+/// 2589934591 beside the program's own `~w`, -1 and -6000000001 (main printed
+/// those). A call is now of the record, `invert<i64>`, as `~w` is. A body's
+/// literal `G { tag: t, p: v + 0 }` is a `G<i64, i64>` for the same reason, and
+/// `~gg.p` is the -8 `~(v + 0)` prints beside it (main built the unread `G<i64,
+/// z>` there and printed 4294967288). Over a `u64`, `v + 0` is an `unsigned long
+/// long` in C, and so is the `let` declared for it. A `let w = v + 0` the
+/// optimizer folds to `unsigned int w = v;` is an `unsigned int`, which the
+/// record `G<i64>` or `invert<i64>` does not hold: refused (main printed -8, the
+/// `~` of a `long long`, where the program's `~w` is 4294967288). And a call
+/// with no record (`invert((v - 1) / 2)` in a body, an argument the type checker
+/// does not infer from) is refused where its argument's C type is that of two
+/// kinds of value: `long long` is an `i64`'s and a `char`'s (main printed -1).
 #[test]
-fn a_value_computed_with_a_literal_is_of_its_operands_width() {
+fn a_value_is_of_the_c_type_the_emitted_c_gives_it() {
     let decoy = "type z = u32;\nstruct S { n: i64 }\nimpl S { fn get(&self) -> z { return 7; } }\n";
+    let read_decoy = "let s = S { n: 0 }; let zv = s.get(); let d = invert(zv); let e = invert(9); ";
     let g2 = "struct G<X, Y> { tag: X, p: Y }\n";
-    let refused_literal = [
+    let invert = "fn invert<T>(x: T) -> T { return ~x; }\n";
+    let rows: Vec<(&str, String, &str)> = vec![
         (
-            "p87 shape, `p: v + 0` in a body beside the unread G<i64, z> (main: 4294967288)",
+            "fable c22: `let w = (v - 1) / 2` over a u32 0 beside the alias's u32 instantiation (main: same)",
             format!(
-                "{decoy}{g2}fn build<T>(t: T) -> i64 {{ let v: u32 = 7; let gg = G {{ tag: t, p: v + 0 }}; return ~gg.p; }}\n\
+                "{decoy}{invert}fn main() {{ {read_decoy}let v: u32 = 0; let w = (v - 1) / 2; \
+                 print_int(w); print_int(~w); print_int(invert(w)); }}\n"
+            ),
+            "RUN: 0\n-1\n-1\n",
+        ),
+        (
+            "fable c23: the same without the alias (main: same)",
+            format!(
+                "{invert}fn main() {{ let v: u32 = 0; let w = (v - 1) / 2; \
+                 print_int(w); print_int(~w); print_int(invert(w)); }}\n"
+            ),
+            "RUN: 0\n-1\n-1\n",
+        ),
+        (
+            "fable c24: `let w = v * 2` over a u32 3000000000 (main: same)",
+            format!(
+                "{decoy}{invert}fn main() {{ {read_decoy}let v: u32 = 3000000000; let w = v * 2; \
+                 print_int(w); print_int(~w); print_int(invert(w)); }}\n"
+            ),
+            "RUN: 6000000000\n-6000000001\n-6000000001\n",
+        ),
+        (
+            "fable c20: the `let` in a generic body (main: same)",
+            format!(
+                "{decoy}{invert}fn wrap<T>(t: T) -> i64 {{ let v: u32 = 0; let w = (v - 1) / 2; \
+                 print_int(w); return invert(w); }}\n\
+                 fn main() {{ {read_decoy}print_int(wrap(1)); }}\n"
+            ),
+            "RUN: 0\n-1\n",
+        ),
+        (
+            "p87 shape, `p: v + 0` in a body beside the unread G<i64, z> (main: -8 4294967288)",
+            format!(
+                "{decoy}{g2}fn build<T>(t: T) -> i64 {{ let v: u32 = 7; print_int(~(v + 0)); \
+                 let gg = G {{ tag: t, p: v + 0 }}; return ~gg.p; }}\n\
                  fn main() {{ let s = S {{ n: 0 }}; let unused = G {{ tag: 1, p: s.get() }}; print_int(build(1)); }}\n"
             ),
+            "RUN: -8\n-8\n",
         ),
         (
             "body_nodecoy shape, `p: v + 0` (main: gcc)",
@@ -645,50 +692,28 @@ fn a_value_computed_with_a_literal_is_of_its_operands_width() {
                 "{g2}fn build<T>(t: T) -> i64 {{ let v: u32 = 7; let gg = G {{ tag: t, p: v + 0 }}; return ~gg.p; }}\n\
                  fn main() {{ print_int(build(1)); }}\n"
             ),
+            "RUN: -8\n",
         ),
         (
-            "a literal in main, `v: v + 0` (main: -8)",
-            "struct G<T> { v: T }\nfn main() { let v: u32 = 7; let g = G { v: v + 0 }; print_int(~g.v); }\n"
+            "literals in main, `v: v + 0` and `v: 1 + v` (main: same)",
+            "struct G<T> { v: T }\nfn main() { let v: u32 = 7; let g = G { v: v + 0 }; \
+             let h = G { v: 1 + v }; print_int(~g.v); print_int(~h.v); }\n"
                 .to_string(),
+            "RUN: -8\n-9\n",
         ),
-        (
-            "a literal in main, `v: 1 + v` (main: -9)",
-            "struct G<T> { v: T }\nfn main() { let v: u32 = 7; let g = G { v: 1 + v }; print_int(~g.v); }\n"
-                .to_string(),
-        ),
-        (
-            "a literal of a binding `let w = v + 0` (main: -8)",
-            "struct G<T> { v: T }\nfn main() { let v: u32 = 7; let w = v + 0; let g = G { v: w }; print_int(~g.v); }\n"
-                .to_string(),
-        ),
-    ];
-    for (shape, program) in &refused_literal {
-        refused_pd0080(program, "literal_operand", "is a literal of the generic struct", shape);
-    }
-    let invert = "fn invert<T>(x: T) -> T { return ~x; }\n";
-    let refused_call = [
         (
             "`let w = v + 0; invert(w)` in a body (main: gcc)",
             format!(
-                "{invert}fn wrap<T>(t: T) -> i64 {{ let v: u32 = 7; let w = v + 0; return invert(w); }}\n\
-                 fn main() {{ print_int(wrap(1)); }}\n"
+                "{invert}fn wrap<T>(t: T) -> i64 {{ let v: u32 = 7; let w = v + 0; print_int(~w); \
+                 return invert(w); }}\nfn main() {{ print_int(wrap(1)); }}\n"
             ),
+            "RUN: -8\n-8\n",
         ),
         (
-            "`let w = v + 0; invert(w)` in main (main: -8)",
-            format!("{invert}fn main() {{ let v: u32 = 7; let w = v + 0; print_int(invert(w)); }}\n"),
+            "`let w = v * 2; half(w)` in main, `v: u32` (main: same)",
+            format!("{HALF}fn main() {{ let v: u32 = 3000000000; let w = v * 2; print_int(half(w)); }}\n"),
+            "RUN: 3000000000\n",
         ),
-        (
-            "`let w = v * 2; half(w)` in main, `v: u32` (main: 3000000000)",
-            "fn half<T>(x: T) -> T { return x / 2; }\n\
-             fn main() { let v: u32 = 3000000000; let w = v * 2; print_int(half(w)); }\n"
-                .to_string(),
-        ),
-    ];
-    for (shape, program) in &refused_call {
-        refused_pd0080(program, "literal_operand", "the call of `", shape);
-    }
-    let rows: [(&str, String, &str); 3] = [
         (
             "an i64 operand, `p: v + 0` in a body",
             format!(
@@ -703,14 +728,243 @@ fn a_value_computed_with_a_literal_is_of_its_operands_width() {
             "RUN: -8\n",
         ),
         (
-            "a u64 `let w = v + 0` with the alias's own instantiation",
-            "type z = u64;\nstruct S { n: i64 }\nimpl S { fn get(&self) -> z { return 8; } }\n\
-             fn half<T>(x: T) -> T { return x / 2; }\n\
-             fn main() { let s = S { n: 0 }; let zv = s.get(); let d = half(zv); \
-             let mut v: u64 = 9223372036854775807; v = v + 1; let w = v + 0; print_int(half(w)); }\n"
-                .to_string(),
-            "RUN: 4611686018427387904\n",
+            "a u64 `let w = v + 0` beside the alias's u64 instantiation (main: 2^62, then -2^62)",
+            format!(
+                "{}{HALF}fn main() {{ let s = S {{ n: 0 }}; let zv = s.get(); let d = half(zv); \
+                 let mut v: u64 = 9223372036854775807; v = v + 1; let w = v + 0; \
+                 print_int(w / 2); print_int(half(w)); }}\n",
+                by_name("u64", "8")
+            ),
+            "RUN: 4611686018427387904\n4611686018427387904\n",
         ),
     ];
-    table(&rows, "literal_operand_runs");
+    table(&rows, "emitted_c_type");
+
+    for (shape, program, fragment) in [
+        (
+            "fable c17: `invert((v - 1) / 2)` in a body has no record, and `long long` is an i64's or a char's (main: -1)",
+            format!(
+                "{decoy}{invert}fn wrap<T>(t: T) -> i64 {{ let v: u32 = 0; return invert((v - 1) / 2); }}\n\
+                 fn main() {{ {read_decoy}print_int(wrap(1)); }}\n"
+            ),
+            "`invert<i64>` alone takes these arguments, but an argument's C type, `long long`",
+        ),
+        (
+            "`let w = v + 0` folded to an unsigned int, then `invert(w)` (main: -8)",
+            format!("{invert}fn main() {{ let v: u32 = 7; let w = v + 0; print_int(invert(w)); }}\n"),
+            "the call of `invert`",
+        ),
+        (
+            "`let w = v + 0` folded to an unsigned int, then `G { v: w }` (main: -8)",
+            "struct G<T> { v: T }\nfn main() { let v: u32 = 7; let w = v + 0; let g = G { v: w }; print_int(~g.v); }\n"
+                .to_string(),
+            "is a literal of the generic struct",
+        ),
+    ] {
+        refused_pd0080(&program, "emitted_c_type_refused", fragment, shape);
+    }
+}
+
+/// AN EXACT TYPE IS A BINDING'S, AND IS SCOPED LIKE ONE (review round 3, astra).
+///
+/// A parameter is declared at a C type `variables` does not track (`w: u32` is
+/// tracked as a `long long`), and its declared type is kept in a map of its own,
+/// which was flat: neither saved and restored with a scope nor shadowed by a
+/// `for` or match binding. A `w` bound in an inner block, a match arm or a
+/// `while` body, by a `for` or by a match pattern, over an outer `i64` `w`,
+/// left a `u32` entry behind, and `inv(w)` of the outer 4294967297 called
+/// `inv__z`: 4294967294, where main printed -4294967298. And an inner `let w =
+/// 9` deleted a `u32` parameter's entry for good: `inv(w)` of the parameter 7
+/// printed -8 (so did main), where the parameter is the C `unsigned int` 7 and
+/// its `~` is 4294967288. The map is now a binding map: every binding of a name
+/// shadows it, and a scope gives it back when it closes.
+#[test]
+fn an_exact_type_is_scoped_like_the_binding_it_belongs_to() {
+    let head = format!("{}fn inv<T>(x: T) -> T {{ return ~x; }}\n", by_name("u32", "8"));
+    let read = "let s = S { n: 0 }; let zval = s.get(); let d = inv(zval); let a = inv(8); ";
+    let program = |body: &str, params: &str, args: &str| {
+        format!(
+            "{head}fn wrap<T>(t: T{params}) -> i64 {{ {body} }}\n\
+             fn main() {{ {read}print_int(wrap(1{args})); }}\n"
+        )
+    };
+    let shadowed = [
+        (
+            "an inner block's `let w = v + 0`",
+            "let w = 4294967297; if true { let v: u32 = 7; let w = v + 0; } return inv(w);",
+            "",
+            "",
+        ),
+        (
+            "a `for w` over the u32 parameter `w`",
+            "let xs = [4294967297]; for w in xs { return inv(w); } return 0;",
+            ", w: u32",
+            ", 7",
+        ),
+        (
+            "a match binding `w` over the u32 parameter `w`",
+            "let o = 4294967297; match o { w => { return inv(w); } } return 0;",
+            ", w: u32",
+            ", 7",
+        ),
+        (
+            "a `let w` in a match arm",
+            "let w = 4294967297; let k = 1; match k { 1 => { let v: u32 = 7; let w = v + 0; } _ => {} } return inv(w);",
+            "",
+            "",
+        ),
+        (
+            "a `let w` in a `while` body",
+            "let w = 4294967297; let mut i = 0; while i < 1 { let v: u32 = 7; let w = v + 0; i = i + 1; } return inv(w);",
+            "",
+            "",
+        ),
+        (
+            "a range `for w` over the u32 parameter `w`",
+            "for w in 4294967297..4294967298 { return inv(w); } return 0;",
+            ", w: u32",
+            ", 7",
+        ),
+        (
+            "a value block's `let w`",
+            "let w = 4294967297; let q = { let v: u32 = 7; let w = v + 0; w }; return inv(w);",
+            "",
+            "",
+        ),
+    ];
+    let mut rows: Vec<(String, String, &str)> = shadowed
+        .iter()
+        .map(|(shape, body, params, args)| {
+            (
+                format!("{shape}: the outer i64 (main: -4294967298)"),
+                program(body, params, args),
+                "RUN: -4294967298\n",
+            )
+        })
+        .collect();
+    rows.push((
+        "the u32 parameter after an inner `let w = 9` (main: -8)".to_string(),
+        program("if true { let w = 9; } return inv(w);", ", w: u32", ", 7"),
+        "RUN: 4294967288\n",
+    ));
+    rows.push((
+        "the u32 parameter after a `for w` (main: -8)".to_string(),
+        program("let xs = [1, 2]; for w in xs { let q = w; } return inv(w);", ", w: u32", ", 7"),
+        "RUN: 4294967288\n",
+    ));
+    rows.push((
+        "control: no generic, an inner `let w` over an outer i64 (main: same)".to_string(),
+        "fn main() { let w = 4294967297; if true { let v: u32 = 7; let w = v + 0; print_int(w); } \
+         print_int(~w); }\n"
+            .to_string(),
+        "RUN: 7\n-4294967298\n",
+    ));
+    let rows: Vec<(&str, String, &str)> =
+        rows.iter().map(|(shape, program, want)| (shape.as_str(), program.clone(), *want)).collect();
+    table(&rows, "exact_scope");
+}
+
+/// A VALUE `if`, `match`, `loop` OR BLOCK IS OF THE ONE EXACT C TYPE ITS VALUES
+/// HAVE (review round 3, astra).
+///
+/// Round 2 knew no such value's type, so `G { v: if true { 1 } else { 2 } }`
+/// and `G { v: { let x = 1; x } }` were refused although their record `G<i64>`
+/// holds them exactly (main printed 1). Each value it can produce is typed with
+/// the bindings in scope where it is written, and the compound is of their one
+/// C type where each is also the C type of the temporary that carries it out.
+/// Where two disagree (`if c { u } else { 0 }`, a `u32` and a `long long`) or a
+/// value is not of its temporary's type (a `u32` parameter is tracked, and
+/// carried, as a `long long`; an `f64` one would be carried truncated), the
+/// use is refused by name as before.
+#[test]
+fn a_value_if_match_loop_or_block_is_of_its_values_one_exact_type() {
+    let g = "struct G<T> { v: T }\n";
+    let inv_head = format!("{}fn inv<T>(x: T) -> T {{ return ~x; }}\n", by_name("u32", "8"));
+    let read = "let s = S { n: 0 }; let zval = s.get(); let d = inv(zval); let a = inv(8); ";
+    let rows: Vec<(&str, String, &str)> = vec![
+        (
+            "an `if` (main: same)",
+            format!("{g}fn main() {{ let g = G {{ v: if true {{ 1 }} else {{ 2 }} }}; print_int(g.v); }}\n"),
+            "RUN: 1\n",
+        ),
+        (
+            "a block with its own `let` (main: same)",
+            format!("{g}fn main() {{ let g = G {{ v: {{ let x = 1; x }} }}; print_int(g.v); }}\n"),
+            "RUN: 1\n",
+        ),
+        (
+            "an `else if` chain (main: same)",
+            format!(
+                "{g}fn main() {{ let a = false; let g = G {{ v: if a {{ 1 }} else if true {{ 2 }} else {{ 3 }} }}; \
+                 print_int(g.v); }}\n"
+            ),
+            "RUN: 2\n",
+        ),
+        (
+            "a `match` (main: same)",
+            format!("{g}fn main() {{ let n = 3; let g = G {{ v: match n {{ 0 => 1, _ => 2 }} }}; print_int(g.v); }}\n"),
+            "RUN: 2\n",
+        ),
+        (
+            "a `loop` (main: same)",
+            format!("{g}fn main() {{ let g = G {{ v: loop {{ break 5; }} }}; print_int(g.v); }}\n"),
+            "RUN: 5\n",
+        ),
+        (
+            "a block of a block and an `if` (main: same)",
+            format!(
+                "{g}fn main() {{ let g = G {{ v: {{ let x = {{ let y = 4; y + 1 }}; if x > 1 {{ x }} else {{ 0 }} }} }}; \
+                 print_int(g.v); }}\n"
+            ),
+            "RUN: 5\n",
+        ),
+        (
+            "a u32 local through an `if`, called in a body (main: -8)",
+            format!(
+                "{inv_head}fn wrap<T>(t: T, c: bool) -> i64 {{ let u: u32 = 7; return inv(if c {{ u }} else {{ u }}); }}\n\
+                 fn main() {{ {read}print_int(wrap(1, true)); }}\n"
+            ),
+            "RUN: 4294967288\n",
+        ),
+        (
+            "control: the same values, no generic (main: same)",
+            "fn main() { let x = if true { 1 } else { 2 }; let y = { let a = 3; a * 2 }; \
+             let m = match x { 1 => 10, _ => 20 }; let l = loop { break 7; }; \
+             print_int(x); print_int(y); print_int(m); print_int(l); }\n"
+                .to_string(),
+            "RUN: 1\n6\n10\n7\n",
+        ),
+    ];
+    table(&rows, "compound_value");
+
+    for (shape, program, fragment) in [
+        (
+            "branches that disagree, a u32 and a literal (main: -8)",
+            format!("{g}fn main() {{ let u: u32 = 7; let g = G {{ v: if true {{ u }} else {{ 0 }} }}; print_int(~g.v); }}\n"),
+            "is a literal of the generic struct",
+        ),
+        (
+            "a u32 local through an `if`, whose record G<i64> does not hold it (main: -8)",
+            format!("{g}fn main() {{ let u: u32 = 7; let g = G {{ v: if true {{ u }} else {{ u }} }}; print_int(~g.v); }}\n"),
+            "is a literal of the generic struct",
+        ),
+        (
+            "f64 parameters carried through an `if` as a `long long` (main: refused)",
+            format!(
+                "{g}fn f(a: f64, b: f64) -> i64 {{ let g = G {{ v: if true {{ a }} else {{ b }} }}; \
+                 return (g.v * 10.0) as i64; }}\nfn main() {{ print_int(f(2.5, 3.5)); }}\n"
+            ),
+            "is a literal of the generic struct",
+        ),
+        (
+            "a u32 parameter through an `if`, carried as a `long long` (main: -8)",
+            format!(
+                "{inv_head}fn wrap<T>(t: T, u: u32, c: bool) -> i64 {{ return inv(if c {{ u }} else {{ u }}); }}\n\
+                 fn main() {{ {read}print_int(wrap(1, 7, true)); }}\n"
+            ),
+            "cannot tell which instantiation of the generic function `inv`",
+        ),
+    ] {
+        refused_pd0080(&program, "compound_value_refused", fragment, shape);
+    }
 }

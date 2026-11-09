@@ -758,7 +758,7 @@ while IFS= read -r f; do
   # as a link-stage failure. Under a check that fails unconditionally, the same
   # confusion would accuse the backend of a defect the front end had just caught.
   # Unlike the binary, this name comes from the fixture's BASENAME
-  # (src/codegen/mod.rs:3701-3706), so two same-named fixtures share it — remove
+  # (src/codegen/mod.rs:7735-7740), so two same-named fixtures share it — remove
   # it first, or the previous fixture's C answers for this one.
   emitted_c="$OUT_DIR/$(basename "${f%.pd}").c"
   rm -f "$emitted_c"
@@ -915,7 +915,7 @@ while IFS= read -r f; do
     # CONTRADICTION CHECK, and it guards the one way a gcc rejection could still
     # be laundered into a declarable stage. Reaching here means "no .c on disk",
     # and the two derivations of that name — this file's `basename` and codegen's
-    # `file_stem` (src/codegen/mod.rs:3701-3706) — are independent. If they ever
+    # `file_stem` (src/codegen/mod.rs:7735-7740) — are independent. If they ever
     # diverge, a real backend failure lands in THIS arm, where `xfail compile` is
     # a stage the validator permits, and the exemption is back through a door the
     # rest of this change locked. So: the log claiming gcc ran while no

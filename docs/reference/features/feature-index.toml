@@ -132,7 +132,7 @@ evidence = [
   "src: tests/regression/lifetimes_uninferred.pd:26-29 \"fn dangling() -> &i64\" returning \"return &x;\", a reference to a local that dies at the closing brace",
   "conformance: tests/reject/uncalled_body_is_checked.pd reject",
   "src: tests/reject/uncalled_body_is_checked.pd:21-24 \"fn bad()\" is called by nothing and still refused, which is what makes the fixture above a statement about lifetimes",
-  "gate: make conformance -> reject=125 verified=92 -- the pair above is in the corpus those numbers count",
+  "gate: make conformance -> reject=127 verified=95 -- the pair above is in the corpus those numbers count",
   "src: src/ownership/borrow_checker.rs:800-803 the Stmt::Return arm checks the expression and stops: \"TODO: Check return value ownership matches function signature\"",
   "src: src/ownership/mod.rs:25-33 \"pub enum Lifetime\" -- the four variants a lifetime can be, none of which carries a relation to another",
   "src: src/ownership/mod.rs:101-133 \"constraints: Vec<LifetimeConstraint>\" at :101 and \"pub struct LifetimeConstraint\" at :131 with its longer/shorter pair -- the only type in the module that RELATES two lifetimes",
@@ -203,7 +203,7 @@ implementation = "partial"
 evidence = [
   "conformance: examples/tutorial/01_variables.pd run",
   "cmd: grep -rn 'HindleyMilner\\|unify\\|Substitution' src/typeck/ --include='*.rs' -> exit 0, 1 lines",
-  "src: src/typeck/mod.rs:6267-6267 'Cannot infer type from empty array'",
+  "src: src/typeck/mod.rs:6296-6296 'Cannot infer type from empty array'",
 ]
 note = "Local `let` inference works (the i64 default was replaced by real inference in 04104c5). There is no unification engine and no polymorphic generalisation, so it is not Hindley-Milner. The probe above moved from 0 hits to 1 with N4-12, and the hit is PROSE: a comment in the tuple case saying there is nothing to unify, because a tuple's elements are not required to agree with each other. An absence probe counts the surface, so a claim about the surface has to be re-derived when a comment moves it -- the absence itself is unchanged."
 
@@ -337,7 +337,7 @@ description = "Built-in Result<T, E> with Ok/Err."
 spec = "../../specification/language-spec.md#n4-types"
 implementation = "unimplemented"
 evidence = [
-  "src: src/typeck/mod.rs:4991-4991 the type checker refuses `?` outright with CompileError::question_unimplemented",
+  "src: src/typeck/mod.rs:5018-5018 the type checker refuses `?` outright with CompileError::question_unimplemented",
   "cmd: grep -rn 'prelude' src/driver/ --include='*.rs' -> exit 1, 0 lines (stdlib/prelude.pd is never loaded)",
 ]
 note = "Result and Option are ordinary user enums if you declare them."
@@ -501,7 +501,7 @@ description = "C code generation; the backend the compiler actually ships."
 spec = "../../specification/language-spec.md#n1-overview-and-design-commitments"
 implementation = "implemented"
 evidence = [
-  "gate: make conformance -> fixtures=231 evaluated=231 verified=92 vacuous=6 xfail=6 reject=125 skip=2 failures=0",
+  "gate: make conformance -> fixtures=236 evaluated=236 verified=95 vacuous=6 xfail=6 reject=127 skip=2 failures=0",
   "gate: make selfhost -> \"SELF-HOSTING ACHIEVED\" -- the C backend is the one a Palladium compiler is built with",
 ]
 
@@ -533,7 +533,7 @@ spec = "../../specification/language-spec.md"
 implementation = "implemented"
 evidence = [
   "gate: cargo build --release -> \"[optimized] target(s)\" -- the compiler builds, and target/release/pdc is what every other gate here runs",
-  "gate: make conformance -> fixtures=231 evaluated=231 verified=92 vacuous=6 xfail=6 reject=125 skip=2 failures=0",
+  "gate: make conformance -> fixtures=236 evaluated=236 verified=95 vacuous=6 xfail=6 reject=127 skip=2 failures=0",
 ]
 
 [tooling.compiler.bootstrapping]

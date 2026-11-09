@@ -343,22 +343,29 @@ pub struct CodeGenerator {
     /// imported public generic, unless a local function of the name overwrites it, and a
     /// local generic. A call of one is emitted only as one of its instantiations.
     generic_templates: std::collections::HashSet<String>,
-    /// The parameters and unannotated `let` bindings of the function being
-    /// generated whose C type `variables` does not record exactly — a `u32`,
-    /// `u64`, `f32` or `f64` parameter is tracked there as `long long`, and so is
-    /// `let w = v + 0` with `v: u32` — as `(what variables holds, the exact C
-    /// type)`. Only `exact_c_type_in` reads it, and only while `variables` still
-    /// holds what was tracked (no binding has shadowed the name since).
-    param_exact_c: std::collections::HashMap<String, (String, String)>,
+    /// The parameters of the function being generated whose C type `variables`
+    /// does not record as declared — a `u32`, `u64`, `f32` or `f64` parameter is
+    /// tracked there as `long long` and declared `unsigned int`, `unsigned long
+    /// long`, `float` or `double` — by name, with the C type it is declared at.
+    /// Only `exact_c_type_in` reads it. Every other binding is of the C type it is
+    /// declared at in the emitted C, which `variables` records, so it is a BINDING
+    /// map like `variables` and `array_bindings`: a binding of the name shadows
+    /// the parameter's entry (`bind_non_array`, `let`), and a scope gives it back
+    /// when it closes (`open_binding_scope`). Review round 3 measured a flat map:
+    /// a `w` bound in an inner block or by a `for` kept a `u32` parameter's entry
+    /// alive over an outer `i64` `w`, which was then inverted as a `u32`.
+    param_exact_c: std::collections::HashMap<String, String>,
 }
 
-/// What `open_binding_scope` saves and `close_binding_scope` restores: the
-/// array bindings, the C types, and the reference locals of a scope.
-type BindingScope = (
-    std::collections::HashMap<String, ArrayBinding>,
-    std::collections::HashMap<String, String>,
-    std::collections::HashMap<String, LetKey>,
-);
+/// The bindings a scope may shadow, as `open_binding_scope` saw them: every map
+/// this generator keeps by binding name — the array bindings, the C types, the
+/// reference locals and the exact C types of a scope.
+struct BindingScope {
+    arrays: std::collections::HashMap<String, ArrayBinding>,
+    variables: std::collections::HashMap<String, String>,
+    reference_locals: std::collections::HashMap<String, LetKey>,
+    param_exact_c: std::collections::HashMap<String, String>,
+}
 
 /// Brackets the number of a `fresh_shadow_name` placeholder until
 /// `name_shadow_temporaries` names it (issue #84, review round 7).
@@ -2260,7 +2267,7 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:4927`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:4954`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
     /// (`src/ownership/borrow_checker.rs:641-643`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
@@ -4773,8 +4780,9 @@ impl CodeGenerator {
                 && !declared.contains('[')
                 && !matches!(param.ty, Type::Reference { .. } | Type::Tuple(_))
             {
-                self.param_exact_c
-                    .insert(param.name.clone(), (c_type.clone(), declared));
+                self.param_exact_c.insert(param.name.clone(), declared);
+            } else {
+                self.param_exact_c.remove(param.name.as_str());
             }
             self.variables.insert(param.name.clone(), c_type);
         }
@@ -4849,6 +4857,7 @@ impl CodeGenerator {
         self.variables.insert(name.to_string(), c_type);
         self.array_bindings.remove(name);
         self.reference_locals.remove(name);
+        self.param_exact_c.remove(name);
         Ok(())
     }
 
@@ -4860,18 +4869,19 @@ impl CodeGenerator {
     /// the already-overwritten map and the binder outlived its own scope: after
     /// `for v in xs { }`, an outer `v` still had the loop variable's type.
     fn open_binding_scope(&self) -> BindingScope {
-        (
-            self.array_bindings.clone(),
-            self.variables.clone(),
-            self.reference_locals.clone(),
-        )
+        BindingScope {
+            arrays: self.array_bindings.clone(),
+            variables: self.variables.clone(),
+            reference_locals: self.reference_locals.clone(),
+            param_exact_c: self.param_exact_c.clone(),
+        }
     }
 
     fn close_binding_scope(&mut self, saved: BindingScope) {
-        let (arrays, variables, reference_locals) = saved;
-        self.array_bindings = arrays;
-        self.variables = variables;
-        self.reference_locals = reference_locals;
+        self.array_bindings = saved.arrays;
+        self.variables = saved.variables;
+        self.reference_locals = saved.reference_locals;
+        self.param_exact_c = saved.param_exact_c;
     }
 
     /// Generate code for a statement.
@@ -5049,25 +5059,13 @@ impl CodeGenerator {
                     }
                     _ => None,
                 };
-                // A binding declared at a C type its initializer is not exactly — `let w = v
-                // + 0` with `v: u32` is declared `long long` — is of the initializer's exact C
-                // type where an instantiation is chosen for it (`exact_c_type_in`), as a
-                // parameter `variables` tracks inexactly is. Any other binding of the name
-                // ends what an earlier one recorded.
-                let exact = match ty {
-                    None if array_dims.is_empty() => self
-                        .exact_c_type_in(value, &Default::default())
-                        .filter(|exact| !Self::same_c_type(exact, &c_type)),
-                    _ => None,
-                };
-                match exact {
-                    Some(exact) => {
-                        self.param_exact_c.insert(name.clone(), (c_type.clone(), exact));
-                    }
-                    None => {
-                        self.param_exact_c.remove(name.as_str());
-                    }
-                }
+                // The binding is of the C type it is declared at here, whatever its
+                // initializer's was: `let w = v * 2` with `v: u32` is the `long long w` C
+                // computes `v * 2LL` into, and an instantiation chosen for `w` has to be the
+                // one `~w` written beside it agrees with (review round 3, fable: a `u32`
+                // recorded for `w` sent it to `invert__z`, 2589934591 beside `~w` =
+                // -6000000001). It shadows a parameter of the name.
+                self.param_exact_c.remove(name.as_str());
                 // Track variable type for future inference. Arrays keep their
                 // dimensions in the recorded type.
                 self.variables
@@ -8198,13 +8196,17 @@ impl CodeGenerator {
                 .and_then(|type_args| self.instantiated_parameters(func_name, type_args))
                 .map(|params| params.into_iter().map(|(_, _, generic)| generic).collect())
                 .unwrap_or_default();
-            let shared = args.iter().enumerate().any(|(i, arg)| {
-                generic_at.get(i).copied().unwrap_or(true)
-                    && self
-                        .exact_c_type_in(arg, &Default::default())
-                        .is_none_or(|t| Self::c_type_is_shared_by_two_kinds(&t))
+            let shared: Option<Option<String>> = args.iter().enumerate().find_map(|(i, arg)| {
+                if !generic_at.get(i).copied().unwrap_or(true) {
+                    return None;
+                }
+                match self.exact_c_type_in(arg, &Default::default()) {
+                    None => Some(None),
+                    Some(t) if Self::c_type_is_shared_by_two_kinds(&t) => Some(Some(t)),
+                    Some(_) => None,
+                }
             });
-            if let ([one], false) = (taking.as_slice(), shared) {
+            if let ([one], None) = (taking.as_slice(), &shared) {
                 return Ok(Some(self.mangle_generic_name(func_name, one)));
             }
             let named: Vec<String> = taking.iter().map(|a| spelled(a)).collect();
@@ -8215,14 +8217,16 @@ impl CodeGenerator {
                  as a variable or a literal, from which the type arguments are inferred where \
                  the call is written",
                 func_name,
-                if taking.is_empty() {
-                    if all.is_empty() {
-                        "it is instantiated at nothing".to_string()
-                    } else {
-                        format!("none of {} takes these arguments", all.join(", "))
-                    }
-                } else {
-                    format!("{} each take these arguments", named.join(" and "))
+                match (named.as_slice(), &shared) {
+                    ([], _) if all.is_empty() => "it is instantiated at nothing".to_string(),
+                    ([], _) => format!("none of {} takes these arguments", all.join(", ")),
+                    ([one], Some(Some(c_type))) => format!(
+                        "{} alone takes these arguments, but an argument's C type, `{}`, is \
+                         that of two kinds of value (`int`: a `bool` or an `i32`; `long long`: \
+                         an `i64` or a `char`), and only a record says which",
+                        one, c_type
+                    ),
+                    _ => format!("{} each take these arguments", named.join(" and ")),
                 }
             ))
             .with_code(DiagnosticCode::GenericUseHeldExactly));
@@ -8363,20 +8367,28 @@ impl CodeGenerator {
     /// instantiation of a generic a value belongs to (review round 2); `None`
     /// where it does not.
     ///
-    /// `try_infer_expr_type_in` answers `long long` for an arithmetic, bitwise
-    /// or remainder expression over integers whatever its operands are, which
-    /// is harmless where it only picks a spelling and wrong as proof of which
-    /// instantiation a value is: `half(v + 0)` with `v: u64` was typed `long
-    /// long`, matched `half__i64` exactly, and halved 9223372036854775808 as a
-    /// signed number (main printed 4611686018427387904). Here an operator's
-    /// type is C's, from its operands' exact types — the usual arithmetic
-    /// conversions for `+ - * / % & | ^`, where an untyped literal operand is of
-    /// its other operand's type (`v + 0` with `v: u32` is a `u32`, though C
-    /// computes it as a `long long`), the left operand's for a shift, `int`
-    /// for a comparison or a logical connective — and an expression whose
-    /// type would have to be guessed (a value `if`, `match`, `loop` or block)
-    /// has none. A declared type (a binding, a field, an element, a cast, a
-    /// function's result) is exact as declared.
+    /// It is the type the value has IN THE EMITTED C (review round 3), so that
+    /// the instantiation chosen for a value does with it what every other
+    /// operation the program writes on it does. `try_infer_expr_type_in`
+    /// answers `long long` for an arithmetic, bitwise or remainder expression
+    /// over integers whatever its operands are, which is harmless where it
+    /// only picks a spelling and wrong as proof of which instantiation a value
+    /// is: `half(v + 0)` with `v: u64` was typed `long long`, matched
+    /// `half__i64` exactly, and halved 9223372036854775808 as a signed number
+    /// (main printed 4611686018427387904). Here an operator's type is C's,
+    /// from its operands' types — the usual arithmetic conversions for `+ - *
+    /// / % & | ^`, an integer literal being the `long long` it is emitted as
+    /// (`v + 0LL` is an `unsigned long long` over a `u64`, and a `long long`
+    /// over a `u32`), the left operand's for a shift, `int` for a comparison
+    /// or a logical connective. Round 2 gave an untyped literal its other
+    /// operand's width instead, and so claimed `unsigned int` for `(v - 1) /
+    /// 2` over a `u32` 0, which C computes as the `long long` 0 - 1 / 2: the
+    /// call printed 4294967295 beside the program's own `~w` = -1. A binding is
+    /// of the type it is declared at (a parameter as declared, not as
+    /// `variables` tracks it), and so are a field, an element, a cast and a
+    /// function's result. A value `if`, `match`, `loop` or block is of the type
+    /// every value it can produce has, where each is also the type of the
+    /// temporary that carries it out (`exact_c_type_of_values`).
     fn exact_c_type_in(
         &self,
         expr: &Expr,
@@ -8398,22 +8410,8 @@ impl CodeGenerator {
                     .exact_c_type_in(left, locals)
                     .filter(|t| Self::c_integer_rank(t).is_some()),
                 _ => {
-                    // An untyped literal has no width of its own: it is of its other operand's
-                    // (`v + 0` with `v: u32` is a `u32`), though C computes `v + 0LL` as a `long
-                    // long` — which read as the operator's type passed a `u32` off as an i64.
-                    let adopts = |literal: &Expr, other: &str| match Self::untyped_literal(literal) {
-                        Some(true) => Self::c_integer_rank(other).is_some(),
-                        Some(false) => other == "double" || other == "float",
-                        None => false,
-                    };
                     let l = self.exact_c_type_in(left, locals)?;
                     let r = self.exact_c_type_in(right, locals)?;
-                    if adopts(left, &r) && Self::untyped_literal(right).is_none() {
-                        return Some(r);
-                    }
-                    if adopts(right, &l) && Self::untyped_literal(left).is_none() {
-                        return Some(l);
-                    }
                     if matches!(op, BinOp::Add) && l == "const char*" && r == "const char*" {
                         return Some(l);
                     }
@@ -8468,33 +8466,341 @@ impl CodeGenerator {
                 let element = self.exact_c_type_in(value, locals)?;
                 Some(Self::c_array_of(&element, usize::try_from(*n).ok()?))
             }
-            Expr::If { .. } | Expr::Match { .. } | Expr::Loop { .. } | Expr::Block { .. } => None,
-            // A parameter `variables` tracks inexactly is of its declared C type, while no
-            // binding has shadowed it.
-            Expr::Ident(name)
-                if !locals.contains_key(name)
-                    && self.param_exact_c.get(name).is_some_and(|(tracked, _)| {
-                        self.variables.get(name) == Some(tracked)
-                    }) =>
-            {
-                self.param_exact_c.get(name).map(|(_, declared)| declared.clone())
+            Expr::If {
+                then_branch,
+                then_value,
+                else_branch,
+                else_value,
+                ..
+            } => {
+                let then_value = then_value.as_deref()?;
+                let else_value = else_value.as_deref()?;
+                self.exact_c_type_of_values(&[
+                    (then_value, self.locals_of(then_branch, locals)),
+                    (else_value, self.locals_of(else_branch.as_deref()?, locals)),
+                ])
+            }
+            Expr::Block { stmts, value, .. } => {
+                self.exact_c_type_of_values(&[(value.as_deref()?, self.locals_of(stmts, locals))])
+            }
+            Expr::Match { expr, arms, .. } => {
+                let mut values = Vec::with_capacity(arms.len());
+                for arm in arms {
+                    let bound = self.pattern_locals(&arm.pattern, expr, locals)?;
+                    values.push((arm.value.as_ref()?, self.locals_of(&arm.body, &bound)));
+                }
+                self.exact_c_type_of_values(&values)
+            }
+            Expr::Loop { body, .. } => {
+                let mut values = Vec::new();
+                self.loop_break_values(body, locals, &mut values)?;
+                self.exact_c_type_of_values(&values)
+            }
+            // A parameter is of the C type it is declared at, unless a binding of the
+            // compound value being typed shadows it (`locals`).
+            Expr::Ident(name) if !locals.contains_key(name) && self.param_exact_c.contains_key(name) => {
+                self.param_exact_c.get(name).cloned()
             }
             _ => self.try_infer_expr_type_in(expr, locals),
         }
     }
 
-    /// Is `expr` an untyped numeric literal — `Some(true)` an integer, `Some(false)`
-    /// a float, either possibly negated — whose width is its context's?
-    fn untyped_literal(expr: &Expr) -> Option<bool> {
+    /// The exact C type of a value `if`, `match`, `loop` or block, from the
+    /// values it can produce, each with the bindings in scope where it is
+    /// written: the one C type every value has, where each is also the type
+    /// `try_infer_expr_type_in` gives it — the type the hoisted temporary that
+    /// carries the value out is declared at (`hoist_temp_type`), which is what
+    /// the program's every use of the value then reads. `None` where a value's
+    /// type is unknown, or two disagree, or a value is not of the temporary's
+    /// type (a `u32` parameter is declared `unsigned int` and tracked, and so
+    /// carried, as a `long long`; an `f64` one would be carried truncated).
+    ///
+    /// Review round 3: these were all `None`, and `G { v: if true { 1 } else
+    /// { 2 } }` and `G { v: { let x = 1; x } }` were refused although their
+    /// recorded `G<i64>` holds them exactly (main printed 1).
+    fn exact_c_type_of_values(
+        &self,
+        values: &[(&Expr, std::collections::HashMap<String, String>)],
+    ) -> Option<String> {
+        let mut found: Option<String> = None;
+        for (value, locals) in values {
+            let exact = self.exact_c_type_in(value, locals)?;
+            let carried = self.try_infer_expr_type_in(value, locals)?;
+            if !Self::same_c_type(&exact, &carried) {
+                return None;
+            }
+            match &found {
+                Some(earlier) if !Self::same_c_type(earlier, &exact) => return None,
+                Some(_) => {}
+                None => found = Some(exact),
+            }
+        }
+        found
+    }
+
+    /// `locals` with the names `pattern` binds against the scrutinee `subject`,
+    /// at the C types the emitted arm declares them at (`bind_pattern_locals`),
+    /// or `None` where one of them has no known type — a name left out would be
+    /// read as an outer binding of the same name.
+    fn pattern_locals(
+        &self,
+        pattern: &Pattern,
+        subject: &Expr,
+        locals: &std::collections::HashMap<String, String>,
+    ) -> Option<std::collections::HashMap<String, String>> {
+        let mut names = Vec::new();
+        Self::pattern_names(pattern, &mut names);
+        let mut bound = std::collections::HashMap::new();
+        if !names.is_empty() {
+            let subject_type = self.try_infer_expr_type_in(subject, locals)?;
+            self.bind_pattern_locals(pattern, &subject_type, &mut bound);
+        }
+        if !names.iter().all(|name| bound.contains_key(name)) {
+            return None;
+        }
+        let mut out = locals.clone();
+        out.extend(bound);
+        Some(out)
+    }
+
+    /// The names `pattern` binds.
+    fn pattern_names(pattern: &Pattern, out: &mut Vec<String>) {
+        match pattern {
+            Pattern::Wildcard | Pattern::Literal(_) | Pattern::Range { .. } => {}
+            Pattern::Ident(name) => out.push(name.clone()),
+            Pattern::Binding { name, inner } => {
+                out.push(name.clone());
+                Self::pattern_names(inner, out);
+            }
+            // An alternative may not bind (N6-07).
+            Pattern::Or(_) => {}
+            Pattern::Tuple(elements) => {
+                for element in elements {
+                    Self::pattern_names(element, out);
+                }
+            }
+            Pattern::EnumPattern { data, .. } => match data {
+                None => {}
+                Some(PatternData::Tuple(patterns)) => {
+                    for sub in patterns {
+                        Self::pattern_names(sub, out);
+                    }
+                }
+                Some(PatternData::Struct(fields)) => {
+                    for (_, sub) in fields {
+                        Self::pattern_names(sub, out);
+                    }
+                }
+            },
+        }
+    }
+
+    /// The values the `break`s of a value `loop` carry out of it, each with the
+    /// bindings in scope where it is written, or `None` where one cannot be
+    /// found with them: a `break` with no value, or one inside an expression (a
+    /// value `if`, `match` or block), which this walk does not enter. A `break`
+    /// in a nested loop is that loop's.
+    fn loop_break_values<'e>(
+        &self,
+        stmts: &'e [Stmt],
+        locals: &std::collections::HashMap<String, String>,
+        out: &mut Vec<(&'e Expr, std::collections::HashMap<String, String>)>,
+    ) -> Option<()> {
+        let mut locals = locals.clone();
+        for stmt in stmts {
+            match stmt {
+                Stmt::Break { value, .. } => {
+                    let value = value.as_ref()?;
+                    if Self::breaks_inside(value) {
+                        return None;
+                    }
+                    out.push((value, locals.clone()));
+                }
+                Stmt::Let {
+                    name, ty, value, ..
+                } => {
+                    if Self::breaks_inside(value) {
+                        return None;
+                    }
+                    let c_type = match ty {
+                        Some(t) => self.type_to_c(t),
+                        None => self.try_infer_expr_type_in(value, &locals)?,
+                    };
+                    locals.insert(name.clone(), c_type);
+                }
+                Stmt::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    if Self::breaks_inside(condition) {
+                        return None;
+                    }
+                    self.loop_break_values(then_branch, &locals, out)?;
+                    if let Some(else_branch) = else_branch {
+                        self.loop_break_values(else_branch, &locals, out)?;
+                    }
+                }
+                Stmt::Match { expr, arms, .. } => {
+                    if Self::breaks_inside(expr) {
+                        return None;
+                    }
+                    for arm in arms {
+                        if arm.guard.as_ref().is_some_and(Self::breaks_inside) {
+                            return None;
+                        }
+                        let bound = self.pattern_locals(&arm.pattern, expr, &locals)?;
+                        self.loop_break_values(&arm.body, &bound, out)?;
+                    }
+                }
+                Stmt::Unsafe { body, .. } => self.loop_break_values(body, &locals, out)?,
+                // A `break` in these is THEIR loop's; only what is evaluated around them
+                // could still leave this one.
+                Stmt::While { condition, .. } => {
+                    if Self::breaks_inside(condition) {
+                        return None;
+                    }
+                }
+                Stmt::For { iter, .. } => {
+                    if Self::breaks_inside(iter) {
+                        return None;
+                    }
+                }
+                Stmt::Loop { .. } | Stmt::Continue { .. } => {}
+                Stmt::Expr(expr) | Stmt::Return(Some(expr)) => {
+                    if Self::breaks_inside(expr) {
+                        return None;
+                    }
+                }
+                Stmt::Assign { target, value, .. } => {
+                    if Self::breaks_inside(value) || Self::target_breaks_inside(target) {
+                        return None;
+                    }
+                }
+                Stmt::Return(None) => {}
+            }
+        }
+        Some(())
+    }
+
+    /// Does `expr` hold a `break` that leaves the loop around it — one in the
+    /// statements of a value `if`, `match` or block somewhere inside it? A
+    /// `loop` inside it is its own break target.
+    fn breaks_inside(expr: &Expr) -> bool {
+        let any = |exprs: &[Expr]| exprs.iter().any(Self::breaks_inside);
         match expr {
-            Expr::Integer(_) => Some(true),
-            Expr::Float(_) => Some(false),
-            Expr::Unary {
-                op: UnaryOp::Neg,
-                operand,
+            Expr::If {
+                condition,
+                then_branch,
+                then_value,
+                else_branch,
+                else_value,
                 ..
-            } => Self::untyped_literal(operand),
-            _ => None,
+            } => {
+                Self::breaks_inside(condition)
+                    || Self::stmts_break(then_branch)
+                    || then_value.as_deref().is_some_and(Self::breaks_inside)
+                    || else_branch.as_deref().is_some_and(Self::stmts_break)
+                    || else_value.as_deref().is_some_and(Self::breaks_inside)
+            }
+            Expr::Match { expr, arms, .. } => {
+                Self::breaks_inside(expr)
+                    || arms.iter().any(|arm| {
+                        arm.guard.as_ref().is_some_and(Self::breaks_inside)
+                            || Self::stmts_break(&arm.body)
+                            || arm.value.as_ref().is_some_and(Self::breaks_inside)
+                    })
+            }
+            Expr::Block { stmts, value, .. } => {
+                Self::stmts_break(stmts) || value.as_deref().is_some_and(Self::breaks_inside)
+            }
+            Expr::Loop { .. } => false,
+            Expr::String(_)
+            | Expr::Integer(_)
+            | Expr::Float(_)
+            | Expr::Char(_)
+            | Expr::Bool(_)
+            | Expr::Ident(_)
+            | Expr::MacroInvocation { .. } => false,
+            Expr::ArrayLiteral { elements, .. } | Expr::Tuple { elements, .. } => any(elements),
+            Expr::ArrayRepeat { value, count, .. } => {
+                Self::breaks_inside(value) || Self::breaks_inside(count)
+            }
+            Expr::Index { array, index, .. } => {
+                Self::breaks_inside(array) || Self::breaks_inside(index)
+            }
+            Expr::Call { func, args, .. } => Self::breaks_inside(func) || any(args),
+            Expr::Binary { left, right, .. } => {
+                Self::breaks_inside(left) || Self::breaks_inside(right)
+            }
+            Expr::Range { start, end, .. } => {
+                Self::breaks_inside(start) || Self::breaks_inside(end)
+            }
+            Expr::Unary { operand, .. } => Self::breaks_inside(operand),
+            Expr::StructLiteral { fields, .. } => {
+                fields.iter().any(|(_, value)| Self::breaks_inside(value))
+            }
+            Expr::EnumConstructor { data, .. } => match data {
+                None => false,
+                Some(EnumConstructorData::Tuple(values)) => any(values),
+                Some(EnumConstructorData::Struct(fields)) => {
+                    fields.iter().any(|(_, value)| Self::breaks_inside(value))
+                }
+            },
+            Expr::FieldAccess { object: inner, .. }
+            | Expr::Reference { expr: inner, .. }
+            | Expr::Deref { expr: inner, .. }
+            | Expr::Question { expr: inner, .. }
+            | Expr::Await { expr: inner, .. }
+            | Expr::Cast { expr: inner, .. }
+            | Expr::TupleIndex { expr: inner, .. } => Self::breaks_inside(inner),
+        }
+    }
+
+    /// Does a statement list hold a `break` of the loop around it?
+    fn stmts_break(stmts: &[Stmt]) -> bool {
+        stmts.iter().any(|stmt| match stmt {
+            Stmt::Break { .. } => true,
+            Stmt::Let { value, .. } | Stmt::Expr(value) | Stmt::Return(Some(value)) => {
+                Self::breaks_inside(value)
+            }
+            Stmt::Assign { target, value, .. } => {
+                Self::breaks_inside(value) || Self::target_breaks_inside(target)
+            }
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                Self::breaks_inside(condition)
+                    || Self::stmts_break(then_branch)
+                    || else_branch.as_deref().is_some_and(Self::stmts_break)
+            }
+            Stmt::Match { expr, arms, .. } => {
+                Self::breaks_inside(expr)
+                    || arms.iter().any(|arm| {
+                        arm.guard.as_ref().is_some_and(Self::breaks_inside)
+                            || Self::stmts_break(&arm.body)
+                    })
+            }
+            Stmt::Unsafe { body, .. } => Self::stmts_break(body),
+            Stmt::While { condition, .. } => Self::breaks_inside(condition),
+            Stmt::For { iter, .. } => Self::breaks_inside(iter),
+            Stmt::Loop { .. } | Stmt::Continue { .. } | Stmt::Return(None) => false,
+        })
+    }
+
+    /// Does an assignment's target hold a `break` of the loop around it?
+    fn target_breaks_inside(target: &AssignTarget) -> bool {
+        match target {
+            AssignTarget::Ident(_) => false,
+            AssignTarget::Index { array, index } => {
+                Self::breaks_inside(array) || Self::breaks_inside(index)
+            }
+            AssignTarget::FieldAccess { object, .. } => Self::breaks_inside(object),
+            AssignTarget::Deref { expr } => Self::breaks_inside(expr),
         }
     }
 

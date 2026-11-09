@@ -942,6 +942,16 @@ prelude). Neither is monomorphised. *(v0.2 said "array sizes from a const
 parameter resolve to `0`" citing `src/codegen/mod.rs:1229-1229`; that is the expression case, not the const-parameter
 case.)*
 
+**partial — integer widths in generic uses**: the type checker records every integer type
+argument as `i64` and a reference as its referent (#82), so code generation emits a generic call
+or struct literal as its recorded instantiation only where each value's C type in the emitted C
+is exactly the C type of its parameter or field there (`instantiation_called` and
+`literal_instantiation` in `src/codegen/mod.rs`). An `i32`, `u32` or `u64` value given to a
+generic is therefore refused by name (PD0082) unless an instantiation of exactly its C type
+exists — one the checker recorded for a value typed by an alias's name (`type z = u32;`) — and
+so is a value whose C type is not known exactly (`tests/reject/generic_call_not_held_exactly.pd`,
+`tests/reject/generic_literal_not_held_exactly.pd`).
+
 `tests/08_generics_basic.pd` PASSES conformance while only printing that generics are
 unimplemented.
 
@@ -1090,7 +1100,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
   *(This bullet read "partial — codegen error 'Range expressions can only be used in for loops'"
   until `ef74eba`.)*
 - partial: empty array literal `[]` — typeck cannot infer the element type
-  (`src/typeck/mod.rs:6265-6269`, corrected from line 1874 of the pre-cleanup revision and again on 2026-08-25, when it had come to rest on a closing brace).
+  (`src/typeck/mod.rs:6294-6298`, corrected from line 1874 of the pre-cleanup revision and again on 2026-08-25, when it had come to rest on a closing brace).
 
 **FIXED — the precedence bug**: `parse_multiplication` parsed its RIGHT operand with
 `parse_postfix` rather than `parse_unary`, so the left side descended through the unary level and
@@ -1374,7 +1384,7 @@ struct patterns, `ref`/`mut` bindings, `..` rest.
 **Exhaustiveness holds for every scrutinee type** (N6-10). An enum must cover its variants; a
 `bool` is covered by `true` and `false` together; every other type needs an arm that matches every
 value — `_`, a binding, `name @ <irrefutable>`, an `a | b` with an irrefutable alternative, or a
-tuple of irrefutables (`src/typeck/exhaustiveness.rs:114`, `src/typeck/mod.rs:5347`). NO INTERVAL
+tuple of irrefutables (`src/typeck/exhaustiveness.rs:114`, `src/typeck/mod.rs:5374`). NO INTERVAL
 ARITHMETIC IS PROMISED: `0..=59` beside `60..=<i64 max>` beside `<i64 min>..=-1` covers every
 integer and is still refused, and the diagnostic says why rather than leaving the reader to infer
 it. A guarded arm counts toward nothing — whether it is taken is not decidable from the pattern.
@@ -1438,7 +1448,7 @@ One divergence remains, and two are closed:
 ([A4.1](#a41-functions)).
 
 Since 2026-08-21 there is one source of truth: `src/builtins.rs`. The type
-checker derives its signature table from it (`src/typeck/mod.rs:1213-1213`) and so does the borrow
+checker derives its signature table from it (`src/typeck/mod.rs:1222-1222`) and so does the borrow
 checker, which is what stopped the two from drifting apart. Codegen maps names to C symbols
 (`src/codegen/mod.rs:7292-7292`, corrected from line 1813–1851 of the pre-cleanup revision) and emits their C bodies inline into
 every output file (`src/codegen/mod.rs:2676-2676`, corrected from line 251–575 of the pre-cleanup revision).
@@ -1756,11 +1766,11 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-xfail-six`
 (2026-08-31):
 
-**verified 92 · untranscribed 0 · vacuous 6 · xfail 6 · reject 125 · skip 2 · failures 0**, over 231
+**verified 95 · untranscribed 0 · vacuous 6 · xfail 6 · reject 127 · skip 2 · failures 0**, over 236
 fixtures. (WT-01 unit W1c added two `run` fixtures, `tests/04_self_field_reads.pd` and
 `tests/04_self_type_positions.pd`: `Self` now means the impl's type in the borrow checker and in a
 method body too. Then `fix/projection-move-scope` added one `run` fixture, `tests/regression/projection_move_scope.pd`:
-a move out of a field that used to outlive its function, measured on the merged tree 2026-10-07. Then WT-01 unit W2a added one `run` fixture, `tests/regression/enum_in_composites.pd`: a user `enum` inside an array, a tuple, a reference, a method signature and a generic instantiation, each refused before with one type named on both sides. Then issue #85 added one `run` fixture, `tests/04_macro_in_method_body.pd`: a macro invocation in a method body, which the expander never walked; and its review round one `reject` fixture, `tests/reject/macro_expansion_does_not_parse.pd`: an expansion that does not parse is refused by name (PD0079), in a body main never expanded as in a free function. Then the #93/#91 unit added one `run` fixture, `tests/regression/generic_argument_kind.pd`: the programs that ran where a generic argument's reading flips from its spelling to what it resolves to; its review round 1 added one `reject` fixture, `tests/reject/alias_cycle_through_generic_argument.pd`: an alias cycle a program uses is refused by name (PD0080); its review round 4 added one more, `tests/reject/generic_parameter_named_twice.pd`: a generic parameter list naming one parameter twice is refused where it is written (PD0081). Then issue #84 added one `run` fixture, `tests/05_tuple_reference_params.pd`: a reference to a tuple as a parameter, which code generation refused as "Unsupported type in reference parameter". The su2 round of `feat/m2-xfail-six` added five: `tests/04_self_place.pd`, the first
+a move out of a field that used to outlive its function, measured on the merged tree 2026-10-07. Then WT-01 unit W2a added one `run` fixture, `tests/regression/enum_in_composites.pd`: a user `enum` inside an array, a tuple, a reference, a method signature and a generic instantiation, each refused before with one type named on both sides. Then issue #85 added one `run` fixture, `tests/04_macro_in_method_body.pd`: a macro invocation in a method body, which the expander never walked; and its review round one `reject` fixture, `tests/reject/macro_expansion_does_not_parse.pd`: an expansion that does not parse is refused by name (PD0079), in a body main never expanded as in a free function. Then the #93/#91 unit added one `run` fixture, `tests/regression/generic_argument_kind.pd`: the programs that ran where a generic argument's reading flips from its spelling to what it resolves to; its review round 1 added one `reject` fixture, `tests/reject/alias_cycle_through_generic_argument.pd`: an alias cycle a program uses is refused by name (PD0080); its review round 4 added one more, `tests/reject/generic_parameter_named_twice.pd`: a generic parameter list naming one parameter twice is refused where it is written (PD0081). Then issue #84 added one `run` fixture, `tests/05_tuple_reference_params.pd`: a reference to a tuple as a parameter, which code generation refused as "Unsupported type in reference parameter". Then issue #86 added two `run` fixtures, `tests/regression/generic_call_site_records.pd` and `tests/regression/generic_body_literal_records.pd`: a generic call, and a generic struct literal in a generic body, each emitted as the instantiation the type checker recorded for it rather than one chosen by C type; and its review round 2 two `reject` fixtures (PD0082) for a use whose record does not hold its value exactly; and its review round 3 one `run` fixture, `tests/regression/generic_exact_type_of_a_value.pd`: the C type a value has under that rule is the one the emitted C gives it. The su2 round of `feat/m2-xfail-six` added five: `tests/04_self_place.pd`, the first
 fixture in which a method taking a reference receiver links at all, and four `reject`s for the
 writes through a receiver the type checker refuses — through `&self`, through a by-value
 `self`, `self` as an assignment target and `*self` as a place. Its review round added
