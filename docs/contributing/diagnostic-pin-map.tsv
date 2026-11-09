@@ -2,7 +2,7 @@
 # manifest's pins by `make check-diagnostic-codes`.
 #
 # WHAT THIS IS. The su0 semantic map, as both review engines approved it, plus the
-# amendments recorded below: one row per refusal-witness manifest row (131
+# amendments recorded below: one row per refusal-witness manifest row (134
 # `reject` + 2 `skip`), saying which stable code that row's refusal carries and,
 # where the code prints more than one payload, which fragment of the PRIMARY
 # header's payload tells this row apart. The generator writes column 4 of every
@@ -56,9 +56,16 @@
 #   both codes have two payload groups and the two rows that were bare —
 #   int_is_not_a_char (``expected Char, found Int``) and value_if_branch_types
 #   (``branch of type String``) — carry a fragment now, by the rule above.
-#   #88 review round 1: PD0081 gained a second witness, the instantiated
+#   #88 review round 1: PD0083 (then PD0081, renumbered at the rebase onto
+#   2ca5eb5) gained a second witness, the instantiated
 #   generic body, whose payload is prefixed ``in `same` instantiated at `i64`:``;
 #   both rows carry a fragment (``instantiated at``, `` `r` is a reference ``).
+#   #88 review round 2: PD0083 gained a third witness, a comparison in the
+#   branch beside an unrelated refusal of a generic body, prefixed ``in `f`
+#   instantiated at `i64`:``; ``instantiated at`` is in two groups now, so the
+#   round-1 row narrows to `` `same` instantiated at `` and the new row carries
+#   `` `f` instantiated at `` (its operands are `p`/`q`, so `` `r` is a
+#   reference `` stays in one group).
 #
 # KNOWN QUIRKS, recorded so the record is complete. Three fragments end mid-word,
 # where the su0 map cut them: PD0002 const_shl_negative_left `…which C leaves u`,
@@ -200,6 +207,7 @@ PD0079	a macro's expansion parses as what its invocation position requires (macr
 PD0080	a type alias the compiler expands must name a type: its expansion may not reach an alias cycle (alias_cycles.rs: the `ExpansionGuard` in typeck and codegen, judged where an alias is opened; the alias and the cycle vary)	1	tests/reject/alias_cycle_through_generic_argument.pd	reject	yes	-	no	no	-	narrow-surface
 PD0081	a generic parameter list names each parameter once (parser, `refuse_a_parameter_named_twice`, one helper at the end of all five lists; the name varies)	1	tests/reject/generic_parameter_named_twice.pd	reject	yes	-	no	no	-	narrow-surface
 PD0082	`*e` dereferences a reference value only (typeck `dereferenced`, one predicate reached from a value `*e` and from an assignment through `*e`; the fixture is the ASSIGNMENT position over a parameter written `&mut T`, and the value position has no fixture of its own)	1	tests/reject/deref_needs_a_reference.pd	reject	yes	-	no	no	-	corpus-gap
-PD0083	an operand of an operator is not a reference value (typeck `refuse_reference_operand`, one predicate called for both operands of every binary operator and for every unary operator, in a non-generic body and in each instantiated generic body; the fixtures are `==` in each, the other operators have no fixture of their own)	2	tests/reject/reference_operands_compared.pd	reject	yes	-	yes	yes	`r` is a reference	-
-PD0083	an operand of an operator is not a reference value (typeck `refuse_reference_operand`, one predicate called for both operands of every binary operator and for every unary operator, in a non-generic body and in each instantiated generic body; the fixtures are `==` in each, the other operators have no fixture of their own)	2	tests/reject/reference_compare_in_generic_body.pd	reject	yes	-	yes	yes	instantiated at	-
+PD0083	an operand of an operator is not a reference value (typeck `refuse_reference_operand`, one predicate called for both operands of every binary operator and for every unary operator, in a non-generic body and in each instantiated generic body; the fixtures are `==` in each, the other operators have no fixture of their own)	3	tests/reject/reference_operands_compared.pd	reject	yes	-	yes	yes	`r` is a reference	-
+PD0083	an operand of an operator is not a reference value (typeck `refuse_reference_operand`, one predicate called for both operands of every binary operator and for every unary operator, in a non-generic body and in each instantiated generic body; the fixtures are `==` in each, the other operators have no fixture of their own)	3	tests/reject/reference_compare_in_generic_body.pd	reject	yes	-	yes	yes	`same` instantiated at	-
+PD0083	an operand of an operator is not a reference value (typeck `refuse_reference_operand`, one predicate called for both operands of every binary operator and for every unary operator, in a non-generic body and in each instantiated generic body; the fixtures are `==` in each, the other operators have no fixture of their own)	3	tests/reject/reference_compare_beside_an_unrelated_refusal.pd	reject	yes	-	yes	yes	`f` instantiated at	-
 PD0084	an argument for a parameter written `&T` is a place or a borrow written at the call (typeck `admits_argument`, one predicate over a reference value given for such a parameter)	1	tests/reject/held_reference_to_reference_parameter.pd	reject	yes	-	no	no	-	narrow-surface

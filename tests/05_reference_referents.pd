@@ -13,6 +13,18 @@
 //     struct's field are each the type the C declares, so the `&i64` reading
 //     each one runs, and its `&u32` twin is refused by name (the reject
 //     fixtures beside this one).
+//
+// And the two ways round 2 got them wrong:
+//
+//   * A VALUE `loop` IS READ AS CODE GENERATION DECLARES IT: from its first
+//     `break` value read in the scopes outside the loop. A `let n: u32` the
+//     body made anywhere — in a closed `if false`, or even in scope at the
+//     `break` — was taken to shadow the outer `n: i64`, and `&i64` was
+//     refused; main declares `long long` and ran each.
+//   * A REFUSAL IS CLASSIFIED BY ITS TYPES, NOT ITS WORDS. In a generic body
+//     the unrelated `Type mismatch: expected N, found Int` was kept as a
+//     refusal of the reference rules because an unused alias was named
+//     `Type`, and `wide(x)` was refused.
 struct G<T> {
     n: T,
 }
@@ -23,6 +35,13 @@ fn read(x: &i64) -> i64 {
 
 fn big<T>(t: T) -> i64 {
     4294967297
+}
+
+type Type = &i64;
+type N = u32;
+
+fn wide<T>(t: T) -> N {
+    7
 }
 
 fn main() {
@@ -53,6 +72,17 @@ fn main() {
     let g = G { n: 5 };
     let rg: &i64 = &g.n;
     print_int(*rg);
+
+    let n: i64 = 4294967301;
+    let l = loop { if false { let n: u32 = 1; } break n; };
+    let rl: &i64 = &l;
+    print_int(*rl);
+
+    let k = loop { let n: u32 = 9; break n; };
+    let rk: &i64 = &k;
+    print_int(*rk);
+
+    print_int(wide(x) as i64);
 
     print_int(x as i64);
 }

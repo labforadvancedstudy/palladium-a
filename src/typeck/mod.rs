@@ -606,6 +606,62 @@ enum BreakTarget {
     Value(Option<CheckerType>),
 }
 
+/// What a refusal met in an instantiated generic body is about
+/// (`TypeChecker::refusal_kind`). The walk of such a body enforces the
+/// reference rules (#88, #90) and nothing else, so this is the one question it
+/// asks of a refusal — and it is answered from the refusal's code and the
+/// checker types the refusing construct judged, never from the words of its
+/// message (review round 2 of #88).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RefusalKind {
+    /// A rule of references: one of their own codes, or a comparison in which
+    /// a type that is or holds a reference took part.
+    Reference,
+    /// Any other rule: main never checked these bodies for it.
+    Unrelated,
+}
+
+/// The checker state a refused statement can leave half-built, saved and put
+/// back by the walk of an instantiated body (`TypeChecker::walk_state`).
+#[derive(Debug, Clone, Copy)]
+struct WalkState {
+    scopes: usize,
+    breaks: usize,
+    loops: usize,
+    unsafes: usize,
+}
+
+/// The parts of a refused construct, as its walk found them: the types of
+/// those that checked, and whether every one did (`judge_refusal`).
+struct Parts {
+    types: Vec<CheckerType>,
+    clean: bool,
+}
+
+impl Parts {
+    fn new() -> Self {
+        Parts {
+            types: Vec::new(),
+            clean: true,
+        }
+    }
+
+    /// A part that is an expression: its type, kept, or `None` if it was
+    /// refused.
+    fn expr(&mut self, ty: Option<CheckerType>) -> Option<CheckerType> {
+        match &ty {
+            Some(t) => self.types.push(t.clone()),
+            None => self.clean = false,
+        }
+        ty
+    }
+
+    /// A part that is a list of statements, which has no type of its own.
+    fn stmts(&mut self, clean: bool) {
+        self.clean &= clean;
+    }
+}
+
 /// Type representation for type checker (wraps AST Type)
 #[derive(Debug, Clone, PartialEq)]
 pub enum CheckerType {
@@ -1507,8 +1563,8 @@ impl TypeChecker {
     /// emitted C.
     ///
     /// Every insert below is under the BARE name as well as the qualified one
-    /// (`src/typeck/mod.rs:1643-1644`, `src/typeck/mod.rs:1646-1648`,
-    /// `src/typeck/mod.rs:1743-1744`), and the map is last-writer-wins. So when two
+    /// (`src/typeck/mod.rs:1940-1945`, `src/typeck/mod.rs:1947-1949`,
+    /// `src/typeck/mod.rs:2049-2050`), and the map is last-writer-wins. So when two
     /// imported modules export the same name, iteration order decides which
     /// signature — and, for a generic, which BODY — survives. `get_instantiations`
     /// reads `generic_functions` by bare name and hands the winner to codegen's
@@ -3173,7 +3229,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:3167-3170`), and walking an imported
+        // return (`src/typeck/mod.rs:4206-4209`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -3261,17 +3317,23 @@ impl TypeChecker {
     /// walked by `check_function` — it is monomorphized — so `fn same<T>(a: T,
     /// b: T) -> bool { let r = &a; let s = &b; r == s }` compared two
     /// ADDRESSES and printed `ne` for `same(5, 5)` where its non-generic twin
-    /// is refused (PD0081). Each body is checked here once per instantiation,
+    /// is refused (PD0083). Each body is checked here once per instantiation,
     /// its parameters bound at the instantiated types as `check_function`
     /// binds them, and so is every instantiation a body's own calls reveal.
     ///
-    /// ONLY THE REFERENCE RULES ARE ENFORCED HERE (`is_reference_refusal`).
-    /// main never checked these bodies, and its other rules were not written
-    /// for them (`let y: T = x` is a type parameter where the argument is
-    /// concrete, as code generation leaves it); refusing a body for those
-    /// would refuse programs that run. A statement refused for another reason
-    /// is skipped, and the walk goes on with the checker's state as it was
-    /// before that statement.
+    /// ONLY THE REFERENCE RULES ARE ENFORCED HERE (`RefusalKind`). main never
+    /// checked these bodies, and its other rules were not written for them
+    /// (`let y: T = x` is a type parameter where the argument is concrete, as
+    /// code generation leaves it; `return 7` at an alias of `u32` is told
+    /// apart from `Int`); refusing a body for those would refuse programs that
+    /// run.
+    ///
+    /// A REFUSAL FOR ANOTHER REASON STOPS NOTHING (review round 2 of #88). The
+    /// statement it refused is walked part by part (`walk_refused_statement`),
+    /// each part in the scope the statement gives it, so a branch, an arm, a
+    /// loop body, a block, an operand or an argument beside it is still
+    /// checked — it was skipped WHOLE, and `if false { return 7; } else { ..
+    /// r == s .. }` at `-> N` compared two addresses unchecked.
     ///
     /// NOTHING IT RECORDS SURVIVES IT. Checking a body records instantiations
     /// and struct-literal records, and code generation reads both: they are
@@ -3367,73 +3429,583 @@ impl TypeChecker {
         }
         let outer_return = self.current_function_return.replace(return_type.as_ref().clone());
         let outer_params = std::mem::replace(&mut self.instantiated_type_params, generic.type_params.clone());
-        let mut verdict = Ok(());
-        for stmt in &generic.body {
-            let (scopes, breaks, loops, unsafes) = (
-                self.symbols.depth(),
-                self.break_targets.len(),
-                self.loop_depth,
-                self.unsafe_depth,
-            );
-            if let Err(e) = self.check_statement(stmt) {
-                if self.is_reference_refusal(&e) {
-                    let code = e.code();
-                    let refusal = CompileError::Generic(format!(
-                        "in `{}` instantiated at `{}`: {}",
-                        spelled(&inst.name),
-                        inst.type_args.iter().map(|a| spelled(a)).collect::<Vec<_>>().join(", "),
-                        e
-                    ));
-                    verdict = Err(match code {
-                        Some(code) => refusal.with_code(code),
-                        None => refusal,
-                    });
-                    break;
-                }
-                self.symbols.truncate(scopes);
-                self.break_targets.truncate(breaks);
-                self.loop_depth = loops;
-                self.unsafe_depth = unsafes;
-            }
-        }
+        let state = self.walk_state();
+        let walked = self.walk_instantiated_stmts(&generic.body);
+        self.restore_walk_state(state);
         self.current_function_return = outer_return;
         self.instantiated_type_params = outer_params;
         self.symbols.truncate(depth);
-        verdict
+        walked.map(drop).map_err(|e| {
+            let code = e.code();
+            let refusal = CompileError::Generic(format!(
+                "in `{}` instantiated at `{}`: {}",
+                spelled(&inst.name),
+                inst.type_args.iter().map(|a| spelled(a)).collect::<Vec<_>>().join(", "),
+                e
+            ));
+            match code {
+                Some(code) => refusal.with_code(code),
+                None => refusal,
+            }
+        })
     }
 
-    /// Is `e` a refusal of the reference rules (#88, #90): one of their codes,
-    /// or a refusal that names a reference type — spelled `&T`, or by the name
-    /// of a reference alias (a type argument `A` under `type A = &i64` is
-    /// named `A`)?
-    fn is_reference_refusal(&self, e: &CompileError) -> bool {
+    /// The checker state a refused statement can leave half-built — scopes
+    /// opened, loop frames pushed, `unsafe` entered — for the walk of an
+    /// instantiated body to put back.
+    fn walk_state(&self) -> WalkState {
+        WalkState {
+            scopes: self.symbols.depth(),
+            breaks: self.break_targets.len(),
+            loops: self.loop_depth,
+            unsafes: self.unsafe_depth,
+        }
+    }
+
+    fn restore_walk_state(&mut self, state: WalkState) {
+        self.symbols.truncate(state.scopes);
+        self.break_targets.truncate(state.breaks);
+        self.loop_depth = state.loops;
+        self.unsafe_depth = state.unsafes;
+    }
+
+    /// `stmts` of an instantiated generic body, in order. `Ok(true)` when
+    /// every one checked; `Err` is a refusal of the reference rules and
+    /// nothing else (`RefusalKind`).
+    fn walk_instantiated_stmts(&mut self, stmts: &[Stmt]) -> Result<bool> {
+        let mut clean = true;
+        for stmt in stmts {
+            clean &= self.walk_instantiated_stmt(stmt)?;
+        }
+        Ok(clean)
+    }
+
+    /// `stmts` in a scope of their own: a branch, an arm, a block.
+    fn walk_instantiated_scope(&mut self, stmts: &[Stmt]) -> Result<bool> {
+        self.symbols.enter_scope();
+        let walked = self.walk_instantiated_stmts(stmts);
+        self.symbols.exit_scope();
+        walked
+    }
+
+    /// A loop's body: a scope of its own, and the loop's frame.
+    fn walk_instantiated_loop(&mut self, body: &[Stmt], target: BreakTarget) -> Result<bool> {
+        self.symbols.enter_scope();
+        self.enter_loop(target);
+        let walked = self.walk_instantiated_stmts(body);
+        self.exit_loop();
+        self.symbols.exit_scope();
+        walked
+    }
+
+    /// One statement, checked whole. Refused for a reason the reference rules
+    /// do not own, it is walked part by part instead (`walk_refused_statement`)
+    /// and answers `Ok(false)`.
+    fn walk_instantiated_stmt(&mut self, stmt: &Stmt) -> Result<bool> {
+        let state = self.walk_state();
+        let Err(refusal) = self.check_statement(stmt) else {
+            return Ok(true);
+        };
+        self.restore_walk_state(state);
+        if Self::refusal_kind(&refusal, &[]) == RefusalKind::Reference {
+            return Err(refusal);
+        }
+        self.walk_refused_statement(stmt, refusal)?;
+        Ok(false)
+    }
+
+    /// One expression, likewise: its type, or `None` where it was refused for
+    /// another reason and walked part by part.
+    fn walk_instantiated_expr(&mut self, expr: &Expr) -> Result<Option<CheckerType>> {
+        let state = self.walk_state();
+        let refusal = match self.check_expression(expr) {
+            Ok(ty) => return Ok(Some(ty)),
+            Err(refusal) => refusal,
+        };
+        self.restore_walk_state(state);
+        if Self::refusal_kind(&refusal, &[]) == RefusalKind::Reference {
+            return Err(refusal);
+        }
+        self.walk_refused_expression(expr, refusal)?;
+        Ok(None)
+    }
+
+    /// What a refusal met in an instantiated body is about — decided by
+    /// STRUCTURE, never by its text (review round 2 of #88: an alias named
+    /// `Type` was found in "Type mismatch", and a valid generic was refused):
+    /// one of the reference rules' own codes, or a construct that judged a
+    /// type that is or holds a reference (`judged`, `holds_reference`).
+    fn refusal_kind(refusal: &CompileError, judged: &[CheckerType]) -> RefusalKind {
         use DiagnosticCode as D;
-        if matches!(
-            e.code(),
+        let by_code = matches!(
+            refusal.code(),
             Some(
                 D::DereferenceNeedsAReferenceValue
                     | D::OperatorOperandIsNotAReference
                     | D::ReferenceParameterTakesAPlaceOrABorrow
             )
-        ) {
-            return true;
+        );
+        if by_code || judged.iter().any(CheckerType::holds_reference) {
+            RefusalKind::Reference
+        } else {
+            RefusalKind::Unrelated
         }
-        // A reference type is printed `&T` / `&mut T`: an `&` that starts a
-        // word and is followed by a type's first character — not the `&` of
-        // `&&`, and not a quoted operator (`` `&` ``).
-        let text = e.to_string();
-        let bytes = text.as_bytes();
-        let spelled_as_reference = bytes.iter().enumerate().any(|(i, &b)| {
-            b == b'&'
-                && (i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'&'))
-                && bytes
-                    .get(i + 1)
-                    .is_some_and(|&n| n.is_ascii_alphabetic() || n == b'(' || n == b'[')
-        });
-        spelled_as_reference
-            || text
-                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-                .any(|word| self.type_aliases.contains_key(word) && self.alias_is_reference(word))
+    }
+
+    /// `refusal`, as the refusal of the construct whose parts are `parts`:
+    /// where every part checked, the refusal was that construct's own, and it
+    /// is judged by the types the construct compared — the parts' and the
+    /// ones it brings (`context`: an annotation, a return type, parameters).
+    /// Where a part was itself refused, that part's walk judged it.
+    fn judge_refusal(refusal: CompileError, parts: &Parts, context: &[CheckerType]) -> Result<()> {
+        if !parts.clean {
+            return Ok(());
+        }
+        let judged: Vec<CheckerType> = parts.types.iter().chain(context).cloned().collect();
+        match Self::refusal_kind(&refusal, &judged) {
+            RefusalKind::Reference => Err(refusal),
+            RefusalKind::Unrelated => Ok(()),
+        }
+    }
+
+    /// A statement refused for a reason the reference rules do not own: each
+    /// part walked in the scope the statement gives it, a `let` still bound
+    /// (so the statements after it read it), and the statement's own check
+    /// asked again where it compares types.
+    fn walk_refused_statement(&mut self, stmt: &Stmt, refusal: CompileError) -> Result<()> {
+        let mut parts = Parts::new();
+        match stmt {
+            Stmt::Expr(expr) => self.walk_refused_expression(expr, refusal),
+            Stmt::Return(None) | Stmt::Break { value: None, .. } | Stmt::Continue { .. } => Ok(()),
+            Stmt::Return(Some(expr)) => {
+                parts.expr(self.walk_instantiated_expr(expr)?);
+                let expected: Vec<CheckerType> = self.current_function_return.iter().cloned().collect();
+                Self::judge_refusal(refusal, &parts, &expected)
+            }
+            Stmt::Break { value: Some(expr), .. } => {
+                parts.expr(self.walk_instantiated_expr(expr)?);
+                let carried: Vec<CheckerType> = match self.break_targets.last() {
+                    Some(BreakTarget::Value(Some(ty))) => vec![ty.clone()],
+                    _ => Vec::new(),
+                };
+                Self::judge_refusal(refusal, &parts, &carried)
+            }
+            Stmt::Let {
+                name,
+                ty,
+                value,
+                mutable,
+                ..
+            } => {
+                let value_type = parts.expr(self.walk_instantiated_expr(value)?);
+                let annotated = ty.as_ref().map(|t| self.written_type(t));
+                // Its one comparison: the annotation admits the value — asked
+                // of an annotation naming a type parameter by `check_statement`
+                // alone (`void **` for `&T`). Any other refusal of a `let` (a
+                // shadowed global, a name defined twice) compares no types.
+                let names_a_parameter = ty.as_ref().is_some_and(|t| {
+                    !self.instantiated_type_params.is_empty()
+                        && Self::mentions_type_param(&Self::type_params_bound(t, &self.instantiated_type_params))
+                });
+                if let (Some(expected), Some(found)) = (&annotated, &value_type) {
+                    if names_a_parameter || !self.written_admits(expected, found, Some(value)) {
+                        Self::judge_refusal(refusal, &parts, std::slice::from_ref(expected))?;
+                    }
+                }
+                if let Some(bound) = annotated.or(value_type) {
+                    let source = match ty {
+                        Some(t) => {
+                            let mut t = t.clone();
+                            crate::ast::expand_aliases_in_type(&mut t, &self.type_aliases, &[]);
+                            Some(t)
+                        }
+                        None => self.source_of(value),
+                    };
+                    // A name this scope already holds keeps its binding.
+                    let _ = self.symbols.define_with_source(name.clone(), bound, *mutable, source);
+                }
+                Ok(())
+            }
+            Stmt::Assign { target, value, .. } => {
+                // The place, read as the expression that names it.
+                let span = Span::dummy();
+                let place_expr = match target {
+                    AssignTarget::Ident(name) => Expr::Ident(name.clone()),
+                    AssignTarget::Index { array, index } => Expr::Index {
+                        array: array.clone(),
+                        index: index.clone(),
+                        span,
+                    },
+                    AssignTarget::FieldAccess { object, field } => Expr::FieldAccess {
+                        object: object.clone(),
+                        field: field.clone(),
+                        span,
+                    },
+                    AssignTarget::Deref { expr } => Expr::Deref {
+                        expr: expr.clone(),
+                        span,
+                    },
+                };
+                let place = parts.expr(self.walk_instantiated_expr(&place_expr)?);
+                let found = parts.expr(self.walk_instantiated_expr(value)?);
+                // Its one comparison: the place admits the value (as the arm
+                // for the target's form asks it). Mutability and the receiver
+                // rules compare no types.
+                if let (Some(place), Some(found)) = (&place, &found) {
+                    let admitted = match target {
+                        AssignTarget::FieldAccess { .. } => self.written_admits(place, found, Some(value)),
+                        _ => self.admits_or_meets(place, found, value),
+                    };
+                    if !admitted {
+                        Self::judge_refusal(refusal, &parts, &[])?;
+                    }
+                }
+                Ok(())
+            }
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.walk_condition(condition, refusal)?;
+                self.walk_instantiated_scope(then_branch)?;
+                if let Some(else_stmts) = else_branch {
+                    self.walk_instantiated_scope(else_stmts)?;
+                }
+                Ok(())
+            }
+            Stmt::While {
+                condition, body, ..
+            } => {
+                self.walk_condition(condition, refusal)?;
+                self.walk_instantiated_loop(body, BreakTarget::Statement)?;
+                Ok(())
+            }
+            Stmt::Loop { body, .. } => {
+                self.walk_instantiated_loop(body, BreakTarget::Statement)?;
+                Ok(())
+            }
+            Stmt::For {
+                var, iter, body, ..
+            } => {
+                let iter_type = parts.expr(self.walk_instantiated_expr(iter)?);
+                let elem = match &iter_type {
+                    Some(CheckerType::Array(elem, _)) => Some(elem.as_ref().clone()),
+                    Some(CheckerType::Range) => Some(CheckerType::INT),
+                    Some(_) => {
+                        Self::judge_refusal(refusal, &parts, &[])?;
+                        None
+                    }
+                    None => None,
+                };
+                let var_source = match (&iter_type, self.source_of(iter)) {
+                    (_, Some(crate::ast::Type::Array(elem, _))) => Some(*elem),
+                    (Some(CheckerType::Range), _) => Some(crate::ast::Type::I64),
+                    _ => None,
+                };
+                self.symbols.enter_scope();
+                self.enter_loop(BreakTarget::Statement);
+                if let Some(elem) = elem {
+                    let _ = self.symbols.define_with_source(var.clone(), elem, false, var_source);
+                }
+                let walked = self.walk_instantiated_stmts(body);
+                self.exit_loop();
+                self.symbols.exit_scope();
+                walked.map(drop)
+            }
+            Stmt::Match { expr, arms, .. } => {
+                let scrutinee = self.walk_instantiated_expr(expr)?;
+                for arm in arms {
+                    self.symbols.enter_scope();
+                    let walked = self.walk_arm(expr, scrutinee.as_ref(), &arm.pattern, arm.guard.as_ref(), &arm.body);
+                    self.symbols.exit_scope();
+                    walked?;
+                }
+                Ok(())
+            }
+            Stmt::Unsafe { body, .. } => {
+                self.unsafe_depth += 1;
+                let walked = self.walk_instantiated_scope(body);
+                self.unsafe_depth -= 1;
+                walked.map(drop)
+            }
+        }
+    }
+
+    /// An `if`'s or a `while`'s condition, whose one comparison is with `bool`.
+    fn walk_condition(&mut self, condition: &Expr, refusal: CompileError) -> Result<()> {
+        let mut parts = Parts::new();
+        if let Some(cond) = parts.expr(self.walk_instantiated_expr(condition)?) {
+            if cond != CheckerType::BOOL {
+                Self::judge_refusal(refusal, &parts, &[])?;
+            }
+        }
+        Ok(())
+    }
+
+    /// One `match` arm, in the scope the caller opened for it: the pattern
+    /// asked against the scrutinee (whose type it is judged by — `match r`
+    /// over a reference is refused there), its bindings made, the guard and
+    /// the body walked. `Ok(true)` when all of it checked.
+    fn walk_arm(
+        &mut self,
+        scrutinee_expr: &Expr,
+        scrutinee: Option<&CheckerType>,
+        pattern: &Pattern,
+        guard: Option<&Expr>,
+        body: &[Stmt],
+    ) -> Result<bool> {
+        let mut clean = true;
+        if let Some(scrutinee) = scrutinee {
+            match self.check_pattern(pattern, scrutinee) {
+                Ok(()) => {
+                    if self.bind_pattern_variables(pattern, scrutinee).is_ok() {
+                        let source = self.source_of(scrutinee_expr);
+                        self.record_pattern_sources(pattern, source);
+                    } else {
+                        clean = false;
+                    }
+                }
+                Err(refused) => {
+                    let parts = Parts::new();
+                    Self::judge_refusal(refused, &parts, std::slice::from_ref(scrutinee))?;
+                    clean = false;
+                }
+            }
+        } else {
+            clean = false;
+        }
+        if let Some(guard) = guard {
+            match self.walk_instantiated_expr(guard)? {
+                Some(ty) if ty != CheckerType::BOOL => {
+                    if let Err(refused) = self.check_guard(Some(guard)) {
+                        Self::judge_refusal(refused, &Parts::new(), &[ty])?;
+                    }
+                    clean = false;
+                }
+                Some(_) => {}
+                None => clean = false,
+            }
+        }
+        Ok(self.walk_instantiated_stmts(body)? && clean)
+    }
+
+    /// An expression refused for a reason the reference rules do not own:
+    /// each operand, argument, element, branch, arm and block walked, and the
+    /// refusal judged as the expression's own where they all checked.
+    fn walk_refused_expression(&mut self, expr: &Expr, refusal: CompileError) -> Result<()> {
+        let mut parts = Parts::new();
+        let mut context: Vec<CheckerType> = Vec::new();
+        match expr {
+            // Nothing below these to walk: a literal, a name (refused as
+            // undefined), and the constructs this checker refuses without
+            // reading their operand (`?`, `.await`, an unexpanded macro).
+            Expr::String(_)
+            | Expr::Integer(_)
+            | Expr::Float(_)
+            | Expr::Char(_)
+            | Expr::Bool(_)
+            | Expr::Ident(_)
+            | Expr::MacroInvocation { .. }
+            | Expr::Question { .. }
+            | Expr::Await { .. } => return Ok(()),
+            Expr::ArrayLiteral { elements, .. } | Expr::Tuple { elements, .. } => {
+                for element in elements {
+                    parts.expr(self.walk_instantiated_expr(element)?);
+                }
+            }
+            Expr::ArrayRepeat { value, count, .. } => {
+                parts.expr(self.walk_instantiated_expr(value)?);
+                parts.expr(self.walk_instantiated_expr(count)?);
+            }
+            Expr::Index { array, index, .. } => {
+                parts.expr(self.walk_instantiated_expr(array)?);
+                parts.expr(self.walk_instantiated_expr(index)?);
+            }
+            Expr::Range { start, end, .. } => {
+                parts.expr(self.walk_instantiated_expr(start)?);
+                parts.expr(self.walk_instantiated_expr(end)?);
+            }
+            Expr::Binary { left, right, .. } => {
+                parts.expr(self.walk_instantiated_expr(left)?);
+                parts.expr(self.walk_instantiated_expr(right)?);
+            }
+            Expr::Unary { operand: inner, .. }
+            | Expr::FieldAccess { object: inner, .. }
+            | Expr::Reference { expr: inner, .. }
+            | Expr::Deref { expr: inner, .. }
+            | Expr::TupleIndex { expr: inner, .. } => {
+                parts.expr(self.walk_instantiated_expr(inner)?);
+            }
+            Expr::Cast { expr: inner, ty, .. } => {
+                parts.expr(self.walk_instantiated_expr(inner)?);
+                context.push(self.written_type(ty));
+            }
+            Expr::StructLiteral { fields, .. } => {
+                for (_, value) in fields {
+                    parts.expr(self.walk_instantiated_expr(value)?);
+                }
+            }
+            Expr::EnumConstructor { data, .. } => match data {
+                Some(EnumConstructorData::Tuple(values)) => {
+                    for value in values {
+                        parts.expr(self.walk_instantiated_expr(value)?);
+                    }
+                }
+                Some(EnumConstructorData::Struct(fields)) => {
+                    for (_, value) in fields {
+                        parts.expr(self.walk_instantiated_expr(value)?);
+                    }
+                }
+                None => {}
+            },
+            Expr::Call { func, args, .. } => {
+                match func.as_ref() {
+                    // A method's receiver is an operand; its name is not.
+                    Expr::FieldAccess { object, .. } => {
+                        parts.expr(self.walk_instantiated_expr(object)?);
+                    }
+                    Expr::Ident(_) => {}
+                    other => {
+                        parts.expr(self.walk_instantiated_expr(other)?);
+                    }
+                }
+                let mut arg_types = Vec::with_capacity(args.len());
+                for arg in args {
+                    arg_types.push(parts.expr(self.walk_instantiated_expr(arg)?));
+                }
+                // A function of this program: its parameters are what the
+                // arguments meet. Each argument that checked meets its own,
+                // whatever its siblings did — `f(<refused>, r)` does not let
+                // `r` past a parameter it may not meet.
+                if let Expr::Ident(name) = func.as_ref() {
+                    if let Some(CheckerType::Function(params, _)) = self.functions.get(name).cloned() {
+                        if params.len() == args.len() && !self.generic_functions.contains_key(name) {
+                            // Asked as the call asks it, a method's alias-named
+                            // argument included (`Expr::Call`).
+                            let method = self.is_method(name);
+                            for ((arg, found), expected) in args.iter().zip(&arg_types).zip(&params) {
+                                let Some(found) = found else { continue };
+                                let judged = [expected.clone(), found.clone()];
+                                let by_name = method && !Self::takes_a_place(expected) && self.is_or_names(found, expected);
+                                match self.admits_argument(expected, found, arg) {
+                                    Ok(true) => {}
+                                    Ok(false) if by_name => {}
+                                    Ok(false) => {
+                                        let refused = CompileError::TypeMismatch {
+                                            expected: Self::told(expected, found),
+                                            found: Self::told(found, expected),
+                                            span: None,
+                                        }
+                                        .with_code(DiagnosticCode::ArgumentHasTheParameterType);
+                                        Self::judge_refusal(refused, &Parts::new(), &judged)?;
+                                    }
+                                    Err(refused) => Self::judge_refusal(refused, &Parts::new(), &judged)?,
+                                }
+                            }
+                            // Every comparison this call makes was asked
+                            // again, each by its own types: the refusal was
+                            // one of them, or compared none (a sibling's).
+                            return Ok(());
+                        }
+                        context.extend(params);
+                    }
+                }
+            }
+            Expr::If {
+                condition,
+                then_branch,
+                then_value,
+                else_branch,
+                else_value,
+                ..
+            } => {
+                // The condition's one comparison is with `bool`, and is
+                // judged by its own type; the branches' values meet each
+                // other (the merge) and are judged by theirs.
+                // A refused condition leaves no merge to judge, and its
+                // branches are walked all the same.
+                let mut cond_parts = Parts::new();
+                let mut cond_refused = false;
+                if let Some(cond) = cond_parts.expr(self.walk_instantiated_expr(condition)?) {
+                    if cond != CheckerType::BOOL {
+                        if Self::refusal_kind(&refusal, &cond_parts.types) == RefusalKind::Reference {
+                            return Err(refusal);
+                        }
+                        cond_refused = true;
+                    }
+                }
+                parts.stmts(cond_parts.clean && !cond_refused);
+                self.symbols.enter_scope();
+                let then = self.walk_instantiated_stmts(then_branch).and_then(|clean| {
+                    parts.stmts(clean);
+                    match then_value {
+                        Some(value) => self.walk_instantiated_expr(value).map(|t| {
+                            parts.expr(t);
+                        }),
+                        None => Ok(()),
+                    }
+                });
+                self.symbols.exit_scope();
+                then?;
+                self.symbols.enter_scope();
+                let otherwise = self
+                    .walk_instantiated_stmts(else_branch.as_deref().unwrap_or(&[]))
+                    .and_then(|clean| {
+                        parts.stmts(clean);
+                        match else_value {
+                            Some(value) => self.walk_instantiated_expr(value).map(|t| {
+                                parts.expr(t);
+                            }),
+                            None => Ok(()),
+                        }
+                    });
+                self.symbols.exit_scope();
+                otherwise?;
+            }
+            Expr::Block { stmts, value, .. } => {
+                self.symbols.enter_scope();
+                let walked = self.walk_instantiated_stmts(stmts).and_then(|clean| {
+                    parts.stmts(clean);
+                    match value {
+                        Some(value) => self.walk_instantiated_expr(value).map(|t| {
+                            parts.expr(t);
+                        }),
+                        None => Ok(()),
+                    }
+                });
+                self.symbols.exit_scope();
+                walked?;
+            }
+            Expr::Loop { body, .. } => {
+                let clean = self.walk_instantiated_loop(body, BreakTarget::Value(None))?;
+                parts.stmts(clean);
+            }
+            Expr::Match { expr: scrutinee_expr, arms, .. } => {
+                // The scrutinee meets each pattern, judged in `walk_arm`;
+                // the arms' values meet each other (the merge).
+                let scrutinee = self.walk_instantiated_expr(scrutinee_expr)?;
+                parts.stmts(scrutinee.is_some());
+                for arm in arms {
+                    self.symbols.enter_scope();
+                    let walked = self
+                        .walk_arm(scrutinee_expr, scrutinee.as_ref(), &arm.pattern, arm.guard.as_ref(), &arm.body)
+                        .and_then(|clean| {
+                            parts.stmts(clean);
+                            match &arm.value {
+                                Some(value) => self.walk_instantiated_expr(value).map(|t| {
+                                    parts.expr(t);
+                                }),
+                                None => Ok(()),
+                            }
+                        });
+                    self.symbols.exit_scope();
+                    walked?;
+                }
+            }
+        }
+        Self::judge_refusal(refusal, &parts, &context)
     }
 
     /// Which of `deferred` are actually part of the emitted program.
@@ -3840,6 +4412,32 @@ impl TypeChecker {
                 if let Some(annotated_type) = ty {
                     let written = Self::type_params_bound(annotated_type, &self.instantiated_type_params);
                     if !self.instantiated_type_params.is_empty() && Self::mentions_type_param(&written) {
+                        // `let r: &T = v;` is `void **r = v;` by the same rule,
+                        // and a reference meets it only if C does (review round
+                        // 2 of #88): a borrow of a `let x: T` binding (`void
+                        // **`), or a `void *` value, which C converts. A value
+                        // whose C type is known to be another — `&a` over a
+                        // parameter at `i64` (`long long *`) — was the
+                        // ill-typed-C trap on main at every instantiation.
+                        if let crate::ast::Type::Reference { inner, .. } = &written {
+                            if matches!(inner.as_ref(), crate::ast::Type::TypeParam(_)) {
+                                let known = match &value_type {
+                                    CheckerType::Reference(_, referent, _) => referent.source.clone(),
+                                    _ => self.source_of(value),
+                                };
+                                if known.is_some_and(|c| !matches!(c, crate::ast::Type::TypeParam(_))) {
+                                    let expected_type = self.written_type(annotated_type);
+                                    return Err(self
+                                        .error_helper
+                                        .type_mismatch(
+                                            &Self::told(&expected_type, &value_type),
+                                            &Self::told(&value_type, &expected_type),
+                                            None,
+                                        )
+                                        .with_code(DiagnosticCode::LetAnnotationAndInitialiserAgree));
+                                }
+                            }
+                        }
                         return self
                             .symbols
                             .define_with_source(name.clone(), value_type, *mutable, Some(written));
@@ -4102,7 +4700,7 @@ impl TypeChecker {
                         Ok(())
                     }
                     // `*e = v` writes the referent of a reference value (#88):
-                    // `e` must be one (PD0080), and `v` must be what it refers
+                    // `e` must be one (PD0082), and `v` must be what it refers
                     // to. Neither was checked ("we don't have proper reference
                     // types / TODO").
                     AssignTarget::Deref { expr } => {
@@ -8394,7 +8992,7 @@ impl TypeChecker {
     /// `f(m)` for `x: &u32` with `m` an `i64` is refused here and not in gcc
     /// (#90). A reference held anywhere else (`let r = &m; f(r)`) would have
     /// its address taken too, a pointer to the pointer: refused by name
-    /// (PD0082, #88).
+    /// (PD0084, #88).
     fn admits_argument(&self, expected: &CheckerType, found: &CheckerType, arg: &Expr) -> Result<bool> {
         let CheckerType::Reference(referent_type, referent, _) = expected else {
             return Ok(self.written_admits(expected, found, Some(arg)));
@@ -8416,7 +9014,7 @@ impl TypeChecker {
         Ok(place == *referent && self.written_admits(referent_type, found, Some(arg)))
     }
 
-    /// Refuse a reference value as an operand of `op` (PD0081, #88). A reference
+    /// Refuse a reference value as an operand of `op` (PD0083, #88). A reference
     /// is a C pointer, and every operator here would have applied to the
     /// POINTER: `r == s` compared addresses (`ne` for `5 == 5`), `s - r` was a
     /// pointer difference, `r += 1` stepped it, `!r` read its truth. No
@@ -8435,7 +9033,7 @@ impl TypeChecker {
     }
 
     /// The type `*e` reads, for `e` of type `ty`: the referent of a reference
-    /// value. Anything else is refused by name (PD0080) — it was typed as
+    /// value. Anything else is refused by name (PD0082) — it was typed as
     /// itself ("assume dereference returns the same type / TODO") and reached
     /// gcc as an indirection on a value. A parameter WRITTEN `&T` is the case
     /// that reads like a reference and is not one: it is read as its referent
@@ -8639,17 +9237,20 @@ impl TypeChecker {
                     self.source_in(arm.value.as_ref()?, &inner)
                 })?
             }
-            // Code generation reads a `loop`'s first `break` value with the
-            // scopes OUTSIDE the loop, so a name the body binds is not known
-            // here (it would be read as some other binding of that name).
-            Expr::Loop { body, .. } => {
-                let value = Self::first_break_value(body)?;
-                let mut inner = env.clone();
-                let mut bound = HashSet::new();
-                Self::names_bound_in(body, &mut bound);
-                inner.extend(bound.into_iter().map(|n| (n, None)));
-                self.source_in(value, &inner)?
-            }
+            // A value `loop` is DECLARED — by the `let` that binds it — with
+            // the C type of its first `break` value read where the loop
+            // stands: `try_infer_expr_type` at the `let`, whose `Expr::Loop`
+            // arm reads that value against the scopes OUTSIDE the loop
+            // (src/codegen/mod.rs), before the body is generated. So `env` is
+            // NOT extended with the body's bindings. They were all taken to
+            // shadow, at any depth, and a `let n: u32` in a closed `if false {
+            // .. }` made the outer `n: i64` the `break` reads unknown (review
+            // round 2 of #88: refused, where main ran it). Measured on main, a
+            // binding of the body that IS in scope at the `break` does not
+            // pick the declaration either: `let n: u32 = 7; break n;` under an
+            // outer `n: i64` declares `long long`, so `&i64` runs and `&u32`
+            // is the ill-typed-C trap.
+            Expr::Loop { body, .. } => self.source_in(Self::first_break_value(body)?, env)?,
             _ => return None,
         };
         crate::ast::expand_aliases_in_type(&mut ty, &self.type_aliases, &[]);
@@ -8696,63 +9297,6 @@ impl TypeChecker {
         })
     }
 
-    /// Every name a statement in `stmts` binds, at any depth: `let`s, `for`
-    /// variables and pattern bindings.
-    fn names_bound_in(stmts: &[Stmt], out: &mut HashSet<String>) {
-        for stmt in stmts {
-            match stmt {
-                Stmt::Let { name, .. } => {
-                    out.insert(name.clone());
-                }
-                Stmt::For { var, body, .. } => {
-                    out.insert(var.clone());
-                    Self::names_bound_in(body, out);
-                }
-                Stmt::If {
-                    then_branch,
-                    else_branch,
-                    ..
-                } => {
-                    Self::names_bound_in(then_branch, out);
-                    Self::names_bound_in(else_branch.as_deref().unwrap_or(&[]), out);
-                }
-                Stmt::While { body, .. } | Stmt::Loop { body, .. } | Stmt::Unsafe { body, .. } => {
-                    Self::names_bound_in(body, out)
-                }
-                Stmt::Match { arms, .. } => {
-                    for arm in arms {
-                        Self::pattern_names(&arm.pattern, out);
-                        Self::names_bound_in(&arm.body, out);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// Every name `pattern` binds.
-    fn pattern_names(pattern: &Pattern, out: &mut HashSet<String>) {
-        match pattern {
-            Pattern::Ident(name) => {
-                out.insert(name.clone());
-            }
-            Pattern::Binding { name, inner } => {
-                out.insert(name.clone());
-                Self::pattern_names(inner, out);
-            }
-            Pattern::Tuple(elements) => elements.iter().for_each(|e| Self::pattern_names(e, out)),
-            Pattern::EnumPattern {
-                data: Some(PatternData::Tuple(patterns)),
-                ..
-            } => patterns.iter().for_each(|p| Self::pattern_names(p, out)),
-            Pattern::EnumPattern {
-                data: Some(PatternData::Struct(fields)),
-                ..
-            } => fields.iter().for_each(|(_, p)| Self::pattern_names(p, out)),
-            _ => {}
-        }
-    }
-
     /// A type argument as a record spells it (`struct_type_argument`), as the
     /// source type it names — the spelling `substitute_type` reads back — or
     /// `None` for the placeholder no type is spelled as.
@@ -8792,6 +9336,57 @@ impl TypeChecker {
         let bound = Self::type_params_bound(declared, &generic.type_params);
         let substituted = self.substitute_type_params_map(&bound, &map);
         (!Self::mentions_type_param(&substituted)).then_some(substituted)
+    }
+
+    /// Substitute type parameters in a type using a substitution map (the
+    /// declared field of a generic struct, `generic_field_source`).
+    #[allow(clippy::only_used_in_recursion)]
+    fn substitute_type_params_map(
+        &self,
+        ty: &crate::ast::Type,
+        substitutions: &std::collections::HashMap<String, crate::ast::Type>,
+    ) -> crate::ast::Type {
+        match ty {
+            crate::ast::Type::TypeParam(name) | crate::ast::Type::Custom(name) => {
+                // Check if this is a type parameter that should be substituted
+                if let Some(replacement) = substitutions.get(name) {
+                    replacement.clone()
+                } else {
+                    ty.clone()
+                }
+            }
+            crate::ast::Type::Generic { name, args } => {
+                // Recursively substitute in generic type arguments
+                let new_args: Vec<GenericArg> = args
+                    .iter()
+                    .map(|arg| match arg {
+                        GenericArg::Type(t) => {
+                            GenericArg::Type(self.substitute_type_params_map(t, substitutions))
+                        }
+                        GenericArg::Const(c) => GenericArg::Const(c.clone()), // TODO: substitute const params
+                    })
+                    .collect();
+                crate::ast::Type::Generic {
+                    name: name.clone(),
+                    args: new_args,
+                }
+            }
+            crate::ast::Type::Array(elem_type, size) => crate::ast::Type::Array(
+                Box::new(self.substitute_type_params_map(elem_type, substitutions)),
+                size.clone(),
+            ),
+            crate::ast::Type::Reference {
+                lifetime,
+                inner,
+                mutable,
+            } => crate::ast::Type::Reference {
+                lifetime: lifetime.clone(),
+                inner: Box::new(self.substitute_type_params_map(inner, substitutions)),
+                mutable: *mutable,
+            },
+            // Other types don't contain type parameters
+            _ => ty.clone(),
+        }
     }
 
     /// Does `ty` still name a type parameter anywhere?
@@ -9129,6 +9724,20 @@ impl CheckerType {
     pub const FLOAT: CheckerType = CheckerType::Float(DeclaredAs(None, false));
     pub const BOOL: CheckerType = CheckerType::Bool(DeclaredAs(None, false));
     pub const CHAR: CheckerType = CheckerType::Char(DeclaredAs(None, false));
+
+    /// Is this a reference, or does it hold one — as an element, a tuple's
+    /// field or a generic argument? What `RefusalKind` reads a judged type by.
+    fn holds_reference(&self) -> bool {
+        match self {
+            CheckerType::Reference(..) => true,
+            CheckerType::Array(elem, _) => elem.holds_reference(),
+            CheckerType::Tuple(elements, _) => elements.iter().any(CheckerType::holds_reference),
+            CheckerType::Generic { args, .. } => args
+                .iter()
+                .any(|a| matches!(a, GenericArgValue::Type(t) if t.holds_reference())),
+            _ => false,
+        }
+    }
 
     /// A tuple no alias declaration names: a tuple literal, or a tuple type
     /// written out element by element.

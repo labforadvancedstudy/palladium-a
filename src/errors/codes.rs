@@ -1056,7 +1056,7 @@ mod tests {
     fn every_code_is_in_all() {
         assert_eq!(
             DiagnosticCode::ALL.len(),
-            74,
+            77,
             "a code was added to the enum without being added to ALL (or this \
              literal was not updated with the new count)"
         );

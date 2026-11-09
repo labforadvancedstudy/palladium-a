@@ -1,0 +1,33 @@
+// #88, review round 2: a refusal the reference rules do not own stops nothing
+// in a generic body — the branch beside it is still checked, and `p == q`
+// there is refused by name.
+//
+// The walk of an instantiated body enforces the reference rules only, so
+// `return 7` at `-> N` (an alias of `u32`, told apart from `Int` there) is
+// refused for another reason and not enforced. It was SKIPPED WHOLE, with the
+// `if` it stands in: the `else` branch was never checked, and `p == q` over
+// two borrowed fives compared their ADDRESSES. Measured on main (903ba02) and
+// on round 2 alike: it compiled, ran and printed `ne`, then `7`. Each part of
+// a refused statement is now walked in its own scope.
+type N = u32;
+
+fn f<T>(x: T) -> N {
+    if false {
+        return 7;
+    } else {
+        let a = 5;
+        let b = 5;
+        let p = &a;
+        let q = &b;
+        if p == q {
+            print("eq");
+        } else {
+            print("ne");
+        }
+    }
+    7
+}
+
+fn main() {
+    print_int(f(1));
+}

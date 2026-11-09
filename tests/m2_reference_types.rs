@@ -212,7 +212,7 @@ fn a_reference_meets_a_value_place_and_is_refused_by_name() {
         (
             "a bound reference handed to a parameter written `&i64`: code generation borrows it again",
             "fn f(x: &i64) -> i64 { x + 1 }\nfn main() { let m: i64 = 5; let r = &m; print_int(f(r)); }\n",
-            "REFUSED[PD0082]",
+            "REFUSED[PD0084]",
         ),
         (
             "a method called through a bound reference",
@@ -343,52 +343,52 @@ fn a_reference_used_as_its_referent_value_is_refused() {
         (
             "`r == s` over two bound references (printed `ne` for 5 == 5)",
             "fn main() { let a: i64 = 5; let b: i64 = 5; let r = &a; let s = &b; if r == s { print(\"eq\"); } else { print(\"ne\"); } }\n",
-            "REFUSED[PD0081]",
+            "REFUSED[PD0083]",
         ),
         (
             "`&a == &b` (printed `ne`)",
             "fn main() { let a: i64 = 5; let b: i64 = 5; if &a == &b { print(\"eq\"); } else { print(\"ne\"); } }\n",
-            "REFUSED[PD0081]",
+            "REFUSED[PD0083]",
         ),
         (
             "`r == 5` (printed `ne`)",
             "fn main() { let a: i64 = 5; let r = &a; if r == 5 { print(\"eq\"); } else { print(\"ne\"); } }\n",
-            "REFUSED[PD0081]",
+            "REFUSED[PD0083]",
         ),
         (
             "`s.get() == t.get()` over `-> &i64` (printed `ne` for 9 == 9)",
             "struct S { n: i64 }\nimpl S { fn get(&self) -> &i64 { return &self.n; } }\nfn main() { let s = S { n: 9 }; let t = S { n: 9 }; if s.get() == t.get() { print(\"eq\"); } else { print(\"ne\"); } }\n",
-            "REFUSED[PD0081]",
+            "REFUSED[PD0083]",
         ),
         (
             "`s - r` (printed `-1` for 7 - 5)",
             "fn main() { let a: i64 = 5; let b: i64 = 7; let r = &a; let s = &b; print_int(s - r); }\n",
-            "REFUSED[PD0081]",
+            "REFUSED[PD0083]",
         ),
         (
             "`r < s` (compared addresses)",
             "fn main() { let a: i64 = 9; let b: i64 = 5; let r = &a; let s = &b; if r < s { print(\"lt\"); } else { print(\"ge\"); } }\n",
-            "REFUSED[PD0081]",
+            "REFUSED[PD0083]",
         ),
         (
             "`r += 1` (stepped the pointer, printed garbage)",
             "fn main() { let a: i64 = 5; let mut r = &a; r += 1; print_int(*r); }\n",
-            "REFUSED[PD0081]",
+            "REFUSED[PD0083]",
         ),
         (
             "`r + 1`",
             "fn main() { let m: i64 = 5; let r = &m; let k = r + 1; print_int(k); }\n",
-            "REFUSED[PD0081]",
+            "REFUSED[PD0083]",
         ),
         (
             "`-r`",
             "fn main() { let a: i64 = 5; let r = &a; print_int(-r); }\n",
-            "REFUSED[PD0081]",
+            "REFUSED[PD0083]",
         ),
         (
             "`!r` over a `&bool` (read the pointer's truth)",
             "fn main() { let b = true; let r = &b; if !r { print(\"t\"); } else { print(\"f\"); } }\n",
-            "REFUSED[PD0081]",
+            "REFUSED[PD0083]",
         ),
         (
             "`print_int(&m)`",
@@ -448,22 +448,22 @@ fn a_dereference_needs_a_reference_value() {
         (
             "`*m` over an `i64`",
             "fn main() { let m: i64 = 5; print_int(*m); }\n",
-            "REFUSED[PD0080]",
+            "REFUSED[PD0082]",
         ),
         (
             "`*x` over a parameter written `&i64`",
             "fn f(x: &i64) -> i64 { *x }\nfn main() { let m: i64 = 5; print_int(f(&m)); }\n",
-            "REFUSED[PD0080]",
+            "REFUSED[PD0082]",
         ),
         (
             "`*x = *x + 1` over a parameter written `&mut i64`",
             "fn bump(x: &mut i64) { *x = *x + 1; }\nfn main() { let mut m: i64 = 5; bump(&mut m); print_int(m); }\n",
-            "REFUSED[PD0080]",
+            "REFUSED[PD0082]",
         ),
         (
             "`**r` over one reference",
             "fn main() { let m: i64 = 5; let r = &m; print_int(**r); }\n",
-            "REFUSED[PD0080]",
+            "REFUSED[PD0082]",
         ),
     ];
     check_table(&rows, "ref_deref");
@@ -571,9 +571,9 @@ fn a_referent_is_derived_exactly_or_refused() {
 #[test]
 fn the_reference_rules_hold_in_an_instantiated_generic_body() {
     let rows: Vec<(&str, &str, &str)> = vec![
-        ("`r == s` over two borrows, in a generic", "fn same<T>(a: T, b: T) -> bool { let r = &a; let s = &b; r == s }\nfn main() { if same(5, 5) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0081]: in `same` instantiated at `i64`"),
+        ("`r == s` over two borrows, in a generic", "fn same<T>(a: T, b: T) -> bool { let r = &a; let s = &b; r == s }\nfn main() { if same(5, 5) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]: in `same` instantiated at `i64`"),
         ("a width mismatch in a generic body", "fn f<T>(n: T) -> i64 { let m: i64 = 4294967297; let r: &u32 = &m; *r }\nfn main() { print_int(f(5)); }\n", "REFUSED[PD0022]: in `f` instantiated at `i64`"),
-        ("a generic reached only through another generic", "fn same<T>(a: T, b: T) -> bool { let r = &a; let s = &b; r == s }\nfn outer<U>(u: U) -> bool { same(u, u) }\nfn main() { if outer(5) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0081]"),
+        ("a generic reached only through another generic", "fn same<T>(a: T, b: T) -> bool { let r = &a; let s = &b; r == s }\nfn outer<U>(u: U) -> bool { same(u, u) }\nfn main() { if outer(5) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]"),
         ("a generic never instantiated is not checked", "fn same<T>(a: T, b: T) -> bool { let r = &a; let s = &b; r == s }\nfn main() { print_int(1); }\n", "RUN: 1\n"),
         ("a generic body with `*u` over a reference alias", "type A = &i64;\nfn g<U>(u: U) -> i64 { return *u + *u; }\nfn main() { let m = 4; let r0: A = &m; print_int(g(r0)); }\n", "RUN: 8\n"),
         ("a generic body that names its type parameter", "fn id<T>(x: T) -> T { let y = x; y }\nfn main() { print_int(id(4)); }\n", "RUN: 4\n"),
@@ -582,9 +582,85 @@ fn the_reference_rules_hold_in_an_instantiated_generic_body() {
         // `let x: T` is declared `void *x` (a body is not substituted), which C
         // accepts from a `String`; the borrows of it were compared unchecked
         // and printed `ne` for `same("k", "k")` on main, at any depth.
-        ("`r == s` over borrows of `let x: T` bindings", "fn same<T>(a: T, b: T) -> bool { let x: T = a; let y: T = b; let r = &x; let s = &y; r == s }\nfn main() { if same(\"k\", \"k\") { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0081]: in `same` instantiated at `String`"),
-        ("the same inside an `if`", "fn same<T>(a: T, b: T, c: bool) -> bool { if c { let x: T = a; let y: T = b; let r = &x; let s = &y; return r == s; } false }\nfn main() { if same(\"k\", \"k\", true) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0081]"),
+        ("`r == s` over borrows of `let x: T` bindings", "fn same<T>(a: T, b: T) -> bool { let x: T = a; let y: T = b; let r = &x; let s = &y; r == s }\nfn main() { if same(\"k\", \"k\") { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]: in `same` instantiated at `String`"),
+        ("the same inside an `if`", "fn same<T>(a: T, b: T, c: bool) -> bool { if c { let x: T = a; let y: T = b; let r = &x; let s = &y; return r == s; } false }\nfn main() { if same(\"k\", \"k\", true) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]"),
         ("a `let x: T` binding that is only passed on", "fn pass<T>(a: T) -> T { let x: T = a; let y = x; y }\nfn main() { print(pass(\"ok\")); }\n", "RUN: ok\n"),
     ];
     check_table(&rows, "ref_generic_body");
+}
+
+/// REVIEW ROUND 2: A VALUE `loop`'S BINDING IS READ AS CODE GENERATION
+/// DECLARES IT. `let v = loop { .. }` is declared with the C type of the first
+/// `break` value READ IN THE SCOPES OUTSIDE THE LOOP (`try_infer_expr_type` at
+/// the `let`, src/codegen/mod.rs). Every name the body bound anywhere — even in
+/// a closed `if false { .. }`, a `for`, a `match` arm — was taken to shadow the
+/// one the `break` reads, so each `&i64` row below was refused (PD0022) though
+/// main ran it and printed this. The `&u32` rows are the ill-typed-C trap on
+/// main and stay refused: `v` is the outer `i64` whatever the body binds.
+#[test]
+fn a_loop_value_is_read_as_code_generation_declares_it() {
+    let rows: Vec<(&str, &str, &str)> = vec![
+        ("an unused `let n: u32` in a closed `if`", "fn main() { let n: i64 = 4294967297; let v = loop { if false { let n: u32 = 1; } break n; }; let r: &i64 = &v; print_int(*r); }\n", "RUN: 4294967297\n"),
+        ("a `break` before the body's own `let n`", "fn main() { let n: i64 = 4294967297; let v = loop { if true { break n; } let n: i64 = 1; break n; }; let r: &i64 = &v; print_int(*r); }\n", "RUN: 4294967297\n"),
+        ("a `match` arm's `let n: u32`", "fn main() { let n: i64 = 4294967297; let v = loop { match 1 { 1 => { let n: u32 = 3; print_int(n); } _ => {} } break n; }; let r: &i64 = &v; print_int(*r); }\n", "RUN: 3\n4294967297\n"),
+        ("a `while` body's `let n: u32`", "fn main() { let n: i64 = 4294967297; let v = loop { let mut i = 0; while i < 1 { let n: u32 = 3; print_int(n); i = i + 1; } break n; }; let r: &i64 = &v; print_int(*r); }\n", "RUN: 3\n4294967297\n"),
+        ("an `unsafe` block's `let n: u32`", "fn main() { let n: i64 = 4294967297; let v = loop { unsafe { let n: u32 = 1; print_int(n); } break n; }; let r: &i64 = &v; print_int(*r); }\n", "RUN: 1\n4294967297\n"),
+        ("a `for` variable of the same name", "fn main() { let x: i64 = 4294967297; let v = loop { for x in 0..1 { print_int(x); } break x; }; let r: &i64 = &v; print_int(*r); }\n", "RUN: 0\n4294967297\n"),
+        ("the body's own `let n: u32` in scope at the `break`: `v` is the outer `i64`", "fn main() { let n: i64 = 4294967297; let v = loop { let n: u32 = 7; break n; }; let r: &i64 = &v; print_int(*r); }\n", "RUN: 7\n"),
+        ("the same inside an `if`", "fn main() { let n: i64 = 4294967297; let v = loop { if true { let n: u32 = 9; break n; } break n; }; let r: &i64 = &v; print_int(*r); }\n", "RUN: 9\n"),
+        ("a closed `let n: u32`, for `&u32`", "fn main() { let n: i64 = 4294967297; let v = loop { if false { let n: u32 = 1; } break n; }; let r: &u32 = &v; print_int(*r); }\n", "REFUSED[PD0022]"),
+        ("an open `let n: u32`, for `&u32`: still the outer `i64`", "fn main() { let n: i64 = 4294967297; let v = loop { let n: u32 = 7; break n; }; let r: &u32 = &v; print_int(*r); }\n", "REFUSED[PD0022]"),
+    ];
+    check_table(&rows, "ref_loop_value");
+}
+
+/// REVIEW ROUND 2: AN UNRELATED REFUSAL IN A GENERIC BODY HIDES NOTHING. A
+/// statement of an instantiated body refused for a reason the reference rules
+/// do not own (`let n: i64 = true`, `if 1`, `return 7` at an alias of `u32`)
+/// was skipped WHOLE, so the branches, arms, blocks and later statements inside
+/// it were never checked: `r == s` over two borrowed fives ran and printed `ne`
+/// on main and on round 2. Each part is now walked in its own scope.
+#[test]
+fn an_unrelated_refusal_in_a_generic_body_hides_no_reference_rule() {
+    let rows: Vec<(&str, &str, &str)> = vec![
+        ("`return 7` at an alias of `u32`, then the other branch", "type N = u32;\nfn f<T>(x: T) -> N { if false { return 7; } else { let a = 5; let b = 5; let r = &a; let s = &b; if r == s { print(\"eq\"); } else { print(\"ne\"); } } 7 }\nfn main() { print_int(f(1)); }\n", "REFUSED[PD0083]: in `f` instantiated at `i64`"),
+        ("the other branch of an `if`", "fn same<T>(a: T, b: T, c: bool) -> bool { if c { let n: i64 = true; print_int(n); } else { let r = &a; let s = &b; return r == s; } false }\nfn main() { if same(5, 5, false) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]: in `same` instantiated at `i64`"),
+        ("a block value after the refused `let`", "fn same<T>(a: T, b: T) -> bool { let k = { let n: i64 = true; let r = &a; let s = &b; r == s }; k }\nfn main() { if same(5, 5) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]"),
+        ("a `match` arm", "fn same<T>(a: T, b: T) -> bool { match true { true => { let n: i64 = true; let r = &a; let s = &b; return r == s; } false => { return false; } } }\nfn main() { if same(5, 5) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]"),
+        ("a `for` body", "fn same<T>(a: T, b: T) -> bool { for i in 0..1 { let n: i64 = true; let r = &a; let s = &b; return r == s; } false }\nfn main() { if same(5, 5) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]"),
+        ("a `while` whose condition is refused", "fn same<T>(a: T, b: T) -> bool { while 1 { let r = &a; let s = &b; return r == s; } false }\nfn main() { if same(5, 5) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]"),
+        ("a value `if` whose condition is refused", "fn same<T>(a: T, b: T) -> bool { let v = if 1 { let r = &a; let s = &b; r == s } else { false }; v }\nfn main() { if same(5, 5) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]"),
+        ("an `else if` after a refused branch", "fn same<T>(a: T, b: T, c: i64) -> bool { if c == 0 { return 1; } else if c == 1 { let r = &a; let s = &b; return r == s; } false }\nfn main() { if same(5, 5, 1) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]"),
+        ("a width mismatch after a refused `let`", "fn f<T>(n: T) -> i64 { if true { let k: i64 = true; let a: i64 = 4294967297; let r: &u32 = &a; return *r; } 0 }\nfn main() { print_int(f(5)); }\n", "REFUSED[PD0022]"),
+        // `&T` in a body that is not substituted is C `void **`: a borrow of a
+        // concrete parameter meets it at no instantiation (an internal compiler
+        // error on main); a borrow of a `let x: T` (`void *`) meets it, and runs.
+        ("a `&T` annotation over a borrow of a concrete parameter", "fn g<T>(a: T) -> i64 { let r: &T = &a; 7 }\nfn main() { print_int(g(5)); }\n", "REFUSED[PD0022]: in `g` instantiated at `i64`"),
+        ("a `&T` annotation over a borrow of a `let x: T`", "fn g<T>(a: T) -> T { let x: T = a; let r: &T = &x; *r }\nfn main() { print(g(\"ok\")); }\n", "RUN: ok\n"),
+        ("an unrelated refusal alone still runs", "type N = u32;\nfn f<T>(x: T) -> N { if false { return 7; } else { print(\"x\"); } 7 }\nfn main() { print_int(f(1)); }\n", "RUN: x\n7\n"),
+        ("a valid borrow after an unrelated refusal still runs", "fn f<T>(x: T) -> i64 { let k: i64 = true; let m: i64 = 4294967297; let r = &m; *r }\nfn main() { print_int(f(1)); }\n", "RUN: 4294967297\n"),
+    ];
+    check_table(&rows, "ref_generic_walk");
+    let module = [("zskip.pd", "pub fn same<T>(a: T, b: T) -> bool { if true { let n: i64 = true; let r = &a; let s = &b; return r == s; } false }\n")];
+    let got = outcome_with(&module, "import zskip;\nfn main() { if same(5, 5) { print(\"eq\"); } else { print(\"ne\"); } }\n", "ref_generic_walk_import");
+    assert!(got.starts_with("REFUSED[PD0083]: in `same` instantiated at `i64`"), "an imported generic body\n    got: {}", got);
+}
+
+/// REVIEW ROUND 2: WHAT A REFUSAL IS ABOUT IS READ FROM ITS CODE AND THE TYPES
+/// IT JUDGED, NEVER FROM ITS TEXT. The walk of a generic body kept a refusal
+/// whose message held a word naming a reference alias, so an unused `type Type
+/// = &i64;` turned the unrelated `Type mismatch: expected N, found Int` into a
+/// refusal of a program main ran. Its twin with an alias that IS used is still
+/// refused, by the reference rule it breaks.
+#[test]
+fn a_refusal_is_classified_by_its_types_not_its_words() {
+    let rows: Vec<(&str, &str, &str)> = vec![
+        ("an unused alias `Type`", "type Type = &i64;\ntype N = u32;\nfn f<T>(x: T) -> N { 7 }\nfn main() { print_int(f(1)); }\n", "RUN: 7\n"),
+        ("an unused alias `expected`", "type expected = &i64;\ntype N = u32;\nfn f<T>(x: T) -> N { 7 }\nfn main() { print_int(f(1)); }\n", "RUN: 7\n"),
+        ("an unused alias `found`", "type found = &i64;\ntype N = u32;\nfn f<T>(x: T) -> N { 7 }\nfn main() { print_int(f(1)); }\n", "RUN: 7\n"),
+        ("an unused alias `mismatch`", "type mismatch = &i64;\ntype N = u32;\nfn f<T>(x: T) -> N { 7 }\nfn main() { print_int(f(1)); }\n", "RUN: 7\n"),
+        ("an unused alias `Int`", "type Int = &i64;\ntype N = u32;\nfn f<T>(x: T) -> N { 7 }\nfn main() { print_int(f(1)); }\n", "RUN: 7\n"),
+        ("the alias `Type` used for two borrows compared", "type Type = &i64;\nfn f<T>(x: T) -> i64 { let m: i64 = 4294967297; let r: Type = &m; let s: Type = &m; if r == s { 1 } else { 0 } }\nfn main() { print_int(f(1)); }\n", "REFUSED[PD0083]: in `f` instantiated at `i64`"),
+    ];
+    check_table(&rows, "ref_refusal_kind");
 }
