@@ -4004,21 +4004,21 @@ impl Parser {
                                     self.advance()?; // consume the integer
                                     args.push(GenericArg::Const(ConstValue::Integer(n_val)));
                                 } else {
-                                    // Otherwise a name: a const argument exactly when it
-                                    // RESOLVES to a const parameter in scope, a type
-                                    // otherwise. It used to be decided by its SPELLING
-                                    // (all capitals or `_`), so `Wrap<K>` was a const and
-                                    // `Arr<n>` under `const n` a type (#93, #91). A global
-                                    // `const` item is not in this scope and reads as a type.
-                                    match self.parse_type()? {
-                                        Type::Custom(name)
-                                            if self.const_params_in_scope.contains(&name) =>
+                                    // Otherwise a name: a const argument exactly when it RESOLVES
+                                    // to a const parameter in scope — asked BEFORE the primitive
+                                    // table, so `Arr<i64>` under `const i64` is that const — and a
+                                    // type otherwise; never by SPELLING (#93, #91, review round 1).
+                                    // A global `const` item is not in this scope: it reads as a type.
+                                    let next = self.tokens.get(self.current + 1).map(|t| &t.0);
+                                    match self.peek()?.clone() {
+                                        Token::Identifier(name)
+                                            if self.const_params_in_scope.contains(&name)
+                                                && next != Some(&Token::Lt) =>
                                         {
-                                            args.push(GenericArg::Const(ConstValue::ConstParam(
-                                                name,
-                                            )));
+                                            self.advance()?; // the const parameter's name
+                                            args.push(GenericArg::Const(ConstValue::ConstParam(name)));
                                         }
-                                        ty => args.push(GenericArg::Type(ty)),
+                                        _ => args.push(GenericArg::Type(self.parse_type()?)),
                                     }
                                 }
 

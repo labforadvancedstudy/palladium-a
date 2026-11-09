@@ -2399,6 +2399,9 @@ impl TypeChecker {
             )));
         }
 
+        // PD0080 — AN ALIAS CYCLE IS REFUSED WHERE IT IS USED, before anything expands one.
+        alias_cycles::refuse_alias_cycle_uses(program, &self.imported_modules, &self.type_aliases, &self.generic_type_aliases)?;
+
         // WHICH NAMES ARE ENUMS, BEFORE ANY TYPE IS CONVERTED.
         //
         // `CheckerType::from` maps every `Custom(n)` to `Struct(n)` because it
@@ -2880,7 +2883,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:3172-3175`), and walking an imported
+        // return (`src/typeck/mod.rs:3175-3178`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -9500,3 +9503,6 @@ mod tests {
         assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 }
+
+// After the tests on purpose: appended, it moves no line a document cites.
+mod alias_cycles;

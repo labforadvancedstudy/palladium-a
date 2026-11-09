@@ -625,6 +625,13 @@ pub enum DiagnosticCode {
     /// because the rule the program broke is the macro's, not the grammar's
     /// at a column of the user's file (#85 review round 1).
     MacroExpansionParsesWhereItIsInvoked,
+
+    /// PD0080 — a type alias a program uses must name a type: its expansion
+    /// may not reach an alias cycle (`type A = Id<A>;`, `type A = B; type B =
+    /// A;`). One site, `refuse_alias_cycle_uses` (`src/typeck/alias_cycles.rs`),
+    /// run before any pass expands an alias; the alias used and the cycle are
+    /// the parameter. An alias nothing uses is not refused (main compiles one).
+    TypeAliasExpansionReachesNoCycle,
 }
 
 impl DiagnosticCode {
@@ -706,6 +713,7 @@ impl DiagnosticCode {
         DiagnosticCode::UnknownEscapeSpelling,
         DiagnosticCode::UnterminatedBlockComment,
         DiagnosticCode::MacroExpansionParsesWhereItIsInvoked,
+        DiagnosticCode::TypeAliasExpansionReachesNoCycle,
     ];
 
     /// The numbers that are RETIRED and must never be allocated again, with the
@@ -816,6 +824,7 @@ impl DiagnosticCode {
             DiagnosticCode::UnknownEscapeSpelling => 77,
             DiagnosticCode::UnterminatedBlockComment => 78,
             DiagnosticCode::MacroExpansionParsesWhereItIsInvoked => 79,
+            DiagnosticCode::TypeAliasExpansionReachesNoCycle => 80,
         }
     }
 
@@ -961,6 +970,9 @@ impl DiagnosticCode {
             DiagnosticCode::MacroExpansionParsesWhereItIsInvoked => {
                 "macro_expansion_parses_where_it_is_invoked"
             }
+            DiagnosticCode::TypeAliasExpansionReachesNoCycle => {
+                "type_alias_expansion_reaches_no_cycle"
+            }
         }
     }
 }
@@ -988,7 +1000,7 @@ mod tests {
     fn every_code_is_in_all() {
         assert_eq!(
             DiagnosticCode::ALL.len(),
-            72,
+            73,
             "a code was added to the enum without being added to ALL (or this \
              literal was not updated with the new count)"
         );

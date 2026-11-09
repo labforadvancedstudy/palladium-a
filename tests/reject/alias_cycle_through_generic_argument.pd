@@ -1,0 +1,16 @@
+// NEGATIVE TEST -- a type alias defined in terms of itself names no type.
+//
+// `A` is `Id<A>`, and `Id<T>` is `T`, so expanding `A` reaches `A` again and
+// never ends. Since #93 a capital type argument is read as a TYPE (it used to
+// be read as a const and dropped, which is the only reason main refused this
+// as `Type mismatch: expected T, found Int`), and the checker then expanded
+// `A` until the stack overflowed (#93 review round 1). The mixed-case `Aa`
+// overflowed main's stack too, and `type A = B; type B = A;` hung it (#79).
+// Refused BY NAME where the alias is used: PD0080, the cycle printed.
+type Id<T> = T;
+type A = Id<A>;
+
+fn main() {
+    let a: A = 1;
+    print_int(0);
+}

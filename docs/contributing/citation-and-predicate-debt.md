@@ -97,7 +97,7 @@ it is the range the sentence means.
 
 | # | Cites | What is actually there | Wrong? |
 |---|---|---|---|
-| C6 | `src/typeck/mod.rs:4499-4499`, from the "empty array literal `[]`" row of the PBS-1 exclusion table in `docs/specification/bootstrap-subset.md` | `GenericArgValue::Type(t) => match t {`, inside the generic-struct instantiation's type-argument stringifier. The refusal the row describes is the one `fn main() { let xs = []; }` prints — `Empty array literals are not supported (cannot infer type)` — raised from the array-literal arm of `check_expression`, not from this line | yes |
+| C6 | `src/typeck/mod.rs:4502-4502`, from the "empty array literal `[]`" row of the PBS-1 exclusion table in `docs/specification/bootstrap-subset.md` | `GenericArgValue::Type(t) => match t {`, inside the generic-struct instantiation's type-argument stringifier. The refusal the row describes is the one `fn main() { let xs = []; }` prints — `Empty array literals are not supported (cannot infer type)` — raised from the array-literal arm of `check_expression`, not from this line | yes |
 
 Re-derivable by content, unlike C1–C5 — the message is quoted above and appears at
 one raising site — so it is a repair any change touching that table row should make;

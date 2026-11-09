@@ -467,14 +467,16 @@ check_codes_pinned() {       # $1 = registry, $2 = manifest -> 0 clean / 1 compl
 #   reject|compile + 2 skip|compile), now hashed with their stage.
 #   re-pinned 48f2d5ae… at #85 review round 1: 125 rows, ONE ADDED —
 #   tests/reject/macro_expansion_does_not_parse.pd (reject|compile, PD0079).
-REFUSAL_SET_SHA=48f2d5aee658ad9f81ba8464c575fd6a2e705b7ce0e6069b8ad908370d0d35f6
+#   re-pinned c4b7ca67… at the rebase of #93 onto #85: 126 rows, ONE ADDED —
+#   tests/reject/alias_cycle_through_generic_argument.pd (reject|compile, PD0080).
+REFUSAL_SET_SHA=c4b7ca67be7dae53988f99ebedfabf1c42b602e28ae00b38f0897317018137b7
 # THE SIZE OF THAT SET, pinned beside it and re-pinned by the same deliberate
 # edit. Every row of the set is at stage compile and pins a code, so this is also
 # the number of code-pinned refusal rows and the `coded=` conformance must report.
 # It is a COMMITTED number on purpose: the counts requirement used to be held to a
 # count taken from the live manifest, and deleting refusal rows lowered both sides
 # together (suF-a review round 1).
-REFUSAL_SET_SIZE=125
+REFUSAL_SET_SIZE=126
 refusal_set_digest() {       # $1 = manifest -> sha256 on stdout
   awk -F'\t' 'NF>=2 && $1 !~ /^#/ && ($2=="reject" || $2=="skip") {print $1 "\t" $2 "\t" $3}' "$1" \
     | LC_ALL=C sort | shasum -a 256 | cut -d' ' -f1

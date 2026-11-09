@@ -794,8 +794,8 @@ and `local_type_shadows_import` decides the rest.*
 ### A4.4 Traits
 
 **unimplemented.** Traits parse (`src/parser/mod.rs:1550`, corrected from line 736–960 of the pre-cleanup revision) and then
-emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:2407-2410`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:2786-2787`, corrected
-from `src/typeck/mod.rs:3199-3199`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
+emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:2407-2410`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:2789-2790`, corrected
+from `src/typeck/mod.rs:3202-3202`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
 because trait methods use a separate parameter loop that does not handle `self`
 (`src/parser/mod.rs:1683-1684`, corrected from line 863–897 of the pre-cleanup revision).
 
@@ -916,8 +916,9 @@ unrelated reason.
 | `<T: Bound>`, `where` | unimplemented | `parse_generic_params` accepts bare names only; the `:` is a parse error |
 
 **partial — generic arguments**: inside `<…>`, a name is a *const generic argument* exactly
-when it is a const parameter of the `fn`, `struct` or `enum` being parsed, and a type argument
-otherwise (`src/parser/mod.rs:4013-4021`). Until #93 this was decided by SPELLING — every name
+when it is a const parameter of the `fn`, `struct` or `enum` being parsed — asked before the
+primitive table, so `Arr<i64>` under `const i64` is that const — and a type argument
+otherwise (`src/parser/mod.rs:4012-4022`). Until #93 this was decided by SPELLING — every name
 made of capitals and `_` was a const, so `Foo<T>` and `Wrap<K>` carried a const-generic
 argument and a lowercase const parameter a type one. A global `const` item written as an
 argument reads as a type. A written generic type is then emitted as `void*` (N4-15), so an
@@ -944,7 +945,7 @@ enum is compiled to. Use `match`.
 
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
 They are ordinary user enums if you declare them. The only special-casing left is the REFUSAL: `?` is
-rejected outright by the type checker (`src/typeck/mod.rs:5047-5047`) and again by code generation
+rejected outright by the type checker (`src/typeck/mod.rs:5050-5050`) and again by code generation
 (`src/codegen/mod.rs:6556-6560`). It used to typecheck against a `Generic{name:"Result"}` shape
 and then emit C for a `struct Result` layout nothing defines (see
 [A6.5](#a65-question-mark-async-and-await)).
@@ -1079,7 +1080,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
   *(This bullet read "partial — codegen error 'Range expressions can only be used in for loops'"
   until `ef74eba`.)*
 - partial: empty array literal `[]` — typeck cannot infer the element type
-  (`src/typeck/mod.rs:6321-6325`, corrected from line 1874 of the pre-cleanup revision and again on 2026-08-25, when it had come to rest on a closing brace).
+  (`src/typeck/mod.rs:6324-6328`, corrected from line 1874 of the pre-cleanup revision and again on 2026-08-25, when it had come to rest on a closing brace).
 
 **FIXED — the precedence bug**: `parse_multiplication` parsed its RIGHT operand with
 `parse_postfix` rather than `parse_unary`, so the left side descended through the unary level and
@@ -1091,7 +1092,7 @@ the ladder was already symmetric, which is why this was the only expression that
 ### A6.4 Method calls
 
 **implemented** (N5-17, `4690ef0`). `x.f(a)` parses as a call whose callee is a field access, and
-both the type checker (`src/typeck/mod.rs:4041`) and code generation (`src/codegen/mod.rs:5994-5997`)
+both the type checker (`src/typeck/mod.rs:4044`) and code generation (`src/codegen/mod.rs:5994-5997`)
 REWRITE it into the path call it means — `TypeOfX::f(x, a)` — rather than checking and emitting it
 as a second kind of call. The receiver becomes the first argument and is evaluated exactly once,
 and its position among the arguments is the one the source wrote: being the first argument, it is
@@ -1182,8 +1183,8 @@ infers only the parameters a variant mentions, so `Result::Err(e)` yields `Resul
 syntactic trap is worth stating: a `match` arm that is a block must not be followed by a comma,
 and propagation needs block arms because `return` is not an expression.
 
-The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:5047-5047`, `.await` at
-`src/typeck/mod.rs:5055-5055`) and again by code generation (`?` at `src/codegen/mod.rs:6556-6560`,
+The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:5050-5050`, `.await` at
+`src/typeck/mod.rs:5058-5058`) and again by code generation (`?` at `src/codegen/mod.rs:6556-6560`,
 `.await` at `src/codegen/mod.rs:6568-6572`), which is callable on its own.
 
 What they used to do:
@@ -1363,7 +1364,7 @@ struct patterns, `ref`/`mut` bindings, `..` rest.
 **Exhaustiveness holds for every scrutinee type** (N6-10). An enum must cover its variants; a
 `bool` is covered by `true` and `false` together; every other type needs an arm that matches every
 value — `_`, a binding, `name @ <irrefutable>`, an `a | b` with an irrefutable alternative, or a
-tuple of irrefutables (`src/typeck/exhaustiveness.rs:114`, `src/typeck/mod.rs:5403`). NO INTERVAL
+tuple of irrefutables (`src/typeck/exhaustiveness.rs:114`, `src/typeck/mod.rs:5406`). NO INTERVAL
 ARITHMETIC IS PROMISED: `0..=59` beside `60..=<i64 max>` beside `<i64 min>..=-1` covers every
 integer and is still refused, and the diagnostic says why rather than leaving the reader to infer
 it. A guarded arm counts toward nothing — whether it is taken is not decidable from the pattern.
@@ -1745,11 +1746,11 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-xfail-six`
 (2026-08-31):
 
-**verified 91 · untranscribed 0 · vacuous 6 · xfail 6 · reject 123 · skip 2 · failures 0**, over 228
+**verified 91 · untranscribed 0 · vacuous 6 · xfail 6 · reject 124 · skip 2 · failures 0**, over 229
 fixtures. (WT-01 unit W1c added two `run` fixtures, `tests/04_self_field_reads.pd` and
 `tests/04_self_type_positions.pd`: `Self` now means the impl's type in the borrow checker and in a
 method body too. Then `fix/projection-move-scope` added one `run` fixture, `tests/regression/projection_move_scope.pd`:
-a move out of a field that used to outlive its function, measured on the merged tree 2026-10-07. Then WT-01 unit W2a added one `run` fixture, `tests/regression/enum_in_composites.pd`: a user `enum` inside an array, a tuple, a reference, a method signature and a generic instantiation, each refused before with one type named on both sides. Then issue #85 added one `run` fixture, `tests/04_macro_in_method_body.pd`: a macro invocation in a method body, which the expander never walked; and its review round one `reject` fixture, `tests/reject/macro_expansion_does_not_parse.pd`: an expansion that does not parse is refused by name (PD0079), in a body main never expanded as in a free function. Then the #93/#91 unit added one `run` fixture, `tests/regression/generic_argument_kind.pd`: the programs that ran where a generic argument's reading flips from its spelling to what it resolves to. The su2 round of `feat/m2-xfail-six` added five: `tests/04_self_place.pd`, the first
+a move out of a field that used to outlive its function, measured on the merged tree 2026-10-07. Then WT-01 unit W2a added one `run` fixture, `tests/regression/enum_in_composites.pd`: a user `enum` inside an array, a tuple, a reference, a method signature and a generic instantiation, each refused before with one type named on both sides. Then issue #85 added one `run` fixture, `tests/04_macro_in_method_body.pd`: a macro invocation in a method body, which the expander never walked; and its review round one `reject` fixture, `tests/reject/macro_expansion_does_not_parse.pd`: an expansion that does not parse is refused by name (PD0079), in a body main never expanded as in a free function. Then the #93/#91 unit added one `run` fixture, `tests/regression/generic_argument_kind.pd`: the programs that ran where a generic argument's reading flips from its spelling to what it resolves to; its review round 1 added one `reject` fixture, `tests/reject/alias_cycle_through_generic_argument.pd`: an alias cycle a program uses is refused by name (PD0080). The su2 round of `feat/m2-xfail-six` added five: `tests/04_self_place.pd`, the first
 fixture in which a method taking a reference receiver links at all, and four `reject`s for the
 writes through a receiver the type checker refuses — through `&self`, through a by-value
 `self`, `self` as an assignment target and `*self` as a place. Its review round added

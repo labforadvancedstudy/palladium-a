@@ -2148,10 +2148,10 @@ mod tests {
 //
 // GENERIC aliases (`type Pair<T> = (T, T)`) are not expanded at their uses —
 // code generation skips them everywhere already, and expanding one is
-// substitution, not lookup. A CYCLE (`type A = B; type B = A;`) is never
-// expanded past `ALIAS_EXPANSION_LIMIT` levels: it is a program the type
-// checker does not finish today, and this pass must not be a second place that
-// loops.
+// substitution, not lookup. A CYCLE (`type A = B; type B = A;`) stops at the
+// first alias already being expanded (and never past `ALIAS_EXPANSION_LIMIT`):
+// a USED one is refused by the type checker (PD0080), and `(P, P)` doubled per
+// level to 2^64 nodes here, so this pass must stop at a repeat, not a depth.
 
 /// How deep one alias may expand into another before the expansion stops and
 /// leaves the name as written. Real chains are a handful long.
@@ -2282,7 +2282,7 @@ struct Expand<'a>(&'a Aliases);
 
 impl TypeVisit for Expand<'_> {
     fn visit(&mut self, ty: &mut Type, bound: &[String]) {
-        expand_type(ty, self.0, bound, 0)
+        expand_type(ty, self.0, bound, &[])
     }
 }
 
@@ -2294,26 +2294,26 @@ impl TypeVisit for ExpandForC<'_> {
     fn visit(&mut self, ty: &mut Type, bound: &[String]) {
         match ty {
             Type::Custom(name) if self.1.contains(name) && !bound.contains(name) => {}
-            _ => expand_type(ty, self.0, bound, 0),
+            _ => expand_type(ty, self.0, bound, &[]),
         }
     }
 }
 
-fn expand_type(ty: &mut Type, aliases: &Aliases, bound: &[String], depth: usize) {
+fn expand_type(ty: &mut Type, aliases: &Aliases, bound: &[String], path: &[&str]) {
     match ty {
         Type::Custom(name) => {
-            if bound.contains(name) || depth >= ALIAS_EXPANSION_LIMIT {
+            if bound.contains(name) || path.len() >= ALIAS_EXPANSION_LIMIT || path.contains(&&**name) {
                 return;
             }
             if let Some(target) = aliases.get(name.as_str()) {
                 // The body in ITS scope — the top level, where nothing is bound.
                 let mut target = target.clone();
-                expand_type(&mut target, aliases, &[], depth + 1);
+                expand_type(&mut target, aliases, &[], &[path, &[name.as_str()]].concat());
                 *ty = target;
             }
         }
         Type::Array(elem, size) => {
-            expand_type(elem, aliases, bound, depth);
+            expand_type(elem, aliases, bound, path);
             if let ArraySize::Expr(e) = size {
                 walk_expr(e, bound, &mut Expand(aliases));
             }
@@ -2321,16 +2321,16 @@ fn expand_type(ty: &mut Type, aliases: &Aliases, bound: &[String], depth: usize)
         Type::Generic { args, .. } => {
             for arg in args {
                 if let GenericArg::Type(t) = arg {
-                    expand_type(t, aliases, bound, depth);
+                    expand_type(t, aliases, bound, path);
                 }
             }
         }
         Type::Reference { inner, .. } | Type::Future { output: inner } => {
-            expand_type(inner, aliases, bound, depth)
+            expand_type(inner, aliases, bound, path)
         }
         Type::Tuple(types) => types
             .iter_mut()
-            .for_each(|t| expand_type(t, aliases, bound, depth)),
+            .for_each(|t| expand_type(t, aliases, bound, path)),
         Type::I32
         | Type::I64
         | Type::U32
@@ -2373,7 +2373,7 @@ impl TypeVisit for Captures<'_> {
             Type::Custom(name) if !bound.contains(name) => {
                 if let Some(target) = self.aliases.get(name.as_str()) {
                     let mut target = target.clone();
-                    expand_type(&mut target, self.aliases, &[], 1);
+                    expand_type(&mut target, self.aliases, &[], &[name.as_str()]);
                     let mut named = Vec::new();
                     names_in(&target, &mut named);
                     for b in self.binders {
@@ -3129,5 +3129,25 @@ mod alias_expansion_tests {
             "f's `let a: A`: {:?}",
             f.body[0]
         );
+    }
+}
+
+/// Every type position of `items` OUTSIDE type aliases' own bodies, with the
+/// type parameters bound where it is written: the walker alias expansion
+/// uses, so the alias-cycle refusal (PD0080, `src/typeck/alias_cycles.rs`)
+/// sees every position an expansion would. An alias's body is reached only
+/// through a use of the alias, which is what makes an unused cycle no use.
+pub fn for_each_type_outside_aliases<'a>(
+    items: impl IntoIterator<Item = &'a Item>,
+    mut f: impl FnMut(&Type, &[String]),
+) {
+    struct Each<'a>(&'a mut dyn FnMut(&Type, &[String]));
+    impl TypeVisit for Each<'_> {
+        fn visit(&mut self, ty: &mut Type, bound: &[String]) {
+            (self.0)(ty, bound)
+        }
+    }
+    for item in items.into_iter().filter(|i| !matches!(i, Item::TypeAlias(_))) {
+        walk_item(&mut item.clone(), &mut Each(&mut f));
     }
 }
