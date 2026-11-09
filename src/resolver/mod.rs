@@ -147,14 +147,14 @@ impl ModuleResolver {
         let mut parser = Parser::new(tokens);
         let mut ast = parser.parse()?;
 
-        // A MODULE IS EXPANDED LIKE THE FILE THAT IMPORTS IT (#85), with its
-        // own macros: the driver expands the importing file and nothing
-        // expanded this one, so a module's macro in its own `pub fn` reached
-        // the type checker as "Unexpected macro invocation in type checking".
-        // A fresh expander, because a macro is not exported: the importing
-        // file's macros are not visible here, and this file's are not visible
-        // there.
-        crate::macros::MacroExpander::new().expand_program(&mut ast)?;
+        // A MODULE IS EXPANDED LIKE THE FILE THAT IMPORTS IT (#85), with its own
+        // macros (a fresh expander: a macro is not exported). Nothing expanded
+        // it before, so a module's macro in its own `pub fn` reached the type
+        // checker as "Unexpected macro invocation in type checking"; a refusal
+        // is re-stated with the module's file (`refused_in_module`).
+        crate::macros::MacroExpander::new()
+            .expand_program(&mut ast)
+            .map_err(|e| refused_in_module(&module_file, e))?;
 
         // Extract exported items (those marked as 'pub')
         let mut exports = HashSet::new();
@@ -227,6 +227,31 @@ impl ModuleResolver {
     /// Get all loaded modules
     pub fn get_loaded_modules(&self) -> &HashMap<String, ModuleInfo> {
         &self.loaded_modules
+    }
+}
+
+/// An expansion refusal raised inside an imported module, re-stated so that it
+/// names the module's file (#85 review round 1).
+///
+/// The driver renders every diagnostic against the IMPORTING file's source, so
+/// a span from the module's text drew a caret under whatever the importing file
+/// held at that line and column. The location goes into the message instead, as
+/// `<file>:<line>:<column>`, and the code is kept.
+fn refused_in_module(module_file: &std::path::Path, err: CompileError) -> CompileError {
+    let diag = err.to_diagnostic();
+    let at = match diag.span {
+        Some(span) if span.line > 0 => format!(":{}:{}", span.line, span.column),
+        _ => String::new(),
+    };
+    let restated = CompileError::Generic(format!(
+        "{}{}: {}",
+        module_file.display(),
+        at,
+        diag.message
+    ));
+    match diag.code {
+        Some(code) => restated.with_code(code),
+        None => restated,
     }
 }
 

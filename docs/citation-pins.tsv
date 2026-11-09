@@ -243,7 +243,7 @@ src/linker.rs	223-223	src/typeck/mod.rs	6428d5b31c2b	"-Wincompatible-pointer-typ
 src/linker.rs	77-93	tests/d3b_tail_if.rs	e0c57f0823c8	let mut cmd = Command::new("gcc"); cmd.arg(opt.flag()) // N6-11 ARMED THIS. A ... -I") .arg(&runtime_dir) .arg(c_file) .arg(&runtime_c) .arg("-o") .arg(output);
 src/macros/expander.rs	372-372	docs/specification/language-spec.md	c32b83e66d7b	pub fn substitute_template(template: &[Token], context: &MatchContext) -> Result<Vec<Token>> {
 src/macros/expander.rs	400-400	docs/reference/features/feature-index.toml	6f85ed4f92dc	result.push(Token::LeftParen);
-src/macros/expander.rs	454-454	docs/specification/language-spec.md	b63a51957108	fn tokens_to_string(tokens: &[Token]) -> String {
+src/macros/expander.rs	454-454	docs/specification/language-spec.md	0636c36a4497	pub(crate) fn tokens_to_string(tokens: &[Token]) -> String {
 src/macros/mod.rs	107-107	docs/specification/bootstrap-subset.md	e9048b339b04	Token::LeftBrace,
 src/macros/mod.rs	167-167	docs/reference/features/feature-index.toml	4937b6ff3ab8	Token::Identifier("print_debug".to_string()),
 src/macros/mod.rs	167-167	docs/specification/language-spec.md	4937b6ff3ab8	Token::Identifier("print_debug".to_string()),

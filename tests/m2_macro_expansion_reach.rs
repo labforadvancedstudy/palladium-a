@@ -290,6 +290,70 @@ fn the_operand_of_await_is_expanded_and_await_is_still_refused() {
     );
 }
 
+/// A FAILURE THAT COMES OUT OF AN EXPANSION IS REFUSED BY NAME (#85 review
+/// round 1, PD0079).
+///
+/// #85 expands bodies main never read: a trait's default body, a module's
+/// private function, a module's uninstantiated generic. Main RAN every program
+/// below (the bad invocation sat in a body nothing looked at) and printed 1. The
+/// first tip of #85 refused them with the parser's bare words — "Unexpected end
+/// of file", "Expected ';' …, but found '{'" — naming no macro, with a caret at
+/// an offset into the expansion. A run may become a refusal only by name, so
+/// each must now say `the expansion of `X!` does not parse as …`, carry PD0079,
+/// keep the parser's reason, and (in a module) name the module's file. The
+/// free-function column is the same refusal main always gave, now named: the
+/// reason main printed is still in it, word for word.
+#[test]
+fn an_expansion_that_does_not_parse_is_refused_by_name_in_every_body() {
+    let cases = [
+        ("println!", "", "println!(1);", "statements", "Unexpected end of file"),
+        ("dbg!", "", "dbg!(1);", "statements", "Unexpected end of file"),
+        ("assert!", "", "assert!(1);", "statements", "Expected ';' (Expected ';' after expression), but found '{'"),
+        ("a!", "macro a!() { + }\n", "let q = a!();", "an expression", "Expected expression, but found '+'"),
+        ("set!", "macro set!(x) { $x = 42; }\n", "let mut y = 0; set!(y);", "statements", "Expected ';' (Expected ';' after expression), but found '='"),
+    ];
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    for (name, defs, call, position, reason) in cases {
+        let bodies: [(&str, Vec<(&str, String)>, String); 4] = [
+            (
+                "trait default body",
+                vec![],
+                format!("{defs}struct S {{ n: i64 }}\ntrait T {{ fn f(s: S) {{ {call} }} }}\nfn main() {{ print_int(1); }}\n"),
+            ),
+            (
+                "unused private fn of an imported module",
+                vec![("lib1.pd", format!("{defs}fn hidden() {{ {call} }}\npub fn used() -> i64 {{ return 1; }}\n"))],
+                "import lib1;\nfn main() { print_int(used()); }\n".to_string(),
+            ),
+            (
+                "uninstantiated generic of an imported module",
+                vec![("lib1.pd", format!("{defs}pub fn hidden<T>(x: T) -> T {{ {call} return x; }}\npub fn used() -> i64 {{ return 1; }}\n"))],
+                "import lib1;\nfn main() { print_int(used()); }\n".to_string(),
+            ),
+            (
+                "free function (refused on main too, unnamed)",
+                vec![],
+                format!("{defs}fn f() {{ {call} }}\nfn main() {{ print_int(1); }}\n"),
+            ),
+        ];
+        for (body, modules, main) in bodies {
+            let files: Vec<(&str, &str)> = modules.iter().map(|(n, s)| (*n, s.as_str())).collect();
+            let verdict = outcome_of_files(&files, &main);
+            let named = format!("the expansion of `{name}` does not parse as {position}, where it is invoked: {reason}");
+            let ok = verdict.starts_with("REFUSED: error[PD0079]: ")
+                && verdict.contains(&named)
+                // The module's file and the invocation's line in it: the call is
+                // on line 1, or line 2 under a macro definition.
+                && (files.is_empty()
+                    || verdict.contains(&format!("lib1.pd:{}:", if defs.is_empty() { 1 } else { 2 })));
+            got.push(format!("{name} in a {body}: {}", if ok { "named PD0079".to_string() } else { verdict }));
+            want.push(format!("{name} in a {body}: named PD0079"));
+        }
+    }
+    assert_eq!(got, want);
+}
+
 /// A REFUSAL A MACRO GETS IN A FREE FUNCTION IT GETS IN A METHOD, WORD FOR WORD.
 ///
 /// Main answered every one of these in a method with the type checker's
@@ -436,13 +500,13 @@ fn an_imported_module_is_expanded_with_its_own_macros() {
             "a module invoking a macro only the importing file defines",
             "pub fn forty_two() -> i64 { return two!() + 40; }\n",
             "import lib1;\nmacro two!() { 2 }\nfn main() { print_int(forty_two()); }\n",
-            "REFUSED: error: Unknown macro 'two'",
+            "REFUSED: error: ./lib1.pd: Unknown macro 'two'",
         ),
         (
             "a module's argument that invokes a macro",
             "macro double!(x) { $x * 2 }\npub fn f() -> i64 { return double!(double!(1)); }\n",
             "import lib1;\nfn main() { print_int(f()); }\n",
-            "REFUSED: error[PD0067]: the macro `double` is given `double!(…)` as an argument, \
+            "REFUSED: error[PD0067]: ./lib1.pd: the macro `double` is given `double!(…)` as an argument, \
              and expansion is a single pass: an invocation that an expansion produces is never \
              expanded. Bind it to a `let` first, or call a function",
         ),

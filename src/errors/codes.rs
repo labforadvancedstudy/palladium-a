@@ -616,6 +616,15 @@ pub enum DiagnosticCode {
     /// coded at the `LexError` -> `CompileError` conversion for the reason
     /// `UnknownEscapeSpelling` is.
     UnterminatedBlockComment,
+
+    /// PD0079 — a macro's expansion parses as what its invocation position
+    /// requires: an expression in value position, statements in statement
+    /// position. One site, `expansion_does_not_parse` (`src/macros/mod.rs`),
+    /// reached from both positions; the parser's own reason is kept in the
+    /// message, and this code replaces whatever code that reason carried,
+    /// because the rule the program broke is the macro's, not the grammar's
+    /// at a column of the user's file (#85 review round 1).
+    MacroExpansionParsesWhereItIsInvoked,
 }
 
 impl DiagnosticCode {
@@ -696,6 +705,7 @@ impl DiagnosticCode {
         DiagnosticCode::ValueBlockEndsInAnExpression,
         DiagnosticCode::UnknownEscapeSpelling,
         DiagnosticCode::UnterminatedBlockComment,
+        DiagnosticCode::MacroExpansionParsesWhereItIsInvoked,
     ];
 
     /// The numbers that are RETIRED and must never be allocated again, with the
@@ -805,6 +815,7 @@ impl DiagnosticCode {
             DiagnosticCode::ValueBlockEndsInAnExpression => 76,
             DiagnosticCode::UnknownEscapeSpelling => 77,
             DiagnosticCode::UnterminatedBlockComment => 78,
+            DiagnosticCode::MacroExpansionParsesWhereItIsInvoked => 79,
         }
     }
 
@@ -947,6 +958,9 @@ impl DiagnosticCode {
             DiagnosticCode::ValueBlockEndsInAnExpression => "value_block_ends_in_an_expression",
             DiagnosticCode::UnknownEscapeSpelling => "unknown_escape_spelling",
             DiagnosticCode::UnterminatedBlockComment => "unterminated_block_comment",
+            DiagnosticCode::MacroExpansionParsesWhereItIsInvoked => {
+                "macro_expansion_parses_where_it_is_invoked"
+            }
         }
     }
 }
@@ -974,7 +988,7 @@ mod tests {
     fn every_code_is_in_all() {
         assert_eq!(
             DiagnosticCode::ALL.len(),
-            71,
+            72,
             "a code was added to the enum without being added to ALL (or this \
              literal was not updated with the new count)"
         );

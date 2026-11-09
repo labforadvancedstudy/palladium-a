@@ -1,0 +1,30 @@
+// NEGATIVE TEST -- a macro's expansion must parse where it is invoked (PD0079,
+// #85 review round 1).
+//
+// An expansion is spliced in as TEXT and parsed again: as an expression in
+// value position, as statements in statement position. The builtin
+// `println!(e)` expands to `print((e)); print("\n")` -- no final `;`, and the
+// string literal is itself refused in a user macro body (PD0008) -- so in
+// statement position it does not parse. The parser's own error used to come
+// out bare, "Unexpected end of file", naming no macro and pointing its caret at
+// an offset into the expansion rather than at the invocation.
+//
+// WHY THIS PROGRAM: the invocation is in a trait's DEFAULT body, which nothing
+// reads. Main never expanded one, and ran this program and printed 1. Since
+// #85 every body is expanded, so the refusal that a free function always got
+// now reaches this body too -- and it is required to say what it refuses: the
+// macro, the position, the parser's reason and the expansion, at the
+// invocation's span.
+struct S {
+    n: i64,
+}
+
+trait T {
+    fn f(s: S) {
+        println!(1);
+    }
+}
+
+fn main() {
+    print_int(1);
+}

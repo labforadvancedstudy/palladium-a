@@ -79,11 +79,11 @@ macro origin!() { Point { x: 1, y: 2 } }
 // --- statement bodies ---
 //
 // A body whose tokens are STATEMENTS expands in statement position. The shape
-// that does NOT work is an EXPRESSION body invoked as a statement (`five!();`),
-// which fails with "Unexpected end of file" — the expansion is re-parsed as a
-// statement list and an expression with no `;` is not one. Reported as a gap
-// rather than pinned here, because it is a parse-shape mismatch and not a
-// refusal anybody wrote.
+// that does NOT work is an EXPRESSION body invoked as a statement (`five!();`):
+// the expansion is re-parsed as a statement list and an expression with no `;`
+// is not one. It used to fail with the parser's bare "Unexpected end of file";
+// it is refused by name now (PD0079, "the expansion of `five!` does not parse as
+// statements"), pinned by tests/reject/macro_expansion_does_not_parse.pd.
 
 fn side_effect() {
     print("side effect");

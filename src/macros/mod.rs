@@ -606,7 +606,7 @@ impl MacroExpander {
 
     /// Expand macro invocation to statements
     fn expand_macro_to_stmts(&mut self, expr: &Expr) -> Result<Vec<Stmt>> {
-        if let Expr::MacroInvocation { name, args, .. } = expr {
+        if let Expr::MacroInvocation { name, args, span } = expr {
             // Look up the macro
             let parsed_macro = self
                 .macros
@@ -624,7 +624,9 @@ impl MacroExpander {
                 let expanded_tokens = substitute_template(&parsed_macro.template, &context)?;
 
                 // Parse as statements
-                return expand_to_stmts(expanded_tokens);
+                return expand_to_stmts(expanded_tokens.clone()).map_err(|e| {
+                    expansion_does_not_parse(name, "statements", &expanded_tokens, *span, e)
+                });
             } else {
                 return Err(CompileError::Generic(format!(
                     "Macro '{}' arguments don't match pattern",
@@ -639,17 +641,18 @@ impl MacroExpander {
     /// Expand macros in an expression
     fn expand_expr(&mut self, expr: &mut Expr) -> Result<()> {
         match expr {
-            Expr::MacroInvocation { name, args, .. } => {
+            Expr::MacroInvocation { name, args, span } => {
+                let (name, span) = (name.clone(), *span);
                 // Look up the macro
                 let parsed_macro = self
                     .macros
-                    .get(name)
-                    .ok_or_else(|| unknown_macro(name))?
+                    .get(&name)
+                    .ok_or_else(|| unknown_macro(&name))?
                     .clone();
 
                 // Convert AST tokens to lexer tokens
                 let arg_tokens = self.convert_ast_tokens_to_lexer_tokens(args)?;
-                refuse_nested_invocation(&arg_tokens, name)?;
+                refuse_nested_invocation(&arg_tokens, &name)?;
 
                 // Match pattern
                 if let Some(context) = match_pattern(&parsed_macro.pattern, &arg_tokens)? {
@@ -657,7 +660,9 @@ impl MacroExpander {
                     let expanded_tokens = substitute_template(&parsed_macro.template, &context)?;
 
                     // Parse as expression
-                    *expr = expand_to_expr(expanded_tokens)?;
+                    *expr = expand_to_expr(expanded_tokens.clone()).map_err(|e| {
+                        expansion_does_not_parse(&name, "an expression", &expanded_tokens, span, e)
+                    })?;
                 } else {
                     return Err(CompileError::Generic(format!(
                         "Macro '{}' arguments don't match pattern",
@@ -844,6 +849,40 @@ fn unknown_macro(name: &str) -> CompileError {
         .with_code(DiagnosticCode::MacroRulesIsNotThisMacroSystem);
     }
     CompileError::Generic(format!("Unknown macro '{}'", name))
+}
+
+/// The diagnostic for an expansion that does not parse where it is invoked
+/// (PD0079, #85 review round 1).
+///
+/// An expansion is spliced in as TEXT and parsed again, as an expression in
+/// value position and as statements in statement position. When that parse
+/// failed, the parser's own error came out bare — "Unexpected end of file",
+/// "Expected ';' …, but found '{'" — naming no macro, and carrying a span that
+/// is an offset into the re-parsed expansion, so the caret pointed at whatever
+/// column of the user's file happened to share the number. Since #85 expands
+/// bodies main never expanded (methods, trait defaults, imported modules), a
+/// program main RAN could reach this, so it has to say what it refuses: the
+/// macro, the position, the parser's reason unchanged, and what the
+/// invocation expanded to, at the invocation's own span.
+fn expansion_does_not_parse(
+    name: &str,
+    position: &str,
+    expansion: &[Token],
+    span: crate::errors::Span,
+    err: CompileError,
+) -> CompileError {
+    CompileError::SyntaxError {
+        message: format!(
+            "the expansion of `{}!` does not parse as {}, where it is invoked: {} \
+             (it expands to `{}`)",
+            name,
+            position,
+            err.to_diagnostic().message,
+            expander::tokens_to_string(expansion)
+        ),
+        span: Some(span),
+    }
+    .with_code(DiagnosticCode::MacroExpansionParsesWhereItIsInvoked)
 }
 
 /// Refuse a macro invocation written inside another macro's ARGUMENTS.

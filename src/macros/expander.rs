@@ -451,7 +451,7 @@ pub fn expand_to_stmts(tokens: Vec<Token>) -> Result<Vec<Stmt>> {
 }
 
 /// Convert tokens to string (for re-parsing)
-fn tokens_to_string(tokens: &[Token]) -> String {
+pub(crate) fn tokens_to_string(tokens: &[Token]) -> String {
     let mut result = String::new();
 
     for (i, token) in tokens.iter().enumerate() {
