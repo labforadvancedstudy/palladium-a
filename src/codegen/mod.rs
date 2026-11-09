@@ -1189,8 +1189,10 @@ impl CodeGenerator {
     /// an immutable `t`, each turned `(11, 29)` into `(97, 83)`. Refused by
     /// name, each one, because a shared reference does not permit mutation:
     ///
-    /// * a shared reference-to-tuple parameter, by name, to a parameter that
-    ///   may write through what it receives (`&mut`, or `mut` — both pointers);
+    /// * a place rooted in a shared reference-to-tuple parameter — `p`, `*p`,
+    ///   a field or slot under it — to a parameter that may write through what
+    ///   it receives (`&mut`, or `mut`: both pointers, and the call emitter
+    ///   takes the place's address itself; review round 2);
     /// * a `&` of a place rooted in one, to anything but a SHARED reference
     ///   parameter — the one place that `&` keeps its `const`; the answer
     ///   `Some(address)` marks that argument for the `Expr::Reference` arm,
@@ -1210,18 +1212,6 @@ impl CodeGenerator {
             .is_some_and(|p| !p.mutable && matches!(p.ty, Type::Reference { mutable: false, .. }));
         let refuse = |message: String| Err(CompileError::CodegenError { message });
         match arg {
-            Expr::Ident(name) if writable && self.tuple_reference_param(arg) == Some(false) => {
-                refuse(format!(
-                    "cannot pass `{}` as argument {} of `{}`: it is a shared reference to a \
-                     tuple, `&(..)`, and that parameter may write through what it is given \
-                     (`&mut`, or `mut`). Declare `{}` as `&mut (..)` if the caller's tuple is \
-                     meant to change",
-                    name,
-                    index + 1,
-                    callee,
-                    name
-                ))
-            }
             Expr::Reference { mutable, .. } => {
                 if let Some(root) = self.shared_tuple_reference_root(arg) {
                     if shared_reference {
@@ -1256,6 +1246,32 @@ impl CodeGenerator {
                 }
                 Ok(None)
             }
+            // Review round 2. Every OTHER spelling of the argument is judged by
+            // the place it names, because a writable parameter is given that
+            // place's ADDRESS by the call emitter itself (`needs_address`):
+            // `p` is passed as the pointer it is, and `*p` — or a field or slot
+            // under it — as `&(..)` of it, a `const T*` where `T*` is declared.
+            // Measured: `set(*p)` from `mut p: &(i64, i64)` turned `(11, 29)`
+            // into `(97, 83)` through `&mut`, a `mut` by-value parameter, a
+            // generic and a method alike, because only the NAME was checked.
+            _ if writable => match self.shared_tuple_reference_root(arg) {
+                Some(root) => refuse(format!(
+                    "cannot pass {} as argument {} of `{}`: it is `{}` — a shared reference to \
+                     a tuple, `&(..)` — or a place inside it, and that parameter may write \
+                     through what it is given (`&mut`, or `mut`; the call passes the place's \
+                     address). Declare `{}` as `&mut (..)` if the caller's tuple is meant to \
+                     change",
+                    match arg {
+                        Expr::Ident(name) => format!("`{}`", name),
+                        other => format!("this {}", Self::expr_kind_name(other)),
+                    },
+                    index + 1,
+                    callee,
+                    root,
+                    root
+                )),
+                None => Ok(None),
+            },
             _ => Ok(None),
         }
     }

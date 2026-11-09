@@ -374,6 +374,40 @@ fn a_shared_tuple_reference_is_never_lent_on_as_writable() {
     assert_eq!(got, want);
 }
 
+/// A PLACE inside a shared tuple reference never reaches a writable parameter
+/// (review round 2), however it is spelled: the call emitter takes the place's
+/// address itself for a `&mut` or `mut` parameter, so `set(*p)` from
+/// `mut p: &(i64, i64)` was emitted `set(&(*p))` — a `const T*` where `T*` is
+/// declared — and printed `97 83` through each of these four parameter kinds.
+#[test]
+fn a_place_inside_a_shared_tuple_reference_never_reaches_a_writable_parameter() {
+    let set = "fn set(q: &mut (i64, i64)) { *q = (97, 83); }\n";
+    let main = "fn main() { let mut t = (11, 29); f(t); print_int(t.0); print_int(t.1); }\n";
+    let rows: [(&str, String); 6] = [
+        ("`set(*p)` into `&mut (..)`", format!("{set}fn f(mut p: &(i64, i64)) {{ set(*p); }}\n{main}")),
+        ("`m(*p)` into a `mut` by-value parameter", format!("fn m(mut u: (i64, i64)) {{ u = (97, 83); }}\nfn f(mut p: &(i64, i64)) {{ m(*p); }}\n{main}")),
+        ("`set(*p, 97)` into a generic `&mut (T, T)`", format!("fn set<T>(q: &mut (T, T), x: T) {{ *q = (x, x); }}\nfn f(mut p: &(i64, i64)) {{ set(*p, 97); }}\n{main}")),
+        ("`s.set(*p)` into a method's `&mut (..)`", format!("struct S {{ k: i64 }}\nimpl S {{ fn set(&self, q: &mut (i64, i64)) {{ *q = (97, 83); }} }}\nfn f(mut p: &(i64, i64)) {{ let s = S {{ k: 1 }}; s.set(*p); }}\n{main}")),
+        ("`set((*p))`, parenthesised", format!("{set}fn f(mut p: &(i64, i64)) {{ set((*p)); }}\n{main}")),
+        ("`two(*p, next(..))`, the hoisted argument path", format!("fn next(c: &mut i64) -> i64 {{ *c = *c + 1; return *c; }}\nfn two(q: &mut (i64, i64), b: i64) {{ *q = (97, b); }}\nfn f(mut p: &(i64, i64)) {{ let mut k = 82; two(*p, next(&mut k)); }}\n{main}")),
+    ];
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    for (shape, program) in &rows {
+        let verdict = outcome(program, "ref_tuple_place");
+        let refused_here = verdict.starts_with("REFUSED: ")
+            && verdict.contains("or a place inside it, and that parameter may write");
+        let seen = if refused_here {
+            "REFUSED by name"
+        } else {
+            &verdict
+        };
+        got.push(format!("{}: {}", shape, seen));
+        want.push(format!("{}: REFUSED by name", shape));
+    }
+    assert_eq!(got, want);
+}
+
 /// `*p = v` through `&mut` stores only a value of the referent's C struct
 /// (review round 1). The type checker does not compare the two, and a tuple
 /// literal's struct is named from its elements' own C types, so each of these
@@ -413,6 +447,16 @@ fn a_tuple_reference_is_still_lent_where_it_cannot_be_written() {
                 "a method's `&(..)` parameter, as `&p` and as `p`",
                 "struct S { k: i64 }\nimpl S { fn m(&self, q: &(i64, i64)) -> i64 { return self.k + q.0; } }\nfn f(p: &(i64, i64)) -> i64 { let s = S { k: 100 }; return s.m(&p) + s.m(p); }\nfn main() { let t = (11, 29); print_int(f(&t)); }\n",
                 "RUN: 222\n",
+            ),
+            (
+                "`*p` of a `&mut` parameter into `&mut`",
+                "fn set(q: &mut (i64, i64)) { *q = (97, 83); }\nfn f(p: &mut (i64, i64)) { set(*p); }\nfn main() { let mut t = (11, 29); f(&mut t); print_int(t.0); print_int(t.1); }\n",
+                "RUN: 97\n83\n",
+            ),
+            (
+                "`*p` and `p` of a shared one, by value and into `&`",
+                "fn v(u: (i64, i64)) -> i64 { return u.0 * 100 + u.1; }\nfn peek(q: &(i64, i64)) -> i64 { return q.0 * 100 + q.1; }\nfn f(mut p: &(i64, i64)) -> i64 { return v(*p) + v(p) + peek(*p) + peek(p); }\nfn main() { let mut t = (11, 29); print_int(f(t)); print_int(t.0); }\n",
+                "RUN: 4516\n11\n",
             ),
             (
                 "`&mut *p` of a `&mut` parameter into `&mut`",
