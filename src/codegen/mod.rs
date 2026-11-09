@@ -343,18 +343,23 @@ pub struct CodeGenerator {
     /// imported public generic, unless a local function of the name overwrites it, and a
     /// local generic. A call of one is emitted only as one of its instantiations.
     generic_templates: std::collections::HashSet<String>,
-    /// The parameters of the function being generated whose C type `variables`
-    /// does not record as declared — a `u32`, `u64`, `f32` or `f64` parameter is
-    /// tracked there as `long long` and declared `unsigned int`, `unsigned long
-    /// long`, `float` or `double` — by name, with the C type it is declared at.
-    /// Only `exact_c_type_in` reads it. Every other binding is of the C type it is
-    /// declared at in the emitted C, which `variables` records, so it is a BINDING
-    /// map like `variables` and `array_bindings`: a binding of the name shadows
-    /// the parameter's entry (`bind_non_array`, `let`), and a scope gives it back
-    /// when it closes (`open_binding_scope`). Review round 3 measured a flat map:
-    /// a `w` bound in an inner block or by a `for` kept a `u32` parameter's entry
-    /// alive over an outer `i64` `w`, which was then inverted as a `u32`.
-    param_exact_c: std::collections::HashMap<String, String>,
+    /// The bindings of the function being generated whose EXACT C type — the
+    /// width of the value it holds, which picks an instantiation
+    /// (`exact_c_type_in`) — is not the C type `variables` tracks, by name:
+    /// `Some(t)` where it is `t`, `None` where it is not known. A `u32`, `u64`,
+    /// `f32` or `f64` parameter is tracked as `long long` and declared at its
+    /// own type; a `let` C declares wider than its initializer without changing
+    /// the value (`let w = p` with `p: u32` is a `long long`) holds the
+    /// initializer's; and a binding of a value whose width the emitted C erased
+    /// (`let w = v + 0` with `v: u32`, which C computes as `v + 0LL`, a `long
+    /// long`; a `for` over such a range; a match binding of such a value) has
+    /// none. A binding absent here is exactly its tracked type. It is a BINDING
+    /// map like `variables` and `array_bindings`: every binding of a name sets
+    /// or clears its entry, and a scope gives it back when it closes
+    /// (`open_binding_scope`). Review round 3 measured a flat map: a `w` bound in
+    /// an inner block or by a `for` kept a `u32` parameter's entry alive over an
+    /// outer `i64` `w`, which was then inverted as a `u32`.
+    param_exact_c: std::collections::HashMap<String, Option<String>>,
 }
 
 /// The bindings a scope may shadow, as `open_binding_scope` saw them: every map
@@ -364,7 +369,7 @@ struct BindingScope {
     arrays: std::collections::HashMap<String, ArrayBinding>,
     variables: std::collections::HashMap<String, String>,
     reference_locals: std::collections::HashMap<String, LetKey>,
-    param_exact_c: std::collections::HashMap<String, String>,
+    param_exact_c: std::collections::HashMap<String, Option<String>>,
 }
 
 /// Brackets the number of a `fresh_shadow_name` placeholder until
@@ -4780,7 +4785,7 @@ impl CodeGenerator {
                 && !declared.contains('[')
                 && !matches!(param.ty, Type::Reference { .. } | Type::Tuple(_))
             {
-                self.param_exact_c.insert(param.name.clone(), declared);
+                self.param_exact_c.insert(param.name.clone(), Some(declared));
             } else {
                 self.param_exact_c.remove(param.name.as_str());
             }
@@ -5059,13 +5064,36 @@ impl CodeGenerator {
                     }
                     _ => None,
                 };
-                // The binding is of the C type it is declared at here, whatever its
-                // initializer's was: `let w = v * 2` with `v: u32` is the `long long w` C
-                // computes `v * 2LL` into, and an instantiation chosen for `w` has to be the
-                // one `~w` written beside it agrees with (review round 3, fable: a `u32`
-                // recorded for `w` sent it to `invert__z`, 2589934591 beside `~w` =
-                // -6000000001). It shadows a parameter of the name.
-                self.param_exact_c.remove(name.as_str());
+                // The binding holds its initializer's value, and is EXACTLY of the
+                // initializer's exact C type where C declares it at that type or at one that
+                // holds it unchanged (`let w = p` with `p: u32` is a `long long w`, and still
+                // the `u32` 7). Where the initializer's width is not known — `let w = v * 2`
+                // with `v: u32` is the `long long` C computes `v * 2LL` at, which is no
+                // `u32` (review round 4) — or the declaration changes the value, neither is
+                // the binding's. An annotation is exact as written. It shadows any binding
+                // of the name.
+                let exact = match ty {
+                    Some(_) => Some(None),
+                    None => {
+                        let declared = format!("{}{}", c_type, array_dims);
+                        match self.exact_c_type_in(value, &Default::default()) {
+                            Some(e) if Self::same_c_type(&e, &declared) => Some(None),
+                            Some(e) if Self::holds_unchanged(&declared, &e) => Some(Some(e)),
+                            _ => None,
+                        }
+                    }
+                };
+                match exact {
+                    Some(None) => {
+                        self.param_exact_c.remove(name.as_str());
+                    }
+                    Some(Some(e)) => {
+                        self.param_exact_c.insert(name.clone(), Some(e));
+                    }
+                    None => {
+                        self.param_exact_c.insert(name.clone(), None);
+                    }
+                }
                 // Track variable type for future inference. Arrays keep their
                 // dimensions in the recorded type.
                 self.variables
@@ -5363,8 +5391,15 @@ impl CodeGenerator {
                         // can be typed (see try_infer_expr_type/Expr::Ident).
                         // The scope opens *here*, before the binder is written,
                         // so the binder cannot outlive the loop.
+                        // The variable is a `long long` stepping between the bounds, exactly so
+                        // where both bounds are: `0..n` with `n: u32` steps a `u32` range in a
+                        // `long long` (round 4), which picks no instantiation.
+                        let range_exact = self.exact_c_type_in(iter, &Default::default()).is_some();
                         let loop_scope = self.open_binding_scope();
                         self.bind_non_array(var, "long long".to_string())?;
+                        if !range_exact {
+                            self.param_exact_c.insert(var.clone(), None);
+                        }
                         if *inclusive {
                             self.output
                                 .push_str(&format!("        if ({} <= {}) {{\n", lo, hi));
@@ -5472,8 +5507,14 @@ impl CodeGenerator {
                             n = n,
                             r = r
                         ));
+                        // The `__pd_range` holds `long long` bounds; a range value whose own bounds
+                        // were of an erased width (`let r = 0..n` with `n: u32`) has no exact type.
+                        let range_exact = self.exact_c_type_in(iter, &Default::default()).is_some();
                         let loop_scope = self.open_binding_scope();
                         self.bind_non_array(var, "long long".to_string())?;
+                        if !range_exact {
+                            self.param_exact_c.insert(var.clone(), None);
+                        }
                         // Same two properties as the header form above: the
                         // span is subtracted in unsigned arithmetic so it cannot
                         // overflow, and the exit test asks whether the value
@@ -5609,8 +5650,18 @@ impl CodeGenerator {
                         // integer, and the body needs to know it.
                         self.output
                             .push_str(&format!("            {} {} = ", elem_type, var));
+                        // The element is exactly the C type it is declared at where the array's
+                        // own exact type says so; an array of erased widths gives an erased one.
+                        let element_exact = self
+                            .exact_c_type_in(iter, &Default::default())
+                            .and_then(|t| t.find('[').map(|open| (t.clone(), open)))
+                            .and_then(|(t, open)| t.find(']').map(|close| format!("{}{}", &t[..open], &t[close + 1..])))
+                            .is_some_and(|t| Self::same_c_type(&t, &elem_type));
                         let loop_scope = self.open_binding_scope();
                         self.bind_non_array(var, elem_type)?;
+                        if !element_exact {
+                            self.param_exact_c.insert(var.clone(), None);
+                        }
                         self.generate_expression(iter)?;
                         self.output.push_str("[_i];\n");
 
@@ -5709,7 +5760,9 @@ impl CodeGenerator {
 
                         let arm_scope = self.open_binding_scope();
                         let emitted = (|| -> Result<()> {
+                            let subject_exact = self.exact_c_type_in(expr, &Default::default());
                             self.emit_pattern_bindings(&arm.pattern, "_match_expr", &temp_type)?;
+                            self.mark_arm_bindings_exactness(&arm.pattern, subject_exact.as_deref(), &temp_type);
 
                             match &arm.guard {
                                 None => {
@@ -5770,7 +5823,9 @@ impl CodeGenerator {
 
                     let arm_scope = self.open_binding_scope();
                     let emitted = (|| -> Result<()> {
+                        let subject_exact = self.exact_c_type_in(expr, &Default::default());
                         self.emit_pattern_bindings(&arm.pattern, "_match_expr", &temp_type)?;
+                        self.mark_arm_bindings_exactness(&arm.pattern, subject_exact.as_deref(), &temp_type);
                         self.generate_block(&arm.body, "        ")?;
                         Ok(())
                     })();
@@ -6863,6 +6918,38 @@ impl CodeGenerator {
     ///
     /// The bindings are written before anything else in the arm — before the
     /// guard, which may read them, and before the body.
+    /// A match arm declares its bindings at the scrutinee's tracked C type
+    /// (`emit_pattern_bindings`); where the scrutinee's EXACT type is another,
+    /// a whole-value binding holds it as a `let` would (`match p { x => .. }`
+    /// with `p: u32` is a `long long x` holding the `u32`), and every other
+    /// binding of the arm has no exact type known (round 4: an erased width
+    /// reached a match binding as an exact `long long`).
+    fn mark_arm_bindings_exactness(
+        &mut self,
+        pattern: &Pattern,
+        subject_exact: Option<&str>,
+        subject_type: &str,
+    ) {
+        if subject_exact.is_some_and(|e| Self::same_c_type(e, subject_type)) {
+            return;
+        }
+        let whole = match pattern {
+            Pattern::Ident(name) | Pattern::Binding { name, .. } => Some(name.as_str()),
+            _ => None,
+        };
+        let mut names = Vec::new();
+        Self::pattern_names(pattern, &mut names);
+        for name in names {
+            let entry = match subject_exact {
+                Some(e) if whole == Some(name.as_str()) && Self::holds_unchanged(subject_type, e) => {
+                    Some(e.to_string())
+                }
+                _ => None,
+            };
+            self.param_exact_c.insert(name, entry);
+        }
+    }
+
     fn emit_pattern_bindings(
         &mut self,
         pattern: &Pattern,
@@ -8274,7 +8361,7 @@ impl CodeGenerator {
                 return Err(CompileError::CodegenError {
                     message: format!(
                         "the call of `{}` is of {}, the instantiation the type checker recorded \
-                         for it, whose parameter `{}` is a `{}`; the argument is a `{}`, and no \
+                         for it, whose parameter `{}` is a `{}`; the argument is {}, and no \
                          instantiation of `{}` of that kind takes it exactly. The type checker \
                          records an integer of every width as `i64` and a reference as the type \
                          it refers to, so the record does not say which of those the argument \
@@ -8285,7 +8372,14 @@ impl CodeGenerator {
                         spelled(one),
                         param,
                         wanted,
-                        given,
+                        if given.is_empty() {
+                            "a value whose width the emitted C does not keep — C computes a `u32` \
+                             or an `i32` beside a `long long` literal or operand as a `long long` \
+                             — or whose C type this compiler cannot say"
+                                .to_string()
+                        } else {
+                            format!("a `{}`", given)
+                        },
                         func_name
                     ),
                 }
@@ -8367,28 +8461,31 @@ impl CodeGenerator {
     /// instantiation of a generic a value belongs to (review round 2); `None`
     /// where it does not.
     ///
-    /// It is the type the value has IN THE EMITTED C (review round 3), so that
-    /// the instantiation chosen for a value does with it what every other
-    /// operation the program writes on it does. `try_infer_expr_type_in`
-    /// answers `long long` for an arithmetic, bitwise or remainder expression
-    /// over integers whatever its operands are, which is harmless where it
-    /// only picks a spelling and wrong as proof of which instantiation a value
-    /// is: `half(v + 0)` with `v: u64` was typed `long long`, matched
-    /// `half__i64` exactly, and halved 9223372036854775808 as a signed number
-    /// (main printed 4611686018427387904). Here an operator's type is C's,
-    /// from its operands' types — the usual arithmetic conversions for `+ - *
-    /// / % & | ^`, an integer literal being the `long long` it is emitted as
-    /// (`v + 0LL` is an `unsigned long long` over a `u64`, and a `long long`
-    /// over a `u32`), the left operand's for a shift, `int` for a comparison
-    /// or a logical connective. Round 2 gave an untyped literal its other
-    /// operand's width instead, and so claimed `unsigned int` for `(v - 1) /
-    /// 2` over a `u32` 0, which C computes as the `long long` 0 - 1 / 2: the
-    /// call printed 4294967295 beside the program's own `~w` = -1. A binding is
-    /// of the type it is declared at (a parameter as declared, not as
-    /// `variables` tracks it), and so are a field, an element, a cast and a
-    /// function's result. A value `if`, `match`, `loop` or block is of the type
-    /// every value it can produce has, where each is also the type of the
-    /// temporary that carries it out (`exact_c_type_of_values`).
+    /// It is the WIDTH of the value, as the emitted C holds it, so that the
+    /// instantiation chosen for a value computes what the program wrote (review
+    /// rounds 3-4). `try_infer_expr_type_in` answers `long long` for an
+    /// arithmetic, bitwise or remainder expression over integers whatever its
+    /// operands are, which is harmless where it only picks a spelling and wrong
+    /// as proof of which instantiation a value is: `half(v + 0)` with `v: u64`
+    /// was typed `long long`, matched `half__i64` exactly, and halved
+    /// 9223372036854775808 as a signed number (main printed
+    /// 4611686018427387904). Here an operator's type is C's, from its operands'
+    /// types — the usual arithmetic conversions for `+ - * / % & | ^`, the left
+    /// operand's for a shift, `int` for a comparison or a logical connective —
+    /// and it is the value's width only where it is an operand's own: both
+    /// operands', or a declared operand's beside an untyped literal (`v + 0LL`
+    /// over a `u64` is an `unsigned long long`). Over a `u32` or an `i32`, C
+    /// computes `v + 0LL` as a `long long`, which is no width the program
+    /// wrote, and the value has none known: round 2 claimed the `u32` (`(v - 1)
+    /// / 2` of a `u32` 0, which C computes as 0, became `invert__z`'s
+    /// 4294967295), round 3 the `long long` (`let w = v + 0; inv(w)` became
+    /// `inv__i64`'s -8 where main printed the `u32` answer 4294967288); both
+    /// computed a width the program never had. A binding is of the exact type
+    /// `param_exact_c` records for it, else of the type it is declared at; so
+    /// are a field, a cast and a function's result; an element, a tuple member
+    /// and a range are of their base's. A value `if`, `match`, `loop` or block
+    /// is of the type every value it can produce has, where each is also the
+    /// type of the temporary that carries it out (`exact_c_type_of_values`).
     fn exact_c_type_in(
         &self,
         expr: &Expr,
@@ -8415,7 +8512,19 @@ impl CodeGenerator {
                     if matches!(op, BinOp::Add) && l == "const char*" && r == "const char*" {
                         return Some(l);
                     }
-                    Self::usual_arithmetic_conversion(&l, &r)
+                    // C computes the operation at the usual arithmetic conversion of its
+                    // operands, and that is the value's width only where it is an operand's
+                    // OWN: both operands', or a declared operand's beside an untyped literal
+                    // (`v + 0` over a `u64` is the `unsigned long long` C computes). Over a
+                    // `u32` or an `i32`, C computes `v + 0LL` as a `long long`, which is no
+                    // width the program wrote: the value's is erased, and it picks no
+                    // instantiation (review round 4: `inv(w)` with `let w = v + 0` was
+                    // `inv__i64`, -8, where main printed the `u32` answer 4294967288).
+                    let result = Self::usual_arithmetic_conversion(&l, &r)?;
+                    let own = Self::same_c_type(&l, &r)
+                        || (Self::untyped_literal(left) && Self::same_c_type(&result, &r))
+                        || (Self::untyped_literal(right) && Self::same_c_type(&result, &l));
+                    own.then_some(result)
                 }
             },
             Expr::Unary { op, operand, .. } => match op {
@@ -8476,18 +8585,18 @@ impl CodeGenerator {
                 let then_value = then_value.as_deref()?;
                 let else_value = else_value.as_deref()?;
                 self.exact_c_type_of_values(&[
-                    (then_value, self.locals_of(then_branch, locals)),
-                    (else_value, self.locals_of(else_branch.as_deref()?, locals)),
+                    (then_value, self.exact_locals_of(then_branch, locals)?),
+                    (else_value, self.exact_locals_of(else_branch.as_deref()?, locals)?),
                 ])
             }
             Expr::Block { stmts, value, .. } => {
-                self.exact_c_type_of_values(&[(value.as_deref()?, self.locals_of(stmts, locals))])
+                self.exact_c_type_of_values(&[(value.as_deref()?, self.exact_locals_of(stmts, locals)?)])
             }
             Expr::Match { expr, arms, .. } => {
                 let mut values = Vec::with_capacity(arms.len());
                 for arm in arms {
                     let bound = self.pattern_locals(&arm.pattern, expr, locals)?;
-                    values.push((arm.value.as_ref()?, self.locals_of(&arm.body, &bound)));
+                    values.push((arm.value.as_ref()?, self.exact_locals_of(&arm.body, &bound)?));
                 }
                 self.exact_c_type_of_values(&values)
             }
@@ -8498,8 +8607,31 @@ impl CodeGenerator {
             }
             // A parameter is of the C type it is declared at, unless a binding of the
             // compound value being typed shadows it (`locals`).
+            // A binding `param_exact_c` knows the exact type of better than `variables`,
+            // unless a binding of the compound value being typed shadows it (`locals`).
             Expr::Ident(name) if !locals.contains_key(name) && self.param_exact_c.contains_key(name) => {
-                self.param_exact_c.get(name).cloned()
+                self.param_exact_c.get(name).cloned().flatten()
+            }
+            // An element, a member or a range is of the width its base holds it at.
+            Expr::TupleIndex { expr: base, index, .. } => {
+                let base = self.exact_c_type_in(base, locals)?;
+                self.tuple_shapes.element_types(&base)?.get(*index).cloned()
+            }
+            Expr::Index { array, .. } => {
+                let base = self.exact_c_type_in(array, locals)?;
+                match (base.find('['), base.find(']')) {
+                    (Some(open), Some(close)) if open < close => {
+                        Some(format!("{}{}", &base[..open], &base[close + 1..]))
+                    }
+                    _ => self.try_infer_expr_type_in(expr, locals),
+                }
+            }
+            Expr::Range { start, end, .. } => {
+                let ends_exact = [start, end].iter().all(|bound| {
+                    self.exact_c_type_in(bound, locals)
+                        .is_some_and(|t| Self::same_c_type(&t, "long long"))
+                });
+                ends_exact.then(|| self.try_infer_expr_type_in(expr, locals)).flatten()
             }
             _ => self.try_infer_expr_type_in(expr, locals),
         }
@@ -8553,6 +8685,12 @@ impl CodeGenerator {
         let mut bound = std::collections::HashMap::new();
         if !names.is_empty() {
             let subject_type = self.try_infer_expr_type_in(subject, locals)?;
+            // The arm declares its bindings at the scrutinee's tracked type, which is
+            // their exact one only where the scrutinee's is (round 4).
+            let subject_exact = self.exact_c_type_in(subject, locals)?;
+            if !Self::same_c_type(&subject_exact, &subject_type) {
+                return None;
+            }
             self.bind_pattern_locals(pattern, &subject_type, &mut bound);
         }
         if !names.iter().all(|name| bound.contains_key(name)) {
@@ -8561,6 +8699,38 @@ impl CodeGenerator {
         let mut out = locals.clone();
         out.extend(bound);
         Some(out)
+    }
+
+    /// `locals_of` for typing a compound value exactly: `None` where a `let` of
+    /// the statements is not exactly the C type it is declared at (`let w = v +
+    /// 0` with `v: u32` holds an erased width, review round 4), which the value
+    /// may read.
+    fn exact_locals_of(
+        &self,
+        stmts: &[Stmt],
+        outer: &std::collections::HashMap<String, String>,
+    ) -> Option<std::collections::HashMap<String, String>> {
+        let mut locals = outer.clone();
+        for stmt in stmts {
+            if let Stmt::Let {
+                name, ty, value, ..
+            } = stmt
+            {
+                let declared = match ty {
+                    Some(t) => self.type_to_c(t),
+                    None => {
+                        let declared = self.try_infer_expr_type_in(value, &locals)?;
+                        let exact = self.exact_c_type_in(value, &locals)?;
+                        if !Self::same_c_type(&exact, &declared) {
+                            return None;
+                        }
+                        declared
+                    }
+                };
+                locals.insert(name.clone(), declared);
+            }
+        }
+        Some(locals)
     }
 
     /// The names `pattern` binds.
@@ -8624,7 +8794,14 @@ impl CodeGenerator {
                     }
                     let c_type = match ty {
                         Some(t) => self.type_to_c(t),
-                        None => self.try_infer_expr_type_in(value, &locals)?,
+                        None => {
+                            let declared = self.try_infer_expr_type_in(value, &locals)?;
+                            let exact = self.exact_c_type_in(value, &locals)?;
+                            if !Self::same_c_type(&exact, &declared) {
+                                return None;
+                            }
+                            declared
+                        }
                     };
                     locals.insert(name.clone(), c_type);
                 }
@@ -8804,6 +8981,31 @@ impl CodeGenerator {
         }
     }
 
+    /// Is `expr` an untyped numeric literal (possibly negated), whose width is
+    /// its context's rather than its own?
+    fn untyped_literal(expr: &Expr) -> bool {
+        match expr {
+            Expr::Integer(_) | Expr::Float(_) => true,
+            Expr::Unary {
+                op: UnaryOp::Neg,
+                operand,
+                ..
+            } => Self::untyped_literal(operand),
+            _ => false,
+        }
+    }
+
+    /// Does a C object of type `carrier` hold every value of the exact C type
+    /// `exact` so that converting it back yields the value unchanged — an `int`
+    /// or `unsigned int` in a `long long`, the bits of an `unsigned long long`
+    /// in a `long long`, a `float` in a `double`?
+    fn holds_unchanged(carrier: &str, exact: &str) -> bool {
+        matches!(
+            (exact, carrier),
+            ("int" | "unsigned int" | "unsigned long long", "long long") | ("float", "double")
+        )
+    }
+
     /// The C type of an array of `len` elements of the C type `element`, the
     /// new length outermost.
     fn c_array_of(element: &str, len: usize) -> String {
@@ -8874,7 +9076,7 @@ impl CodeGenerator {
             match self.exact_c_type_in(arg, &Default::default()) {
                 Some(given) if Self::same_c_type(&given, &wanted) => None,
                 Some(given) => Some((param, wanted, given)),
-                None => Some((param, wanted, "value whose C type this compiler cannot say exactly".to_string())),
+                None => Some((param, wanted, String::new())),
             }
         })
     }

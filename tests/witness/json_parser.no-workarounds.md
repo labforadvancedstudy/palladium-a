@@ -354,7 +354,7 @@ Recorded because a pessimistic manifest costs as much as an optimistic one.
   M8) and tuples (row 3, N4-12, M2) — both **owned**. What the closure does *not* establish is that
   the natural `enum Json` will lay out once those land: `labelled_occurrences` in `src/typeck/mod.rs`
   drops `Type::Generic` into its `_ => {}` arm, so a generic's type arguments contribute no
-  containment edge, and `src/codegen/mod.rs:1863-1865` lowers `Type::Generic` to `"void*"` under a
+  containment edge, and `src/codegen/mod.rs:1868-1870` lowers `Type::Generic` to `"void*"` under a
   `TODO`. `enum J { Num(i64), Arr(Vec<J>) }` therefore reaches exit 0 without the layout rule ever
   seeing the cycle. The rule is measured for `Custom`, `Array` and `Tuple` payloads only.
 - **Struct-of-arrays state threads through recursive descent correctly.** A `&mut self` receiver

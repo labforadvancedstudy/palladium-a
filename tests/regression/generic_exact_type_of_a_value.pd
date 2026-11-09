@@ -1,10 +1,9 @@
-// A GENERIC USE IS OF THE C TYPE ITS VALUE HAS IN THE EMITTED C (#86, #87,
-// review round 3).
+// A GENERIC USE IS OF THE WIDTH ITS VALUE HAS (#86, #87, review rounds 3-4).
 //
 // Code generation emits a call or a struct literal at the instantiation the
 // type checker recorded for it where every value is EXACTLY its parameter's or
-// field's C type, and the record keeps no integer width (#82). Three things
-// decide a value's C type here, and each was wrong before this round:
+// field's C type, and the record keeps no integer width (#82). What decides a
+// value's exact type here, and was wrong before:
 //
 // - A parameter is declared at its own C type (`w: u32` is an `unsigned int`)
 //   while the generator tracks it as a `long long`, and the declared type was
@@ -13,9 +12,11 @@
 //   `inv__z` (4294967294 where `~` of the i64 is -4294967298), and an inner
 //   `let w = 9` dropped the parameter's entry for good (-8 where the C
 //   `unsigned int` 7 inverts to 4294967288). It is scoped like every binding.
-// - A literal is the `long long` it is emitted as, and a `let` the C type it
-//   is declared at: `let w = v * 2` over a `u32` is the `long long` C computes,
-//   and `inv(w)` agrees with the `~w` written beside it.
+// - A `let` or a match binding of such a parameter is declared `long long` and
+//   still holds the `u32`: it is of the parameter's width (main printed -8).
+//   A value C computes at a width the program never wrote — `v + 0` over a
+//   `u32` is `v + 0LL`, a `long long` — has none, and is refused by name
+//   (PD0082) rather than computed as a `u32` or as an i64.
 // - A value `if`, `match`, `loop` or block is of the one C type its values
 //   have, where each is also the type of the temporary that carries it out;
 //   these were refused although their record `G<i64>` holds them exactly.
@@ -63,6 +64,20 @@ fn param_after_shadow<T>(t: T, w: u32) -> i64 {
     return inv(w);
 }
 
+fn via_let<T>(t: T, p: u32) -> i64 {
+    let w = p;
+    return inv(w);
+}
+
+fn via_match<T>(t: T, p: u32) -> i64 {
+    match p {
+        x => {
+            return inv(x);
+        }
+    }
+    return 0;
+}
+
 fn main() {
     let s = S { n: 0 };
     let zval = s.get();
@@ -73,11 +88,8 @@ fn main() {
     print_int(for_over_param(1, 7));
     print_int(param_after_shadow(1, 7));
 
-    let v: u32 = 3000000000;
-    let w = v * 2;
-    print_int(w);
-    print_int(~w);
-    print_int(inv(w));
+    print_int(via_let(1, 7));
+    print_int(via_match(1, 7));
 
     let g1 = G { v: if true { 1 } else { 2 } };
     let g2 = G { v: { let x = 1; x + 1 } };
