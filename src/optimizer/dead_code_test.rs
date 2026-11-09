@@ -39,6 +39,7 @@ mod tests {
                 func: Box::new(Expr::Ident("print".to_string())),
                 args: vec![Expr::String("never executed".to_string())],
                 span: Span::dummy(),
+                id: crate::ast::CallId::fresh(),
             }),
         ]);
         
@@ -116,6 +117,7 @@ mod tests {
             func: Box::new(Expr::Ident("print".to_string())),
             args: vec![Expr::Integer(42)],
             span: Span::dummy(),
+            id: crate::ast::CallId::fresh(),
         });
         assert!(!pass.optimize_statement(&mut stmt).unwrap());
     }
@@ -408,6 +410,7 @@ mod tests {
                 func: Box::new(Expr::Ident("print_x".to_string())),
                 args: vec![Expr::Ident("x".to_string())],
                 span: Span::dummy(),
+                id: crate::ast::CallId::fresh(),
             }),
         ]);
 
@@ -448,6 +451,7 @@ mod tests {
                 func: Box::new(Expr::Ident("print_x".to_string())),
                 args: vec![Expr::Ident("x".to_string())],
                 span: Span::dummy(),
+                id: crate::ast::CallId::fresh(),
             }),
         ]);
 
@@ -487,6 +491,7 @@ mod tests {
                 func: Box::new(Expr::Ident("print_x".to_string())),
                 args: vec![],
                 span: Span::dummy(),
+                id: crate::ast::CallId::fresh(),
             }),
         ]);
 
@@ -521,6 +526,7 @@ mod tests {
                 func: Box::new(Expr::Ident("print_x".to_string())),
                 args: vec![],
                 span: Span::dummy(),
+                id: crate::ast::CallId::fresh(),
             }),
         ]);
 
@@ -557,6 +563,7 @@ mod tests {
                 func: Box::new(Expr::Ident("print_x".to_string())),
                 args: vec![],
                 span: Span::dummy(),
+                id: crate::ast::CallId::fresh(),
             }),
         ]);
 
@@ -595,6 +602,7 @@ mod tests {
                 func: Box::new(Expr::Ident("print_x".to_string())),
                 args: vec![],
                 span: Span::dummy(),
+                id: crate::ast::CallId::fresh(),
             }),
         ]);
 
@@ -803,6 +811,7 @@ mod tests {
             func: Box::new(Expr::Ident("f".to_string())),
             args: vec![],
             span: Span::dummy(),
+            id: crate::ast::CallId::fresh(),
         }));
         
         // Binary operations with side effects in operands
@@ -811,6 +820,7 @@ mod tests {
                 func: Box::new(Expr::Ident("f".to_string())),
                 args: vec![],
                 span: Span::dummy(),
+                id: crate::ast::CallId::fresh(),
             }),
             op: BinOp::Add,
             right: Box::new(Expr::Integer(1)),
@@ -824,6 +834,7 @@ mod tests {
                 func: Box::new(Expr::Ident("get_index".to_string())),
                 args: vec![],
                 span: Span::dummy(),
+                id: crate::ast::CallId::fresh(),
             }),
             span: Span::dummy(),
         }));
@@ -874,6 +885,7 @@ mod tests {
             func: Box::new(Expr::Ident("print".to_string())),
             args: vec![],
             span: Span::dummy(),
+            id: crate::ast::CallId::fresh(),
         })));
     }
 

@@ -340,7 +340,7 @@ pub fn c_enum_payload_member(variant: &str) -> Cow<'_, str> {
 /// A monomorphisation template for a generic function, with every name it
 /// carries in its C spelling.
 ///
-/// The NAME is escaped too, not only the body: `get_mangled_name_for_call`
+/// The NAME is escaped too, not only the body: `instantiation_called`
 /// resolves a call by comparing the call's function name — which comes from the
 /// escaped AST — against these entries, so an unescaped key would stop matching
 /// a keyword-named generic instead of merely misspelling it.

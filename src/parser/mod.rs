@@ -4447,6 +4447,7 @@ impl Parser {
                             start_span.line,
                             start_span.column,
                         ),
+                        id: CallId::fresh(),
                     };
                 }
                 Ok(Token::Dot) if self.check_at(1, &Token::Await) => {

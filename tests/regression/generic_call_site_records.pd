@@ -1,0 +1,58 @@
+// A GENERIC CALL IS THE INSTANTIATION THE TYPE CHECKER RECORDED FOR IT (#86).
+//
+// Code generation chose among every instantiation of a generic function by the
+// C type of the call's FIRST argument, with substring tests. `"unsigned int"`
+// contains `"int"`, so `half(v)` with `v: u32` beside a `half(true)` called the
+// `bool` instantiation and printed -647483648; a type argument matched in ANY
+// position, so `snd(1, 2)` beside `snd(1, "hello")` called `snd__i64_String`
+// and gcc refused the program; and a call inside a generic body could name an
+// instantiation nothing had recorded (gcc: undeclared function). Each call now
+// prints the value its own instantiation computes.
+fn half<T>(x: T) -> T {
+    return x / 2;
+}
+
+fn snd<A, B>(a: A, b: B) -> B {
+    return b;
+}
+
+fn pick<T>(n: i64, x: T) -> T {
+    return x;
+}
+
+fn id<T>(x: T) -> T {
+    return x;
+}
+
+// Its body's `id(x)` is `id<T>`, and `id<String>` is instantiated by nothing else.
+fn wrap<T>(x: T) -> T {
+    return id(x);
+}
+
+// A `u32` halved in a body, beside the `bool` instantiation `main` makes.
+fn halve_in_body<T>(x: T) -> i64 {
+    let v: u32 = 3000000000;
+    return half(v);
+}
+
+fn main() {
+    // The #86 repro.
+    let b = half(true);
+    let v: u32 = 3000000000;
+    print_int(half(v));
+
+    // Two instantiations sharing a first type argument.
+    let s = snd(1, "hello");
+    print(s);
+    print_int(snd(1, 2));
+
+    // The type parameter is in the second parameter only.
+    print(pick(1, "a"));
+    print_int(pick(2, 7));
+    let c = pick(3, true);
+
+    // Calls inside generic bodies.
+    print_int(wrap(5));
+    print(wrap("s"));
+    print_int(halve_in_body(1));
+}

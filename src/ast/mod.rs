@@ -704,11 +704,12 @@ pub enum Expr {
         index: Box<Expr>,
         span: Span,
     },
-    /// Function call
+    /// Function call; `id` is WHICH one (`CallId`), as a span may be another's
     Call {
         func: Box<Expr>,
         args: Vec<Expr>,
         span: Span,
+        id: CallId,
     },
     /// Binary operation (for future use)
     Binary {
@@ -984,6 +985,32 @@ pub struct LiteralId(u64);
 
 impl LiteralId {
     /// An identity no literal has yet: one per call, in this process.
+    pub fn fresh() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
+/// WHICH CALL an `Expr::Call` is (issue #86): the call's identity, given by
+/// the parser exactly as a struct literal's `LiteralId` is, for the same
+/// reason — a span is not one (each macro expansion is parsed again from
+/// offset 0, and two files share offsets).
+///
+/// The type checker records the type arguments it inferred for each generic
+/// call by this identity (`crate::typeck::CallRecords`), and code generation
+/// emits the call as that instantiation and no other. It used to choose among
+/// every instantiation of the callee by the C type of the call's first
+/// argument, so `half(v)` with `v: u32` beside a `half(true)` called the
+/// `bool` instantiation and printed `-647483648`.
+///
+/// A copy of a node is the same call — a generic body as code generation
+/// monomorphizes it, a method call rewritten to its path form — so what is
+/// recorded for one is recorded for every copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CallId(u64);
+
+impl CallId {
+    /// An identity no call has yet: one per call, in this process.
     pub fn fresh() -> Self {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         Self(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))

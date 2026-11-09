@@ -1,0 +1,73 @@
+// A GENERIC STRUCT LITERAL IN A GENERIC BODY IS OF ITS OWN RECORD (#87).
+//
+// The type checker never walked a generic function's body, so a struct literal
+// there had no record of its own, and code generation matched it against every
+// instantiation any other literal had recorded. `unused` below records
+// `G<i64, z>` (its value is typed by the name of `type z = u32`), and the
+// body's `G { tag: t, p: v }` was built as a `G_i64_z`: `~gg.p` printed
+// 4294967288, where the same literal written in `main` prints -8 (the record is
+// `G<i64, i64>`; the checker keeps no integer width). An `if` meeting two body
+// literals put 4294967297 into that `unsigned int` field and printed 1, and
+// without the decoy the body's instantiation was recorded by nobody and gcc met
+// `incomplete type 'struct G'`. The body is walked now, once, in its own type
+// parameters, and each instantiation of it builds its literal's own record.
+type z = u32;
+
+struct S {
+    n: i64,
+}
+
+impl S {
+    fn get(&self) -> z {
+        return 7;
+    }
+}
+
+struct G<X, Y> {
+    tag: X,
+    p: Y,
+}
+
+struct Box<T> {
+    v: T,
+}
+
+fn build<T>(t: T) -> i64 {
+    let v: u32 = 7;
+    let gg = G { tag: t, p: v };
+    return ~gg.p;
+}
+
+fn pick<T>(t: T) -> i64 {
+    let v: u32 = 7;
+    let w: i64 = 4294967297;
+    let c = false;
+    let r = if c { G { tag: t, p: v } } else { G { tag: t, p: w } };
+    return r.p;
+}
+
+// `Box<T>` at each instantiation of `boxed`, and at nothing else.
+fn boxed<T>(x: T) -> T {
+    let b = Box { v: x };
+    return b.v;
+}
+
+fn main() {
+    let s = S { n: 0 };
+    let unused = G { tag: 1, p: s.get() };
+
+    // The body's literal, beside the decoy.
+    print_int(build(1));
+
+    // Two body literals met by an `if`.
+    print_int(pick(1));
+
+    // The same literal written here.
+    let v: u32 = 7;
+    let gg = G { tag: 1, p: v };
+    print_int(~gg.p);
+
+    // A body literal of its own type parameter, at two instantiations.
+    print_int(boxed(4));
+    print(boxed("w"));
+}

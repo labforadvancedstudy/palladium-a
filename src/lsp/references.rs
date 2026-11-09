@@ -428,6 +428,7 @@ mod tests {
                             func: Box::new(Expr::Ident("foo".to_string())),
                             args: vec![],
                             span: Span::new(12, 17, 0, 0),
+                            id: crate::ast::CallId::fresh(),
                         }),
                     ],
                     visibility: Visibility::Private,
@@ -469,6 +470,7 @@ mod tests {
                             func: Box::new(Expr::Ident("foo".to_string())),
                             args: vec![],
                             span: Span::new(12, 17, 0, 0),
+                            id: crate::ast::CallId::fresh(),
                         }),
                     ],
                     visibility: Visibility::Private,
@@ -725,6 +727,7 @@ mod tests {
                 func: Box::new(Expr::Ident("bar".to_string())),
                 args: vec![Expr::Ident("foo".to_string())],
                 span: Span::new(0, 10, 0, 0),
+                id: crate::ast::CallId::fresh(),
             },
             // Field access
             Expr::FieldAccess {

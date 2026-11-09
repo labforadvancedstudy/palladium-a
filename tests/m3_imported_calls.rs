@@ -1845,31 +1845,32 @@ fn test_one_generic_name_with_two_instantiations_is_stable() {
 //
 // NOT AN IMPORT DEFECT, and recorded here for the same reason the generic
 // ordering above is: sorting `get_instantiations` made this reproducible, and
-// reproducible is what made it findable. Owned by M4, which owns generics.
+// reproducible is what made it findable. It was owed to M4, which owns
+// generics, and was paid by issue #86.
 
-/// A call with more than one candidate monomorphization resolves to the WRONG one,
-/// deterministically.
+/// A call with more than one candidate monomorphization resolves to ITS OWN.
 ///
-/// `get_mangled_name_for_call` matches if ANY type argument equals the inferred
-/// type of the FIRST argument, in ANY position. So for `fn snd<A, B>(a: A, b: B)`
-/// instantiated at both `(i64, String)` and `(i64, i64)`, the call `snd(1, 2)`
-/// matches the first sorted key on its `i64` in position 0 and resolves to
-/// `snd__i64_String`. Measured: the C contains both
+/// `get_mangled_name_for_call` matched if ANY type argument equalled the
+/// inferred type of the FIRST argument, in ANY position. So for `fn snd<A,
+/// B>(a: A, b: B)` instantiated at both `(i64, String)` and `(i64, i64)`, the
+/// call `snd(1, 2)` matched the first sorted key on its `i64` in position 0 and
+/// resolved to `snd__i64_String`. Measured: the C contained both
 /// `const char* snd__i64_String(long long a, const char* b)` and
-/// `long long snd__i64_i64(long long a, long long b)`, and emits
-/// `__pd_print_int(snd__i64_String(1, 2))` — the correct monomorphization is
-/// emitted and never called.
+/// `long long snd__i64_i64(long long a, long long b)`, and emitted
+/// `__pd_print_int(snd__i64_String(1, 2))` — the correct monomorphization was
+/// emitted and never called. The end of the same function was the quieter half:
+/// when nothing matched it returned the first instantiation rather than `None`,
+/// with no diagnostic.
 ///
-/// THIS IS A DECLARED ROW RATHER THAN A DOC COMMENT ON PURPOSE. Nothing gates a
-/// doc comment: it cannot fail when the defect worsens, and nothing notices when
-/// it is fixed. `make test-xfail` does both.
+/// The type checker now records each generic call's inferred type arguments by
+/// the call (`CallRecords`, keyed by its `CallId`), and code generation emits
+/// exactly that instantiation (`instantiation_called`); a call no record
+/// decides is refused by name unless one instantiation alone takes its
+/// arguments. `tests/m4_generic_call_sites.rs` covers the rest of the class.
 ///
-/// The end of the same function is a second, quieter half of the defect: when
-/// nothing matches at all it returns `instantiations_for_func[0]` rather than
-/// `None`, so a call with no candidate silently gets the first one and no
-/// diagnostic is produced anywhere.
+/// This row was an XFAIL owed to M4 until then, and keeps its name so the
+/// `paid` row in tests/rust-debt-manifest.txt is the row that was owed.
 #[test]
-#[ignore = "XFAIL: a generic call with several candidate monomorphizations resolves to the wrong one — `get_mangled_name_for_call` matches any type argument in any position against the FIRST argument's inferred type, so with `fn snd<A, B>(a: A, b: B) -> B` instantiated at (i64, String) and (i64, i64), `snd(1, 2)` lowers to `snd__i64_String(1, 2)` and gcc reports \"incompatible pointer to integer conversion\"; the correct `snd__i64_i64` is emitted and never called, and when nothing matches the function silently returns the first instantiation instead of None (owned by M4, generics and monomorphization)"]
 fn test_a_generic_call_resolves_to_its_own_monomorphization() {
     let (compiled, output, stdout) = compile_and_run(
         &[],

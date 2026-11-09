@@ -139,6 +139,8 @@ tests/regression/lifetimes_uninferred.pd	run	-	expected	-	-
 tests/regression/enum_in_composites.pd	run	-	expected	-	-
 tests/regression/generic_argument_kind.pd	run	-	expected	-	-
 tests/regression/projection_move_scope.pd	run	-	expected	-	-
+tests/regression/generic_call_site_records.pd	run	-	expected	-	-
+tests/regression/generic_body_literal_records.pd	run	-	expected	-	-
 
 # tests/reject/ -- NEGATIVE TESTS. Each of these MUST be refused, and that is
 # correct behaviour, so they are owed to no milestone and counted as coverage.

@@ -995,7 +995,7 @@ impl BorrowChecker {
                 }
             }
 
-            Expr::Call { func, args, span } => {
+            Expr::Call { func, args, span, .. } => {
                 // Check function expression — EXCEPT a method callee, whose
                 // receiver `check_call_args` checks itself as argument 0.
                 // Checking it here as well visits the receiver TWICE, which is

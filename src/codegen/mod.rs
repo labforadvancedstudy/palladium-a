@@ -331,6 +331,14 @@ pub struct CodeGenerator {
     shadow_counter: usize,
     /// The instantiation each generic struct literal is of (`StructLiterals`, review round 10).
     struct_literals: StructLiterals,
+    /// The instantiation each generic call is of: the type checker's record for it, by the
+    /// call (`crate::typeck::CallRecords`, issue #86).
+    call_records: crate::typeck::CallRecords,
+    /// The type arguments of the generic instantiation whose body is being emitted, by its
+    /// type parameter, and empty everywhere else: a use in that body is recorded in the body's
+    /// own parameters (`half<T>`), and is the instantiation they stand for here
+    /// (`through_instantiation`).
+    emitting_instantiation: std::collections::HashMap<String, String>,
 }
 
 /// What `open_binding_scope` saves and `close_binding_scope` restores: the
@@ -921,6 +929,8 @@ impl CodeGenerator {
             open_hoists: std::collections::HashSet::new(),
             break_temps: Vec::new(),
             struct_literals: StructLiterals::default(),
+            call_records: crate::typeck::CallRecords::default(),
+            emitting_instantiation: std::collections::HashMap::new(),
         })
     }
 
@@ -955,11 +965,14 @@ impl CodeGenerator {
     /// The mangled name `mangle_generic_name` builds from the escaped one
     /// (`pick__i64`) needs no escape of its own: it always contains `__`, and
     /// nothing in `RESERVED` survives the trailing-underscore strip with an
-    /// embedded one.
+    /// embedded one. `calls`, the instantiation each call is of, is keyed by
+    /// the call and holds no name to escape.
     pub fn set_generic_instantiations(
         &mut self,
         instantiations: Vec<(String, Vec<String>, crate::typeck::GenericFunction)>,
+        calls: crate::typeck::CallRecords,
     ) {
+        self.call_records = calls;
         self.generic_instantiations = instantiations
             .into_iter()
             .map(|(name, type_args, f)| {
@@ -3350,16 +3363,24 @@ impl CodeGenerator {
         // Generate monomorphized versions of generic functions AFTER structs
         if !self.generic_instantiations.is_empty() {
             self.output.push_str("// Monomorphized generic functions\n");
-            self.struct_literals.scope = LiteralScope::Unrecorded;
             for (func_name, type_args, generic_func) in &self.generic_instantiations.clone() {
                 // Create a concrete function from the generic template
                 let concrete_func =
                     self.monomorphize_function(func_name, type_args, generic_func)?;
-                self.generate_function(&concrete_func)?;
+                // Its body's uses are recorded in its own type parameters, and are the
+                // instantiations those stand for in this one (`through_instantiation`).
+                self.emitting_instantiation = generic_func
+                    .type_params
+                    .iter()
+                    .cloned()
+                    .zip(type_args.iter().cloned())
+                    .collect();
+                let emitted = self.generate_function(&concrete_func);
+                self.emitting_instantiation.clear();
+                emitted?;
             }
             self.output.push('\n');
         }
-        self.struct_literals.scope = LiteralScope::Recorded;
         // Generate functions from imported modules, off the SAME SORTED LOCAL as
         // above — `imported_modules` here is a sorted Vec, not the HashMap this
         // loop used to walk with `.values()`, because HashMap order put the hash
@@ -5791,6 +5812,7 @@ impl CodeGenerator {
         field: &str,
         args: &[Expr],
         span: Span,
+        id: crate::ast::CallId,
     ) -> Result<Expr> {
         let receiver_type =
             self.try_infer_expr_type(object)
@@ -5819,6 +5841,7 @@ impl CodeGenerator {
             func: Box::new(Expr::Ident(format!("{}::{}", owner, field))),
             args: call_args,
             span,
+            id,
         })
     }
 
@@ -7239,7 +7262,7 @@ impl CodeGenerator {
                     self.output.push_str(name);
                 }
             }
-            Expr::Call { func, args, span } => {
+            Expr::Call { func, args, span, id } => {
                 // METHOD CALL SYNTAX (N5-17). Rewritten to the path call it
                 // means — `x.f(a)` is `TypeOfX::f(x, a)` — and then emitted by
                 // the ordinary call path below, which already mangles a `::`
@@ -7252,7 +7275,7 @@ impl CodeGenerator {
                 // type because code generation does not receive the checker's
                 // conclusions.
                 if let Expr::FieldAccess { object, field, .. } = func.as_ref() {
-                    let rewritten = self.method_call_as_path_call(object, field, args, *span)?;
+                    let rewritten = self.method_call_as_path_call(object, field, args, *span, *id)?;
                     return self.generate_expression(&rewritten);
                 }
 
@@ -7299,7 +7322,7 @@ impl CodeGenerator {
                                     let mangled = format!("__pd_{}", name.replace("::", "_"));
                                     self.output.push_str(&mangled);
                                 } else if let Some(mangled_name) =
-                                    self.get_mangled_name_for_call(name, args)
+                                    self.instantiation_called(name, *id, args)?
                                 {
                                     // Check if this is a generic function that needs name mangling
                                     self.output.push_str(&mangled_name);
@@ -7648,6 +7671,13 @@ impl CodeGenerator {
                     self.generic_struct_instantiation_map.get(name)
                 {
                     let found = self.literal_instantiation(expr, &Default::default());
+                    if found.is_none() {
+                        if let Expr::StructLiteral { id, .. } = expr {
+                            if self.literal_is_unrecorded(*id) {
+                                return Err(Self::unrecorded_literal_refused(name, instantiations));
+                            }
+                        }
+                    }
                     Self::instantiation_matched(name, found.as_deref(), instantiations)?.to_string()
                 } else {
                     // Use the original name for non-generic structs
@@ -7725,6 +7755,7 @@ impl CodeGenerator {
                                 func: Box::new(Expr::Ident(qualified)),
                                 args: exprs.clone(),
                                 span: *span,
+                                id: crate::ast::CallId::fresh(),
                             });
                         }
                     }
@@ -8039,71 +8070,220 @@ impl CodeGenerator {
         format!("{}__{}", func_name, type_args.join("_"))
     }
 
-    /// Get the mangled name for a generic function call
-    fn get_mangled_name_for_call(&self, func_name: &str, args: &[Expr]) -> Option<String> {
-        // Check if this function has generic instantiations
-        let mut instantiations_for_func = Vec::new();
-        for (name, type_args, _) in &self.generic_instantiations {
-            if name == func_name {
-                instantiations_for_func.push(type_args.clone());
+    /// The C name of the instantiation of `func_name` the call `id` is of, or
+    /// `None`: `func_name` is no generic function, and is called by its name.
+    ///
+    /// THE ONE THE TYPE CHECKER RECORDED FOR THIS CALL (`CallRecords`, issue
+    /// #86) — in a generic body, its record through the instantiation being
+    /// emitted (`through_instantiation`), so `half(x)` in `wrap<T>` is
+    /// `half__i64` in `wrap__i64`.
+    ///
+    /// This chose among every instantiation of the name by the C type of the
+    /// call's FIRST argument, with substring tests, and accepted a type
+    /// argument in ANY position. `"unsigned int".contains("int")`, so `half(v)`
+    /// with `v: u32` beside a `half(true)` called `half__bool` and printed
+    /// `-647483648`; `snd(1, 2)` beside `snd(1, "x")` called `snd__i64_String`
+    /// (gcc); and when nothing matched it returned the first instantiation,
+    /// with no diagnostic. The record names one instantiation, and that one is
+    /// emitted.
+    ///
+    /// A call the checker recorded nothing for — one it could not infer the
+    /// type arguments of, in a generic body it walks without refusing (an
+    /// argument that is itself a call: `half(id(x))`) — is of the one
+    /// instantiation that takes its arguments (`takes_arguments`), and is
+    /// refused by name where none or more than one does. Never the first.
+    fn instantiation_called(
+        &self,
+        func_name: &str,
+        id: crate::ast::CallId,
+        args: &[Expr],
+    ) -> Result<Option<String>> {
+        let candidates: Vec<&Vec<String>> = self
+            .generic_instantiations
+            .iter()
+            .filter(|(name, _, _)| name == func_name)
+            .map(|(_, type_args, _)| type_args)
+            .collect();
+        let recorded: Vec<Vec<String>> = self
+            .call_records
+            .of(id)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|record| self.through_instantiation(record))
+            .collect();
+        if candidates.is_empty() && recorded.is_empty() && !self.is_generic_template(func_name) {
+            return Ok(None);
+        }
+        let spelled = |type_args: &[String]| format!("`{}<{}>`", func_name, type_args.join(", "));
+        let mut own: Vec<&Vec<String>> = candidates
+            .iter()
+            .copied()
+            .filter(|type_args| recorded.contains(type_args))
+            .collect();
+        if own.is_empty() && !recorded.is_empty() {
+            return Err(CompileError::Generic(format!(
+                "the call of `{}` is of {}, which the type checker recorded for it and which \
+                 was not instantiated; this is an internal error",
+                func_name,
+                spelled(&recorded[0])
+            )));
+        }
+        // One call the checker met twice (one node, checked in two places) can carry two
+        // records; it is the one of them that takes its arguments.
+        let unrecorded = own.is_empty();
+        if own.len() != 1 {
+            let pool = if unrecorded { candidates.clone() } else { own.clone() };
+            own = pool
+                .into_iter()
+                .filter(|type_args| self.takes_arguments(func_name, type_args, args))
+                .collect();
+        }
+        match own.as_slice() {
+            [one] => {
+                self.array_arguments_held(func_name, one, args)?;
+                Ok(Some(self.mangle_generic_name(func_name, one)))
             }
-        }
-
-        if instantiations_for_func.is_empty() {
-            return None;
-        }
-
-        // If there's only one instantiation, use it
-        if instantiations_for_func.len() == 1 {
-            return Some(self.mangle_generic_name(func_name, &instantiations_for_func[0]));
-        }
-
-        // Try to infer which instantiation based on the first argument type
-        if let Some(first_arg) = args.first() {
-            let arg_type_str = match first_arg {
-                Expr::ArrayLiteral { elements, .. } => {
-                    if !elements.is_empty() {
-                        // Infer from first element
-                        self.infer_expr_type(&elements[0])
+            taking => {
+                let named: Vec<String> = taking.iter().map(|a| spelled(a)).collect();
+                let all: Vec<String> = candidates.iter().map(|a| spelled(a)).collect();
+                Err(CompileError::Generic(format!(
+                    "cannot tell which instantiation of the generic function `{}` this call is \
+                     of: the type checker {} its type arguments, and {}. Pass the argument as a \
+                     variable or a literal, from which the type arguments are inferred where \
+                     the call is written",
+                    func_name,
+                    if unrecorded { "could not infer" } else { "recorded more than one set of" },
+                    if taking.is_empty() {
+                        if all.is_empty() {
+                            "it is instantiated at nothing".to_string()
+                        } else {
+                            format!("none of {} takes these arguments", all.join(", "))
+                        }
                     } else {
-                        return None;
+                        format!("{} each take these arguments", named.join(" and "))
                     }
-                }
-                Expr::Ident(name) => {
-                    // Look up variable type
-                    self.variables
-                        .get(name)
-                        .cloned()
-                        .unwrap_or_else(|| self.infer_expr_type(first_arg))
-                }
-                _ => self.infer_expr_type(first_arg),
-            };
-
-            // Find best matching instantiation
-            for type_args in &instantiations_for_func {
-                // Check if any type arg matches our inferred type
-                for type_arg in type_args {
-                    if type_arg == "i64" && arg_type_str.contains("long long") {
-                        return Some(self.mangle_generic_name(func_name, type_args));
-                    }
-                    if type_arg == "bool"
-                        && arg_type_str.contains("int")
-                        && !arg_type_str.contains("long")
-                    {
-                        return Some(self.mangle_generic_name(func_name, type_args));
-                    }
-                    if type_arg == "String" && arg_type_str.contains("char*") {
-                        return Some(self.mangle_generic_name(func_name, type_args));
-                    }
-                    if type_arg == &arg_type_str {
-                        return Some(self.mangle_generic_name(func_name, type_args));
-                    }
-                }
+                )))
             }
         }
+    }
 
-        // Default to first instantiation if we can't determine
-        Some(self.mangle_generic_name(func_name, &instantiations_for_func[0]))
+    /// Refuse by name a recorded call one of whose ARRAY arguments is not the
+    /// array its parameter is in the recorded instantiation.
+    ///
+    /// The type checker records every integer as `i64` (#82), so `first(xs)`
+    /// with `xs: [u32; 2]` is `first<i64>`, whose parameter is a `long long[2]`:
+    /// C converts an integer of one width into another, but not an array of
+    /// one into an array of another. Before #86 the call was lowered to
+    /// whichever instantiation the substring match met first — `first__bool`
+    /// beside a `first(bs)`, printing `-647483648` for `3000000000 / 2` — and
+    /// emitted exactly as recorded it is C the backend's own check refuses.
+    fn array_arguments_held(&self, func_name: &str, type_args: &[String], args: &[Expr]) -> Result<()> {
+        let Some((_, _, template)) = self
+            .generic_instantiations
+            .iter()
+            .find(|(name, a, _)| name == func_name && a.as_slice() == type_args)
+        else {
+            return Ok(());
+        };
+        let type_map: std::collections::HashMap<String, String> = template
+            .type_params
+            .iter()
+            .cloned()
+            .zip(type_args.iter().cloned())
+            .collect();
+        for ((param, ty), arg) in template.params.iter().zip(args) {
+            let Some(given) = self.try_infer_expr_type(arg) else {
+                continue;
+            };
+            let wanted = self.type_to_c(&self.substitute_type(ty, &type_map));
+            if given.contains('[') && !Self::same_c_type(&given, &wanted) {
+                return Err(CompileError::CodegenError {
+                    message: format!(
+                        "the call of `{}` is of `{}<{}>`, the instantiation the type checker \
+                         recorded for it, whose parameter `{}` is a `{}`; the argument is a `{}`. \
+                         The type checker records an integer of every width as `i64`, and C \
+                         converts an integer of one width into another but not an array of one \
+                         into an array of another. Declare the array with the element type `i64`",
+                        func_name,
+                        func_name,
+                        type_args.join(", "),
+                        param,
+                        wanted,
+                        given
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// A type checker's record `written` in the type parameters of the generic
+    /// whose body is being emitted, as the type arguments it stands for there
+    /// (`emitting_instantiation`); outside such a body, the record as written.
+    /// `None` where it names a parameter inside a larger type (`[T; 2]`). The
+    /// type checker closed the instantiations over these same records by the
+    /// same rule (`TypeChecker::through`), so what this names was instantiated.
+    fn through_instantiation(&self, written: &[String]) -> Option<Vec<String>> {
+        crate::typeck::TypeChecker::through(written, &self.emitting_instantiation)
+    }
+
+    /// Is `func_name` a generic function's template: its signature, as this
+    /// pass registered it, names a type parameter? Every generic the type
+    /// checker can instantiate names one in a parameter (a type argument is
+    /// inferred from the arguments, or the call is refused).
+    fn is_generic_template(&self, func_name: &str) -> bool {
+        self.functions.get(func_name).is_some_and(|(params, ret)| {
+            params.iter().any(|p| Self::mentions_type_param(&p.ty))
+                || ret.as_ref().is_some_and(Self::mentions_type_param)
+        })
+    }
+
+    fn mentions_type_param(ty: &Type) -> bool {
+        match ty {
+            Type::TypeParam(_) => true,
+            Type::Array(inner, _) | Type::Reference { inner, .. } => {
+                Self::mentions_type_param(inner)
+            }
+            Type::Tuple(types) => types.iter().any(Self::mentions_type_param),
+            Type::Generic { args, .. } => args
+                .iter()
+                .any(|arg| matches!(arg, GenericArg::Type(t) if Self::mentions_type_param(t))),
+            _ => false,
+        }
+    }
+
+    /// Does the instantiation `type_args` of `func_name` take `args` — each
+    /// argument's C type the C type of its parameter there, or an integer
+    /// handed to a 64-bit integer parameter, which C widens and which is what
+    /// the type checker records every integer as (`i64`)? An argument whose C
+    /// type this pass cannot say is taken by nothing. ONLY for a call no
+    /// record decides: it is how such a call is refused rather than guessed,
+    /// never how one is chosen over its record.
+    fn takes_arguments(&self, func_name: &str, type_args: &[String], args: &[Expr]) -> bool {
+        let Some((_, _, template)) = self
+            .generic_instantiations
+            .iter()
+            .find(|(name, a, _)| name == func_name && a.as_slice() == type_args)
+        else {
+            return false;
+        };
+        if template.params.len() != args.len() {
+            return false;
+        }
+        let type_map: std::collections::HashMap<String, String> = template
+            .type_params
+            .iter()
+            .cloned()
+            .zip(type_args.iter().cloned())
+            .collect();
+        template.params.iter().zip(args).all(|((_, ty), arg)| {
+            let param = self.type_to_c(&self.substitute_type(ty, &type_map));
+            self.try_infer_expr_type(arg).is_some_and(|arg| {
+                Self::same_c_type(&param, &arg)
+                    || (Self::is_c_integer(&arg)
+                        && matches!(param.as_str(), "long long" | "unsigned long long"))
+            })
+        })
     }
 
     /// Substitute type parameters with concrete types in a type
@@ -8303,14 +8483,17 @@ impl CodeGenerator {
     /// another type: no pointer, struct or tuple into a scalar, and no `?`
     /// instantiation (the record of an argument the type checker cannot name).
     ///
-    /// A literal the type checker never checked — in a generic function's
-    /// body, which is monomorphized and never walked — has no record, and is
-    /// matched as before review round 10: the first of all the instantiations
-    /// that holds its values exactly, or else the first with an argument
-    /// matching its first field's C type — `i64` for a `long long` (signed or
-    /// not), `bool` for an `int`, `String` for a `char*` — whose every field
-    /// holds its value as C converts it (`"long long*".contains("long long")`
-    /// once chose an `i64` field for a pointer, review round 9).
+    /// A literal in a generic function's body is recorded in the body's own
+    /// type parameters (`G<T, i64>`, `TypeChecker::walk_generic_body`), and
+    /// its records are read through the instantiation being emitted
+    /// (`through_instantiation`). Before #87 such a literal had no record, and
+    /// was matched against ALL the instantiations: the first that held its
+    /// values exactly, else the first with an argument matching its first
+    /// field's C type by substring, so an unrelated literal's `G<i64, z>` made
+    /// a body's `G { tag: t, p: v }` a `G_i64_z` (`4294967288` where `main`'s
+    /// twin printed `-8`). A literal the walk still could not record — in a
+    /// statement the checker refuses — is of the one instantiation whose
+    /// fields hold its values, and of none where more than one does.
     fn literal_instantiation(
         &self,
         literal: &Expr,
@@ -8366,7 +8549,13 @@ impl CodeGenerator {
                 })
             })
         };
-        if let Some(own) = self.struct_literals.own(*id) {
+        let own = self.struct_literals.records.of(*id).map(|records| {
+            records
+                .iter()
+                .filter_map(|record| self.through_instantiation(record))
+                .collect::<Vec<_>>()
+        });
+        if let Some(own) = own.filter(|own| !own.is_empty()) {
             let of_own: Vec<&(Vec<String>, String)> = instantiations
                 .iter()
                 .copied()
@@ -8413,26 +8602,49 @@ impl CodeGenerator {
                 })
                 .map(|(_, mangled)| mangled.clone());
         }
-        if !values.is_empty() {
-            if let Some((_, mangled)) = instantiations.iter().find(|(_, m)| exactly(m)) {
-                return Some(mangled.clone());
-            }
-        }
-        let (_, first) = fields.first()?;
-        let first = self
-            .try_infer_expr_type_in(first, locals)
-            .unwrap_or_else(|| "long long".to_string());
-        instantiations
+        // A literal no record decides — in a generic body, in a statement the type checker
+        // refused while it walked the body (`TypeChecker::walk_generic_body`) — is of the ONE
+        // instantiation whose fields hold its values, exactly or as C widens an integer into a
+        // 64-bit field (the checker records every integer as `i64`), and of none where more
+        // than one does or a value's C type is unknown. It was the first of all the
+        // instantiations that held its values exactly, else the first with an argument
+        // matching its first field's C type by substring: another literal's decided (#87).
+        let typed = fields
             .iter()
-            .find(|(args, mangled)| {
-                converts(mangled)
-                    && args.iter().any(|arg| {
-                        (arg == "i64" && first.contains("long long") && !first.contains('*'))
-                            || (arg == "bool" && first == "int")
-                            || (arg == "String" && first.contains("char*"))
-                    })
+            .filter(|(field, _)| {
+                template.fields.iter().any(|(written, ty)| {
+                    written == field && Self::names_a_type_parameter(ty, &template.type_params)
+                })
             })
-            .map(|(_, mangled)| mangled.clone())
+            .count();
+        if values.len() != typed {
+            return None;
+        }
+        let holds = |mangled: &String| {
+            values.iter().all(|(field, value)| {
+                field_type(mangled, field).is_some_and(|c| {
+                    Self::same_c_type(&c, value)
+                        || (Self::is_c_integer(value)
+                            && matches!(c.as_str(), "long long" | "unsigned long long"))
+                })
+            })
+        };
+        let mut holding = instantiations.iter().filter(|(_, m)| holds(m));
+        match (holding.next(), holding.next()) {
+            (Some((_, mangled)), None) => Some(mangled.clone()),
+            _ => None,
+        }
+    }
+
+    /// Did the type checker record no instantiation for the struct literal
+    /// `id` that names one here (`through_instantiation`)? Such a literal is
+    /// matched by `literal_instantiation`'s last rule, and refused as one.
+    fn literal_is_unrecorded(&self, id: LiteralId) -> bool {
+        self.struct_literals.records.of(id).is_none_or(|records| {
+            records
+                .iter()
+                .all(|record| self.through_instantiation(record).is_none())
+        })
     }
 
     /// Does the written type `ty` name one of `params` at some depth?
@@ -8552,6 +8764,33 @@ impl CodeGenerator {
                 ),
             }
         })
+    }
+
+    /// The refusal of a generic struct literal the type checker recorded no
+    /// instantiation for, which no ONE instantiation holds (`literal_instantiation`,
+    /// issue #87): code generation does not pick one of several for it.
+    fn unrecorded_literal_refused(name: &str, instantiations: &[(Vec<String>, String)]) -> CompileError {
+        let named: Vec<String> = instantiations
+            .iter()
+            .filter(|(args, _)| {
+                !args
+                    .iter()
+                    .any(|arg| arg.contains(crate::typeck::UNNAMED_TYPE_ARGUMENT))
+            })
+            .map(|(args, _)| format!("`{}<{}>`", name, args.join(", ")))
+            .collect();
+        CompileError::CodegenError {
+            message: format!(
+                "`{} {{ .. }}` is a literal of the generic struct `{}` in a statement of a \
+                 generic function's body that the type checker could not check, so it recorded \
+                 no instantiation for it; code generation emits such a literal only as the one \
+                 instantiation whose fields hold its values, and not exactly one of {} does. \
+                 Build it in a statement of its own from variables or literals",
+                name,
+                name,
+                if named.is_empty() { "none".to_string() } else { named.join(", ") }
+            ),
+        }
     }
 
     /// An argument emitted in place may not be an array LITERAL (#62). C has
@@ -8813,46 +9052,25 @@ impl CodeGenerator {
 
 /// The instantiation each generic struct literal is of: the type checker's
 /// record for it (`crate::typeck::StructLiteralRecords`, keyed by the literal's
-/// `LiteralId`), and whether the bodies being emitted are ones the type checker
-/// walked (review rounds 10-11). `literal_instantiation` reads both.
+/// `LiteralId`). `literal_instantiation` reads it, through the instantiation
+/// being emitted (`CodeGenerator::through_instantiation`).
 ///
 /// Round 10 kept a third scope, the imported modules', because the record was
 /// keyed by span, an offset into one file. A span was no identity even within
 /// one file (each macro expansion is parsed from offset 0), and one flag for
 /// every imported module was none across files; the key is now the literal,
-/// which is its own in every file, and only an unwalked body needs a scope.
+/// which is its own in every file.
+///
+/// The scope that remained, a monomorphized generic body's, said its literals
+/// had no record: the type checker never walked those bodies, and a record of
+/// the generic's literal "would be of no one instantiation". So another
+/// literal's instantiation decided what such a literal built (#87). The body
+/// is walked now, once, in its own type parameters, and its literals' records
+/// are in those parameters (`G<T, i64>`): through the instantiation emitted,
+/// they are of exactly one.
 #[derive(Debug, Default)]
 struct StructLiterals {
     records: crate::typeck::StructLiteralRecords,
-    scope: LiteralScope,
-}
-
-/// Whose function bodies `compile_escaped` is emitting, in its order: the
-/// monomorphized generic functions, then the imported modules' functions and
-/// the program's own (whose `const`/`static` items are emitted first).
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-enum LiteralScope {
-    /// Bodies the type checker walked, the program's and the imported
-    /// modules': each literal's record is its own, by its `LiteralId`.
-    #[default]
-    Recorded,
-    /// Monomorphized generic bodies, which the type checker never walks: no
-    /// literal there has a record. Each is a copy of the generic's body, and
-    /// carries its literals' identities; were the generic's literals ever
-    /// recorded, that record would be of no one instantiation, so it is not
-    /// read here.
-    Unrecorded,
-}
-
-impl StructLiterals {
-    /// The type arguments the type checker recorded for the literal `id` in
-    /// the body being emitted, or `None`: it recorded none.
-    fn own(&self, id: LiteralId) -> Option<&[Vec<String>]> {
-        match self.scope {
-            LiteralScope::Recorded => self.records.of(id),
-            LiteralScope::Unrecorded => None,
-        }
-    }
 }
 
 #[cfg(test)]

@@ -283,7 +283,7 @@ fn main() {
 ///
 /// Both names here are reserved: the generic function itself (`double`) and its
 /// parameter (`register`), so this covers the stored KEY as well as the body —
-/// the key matters because `get_mangled_name_for_call` resolves a call by
+/// the key matters because `instantiation_called` resolves a call by
 /// comparing the (escaped) call name against these entries.
 #[test]
 fn a_keyword_named_generic_function_links_and_runs() {

@@ -406,6 +406,7 @@ mod tests {
                 ),
             ],
             span: Span::dummy(),
+            id: crate::ast::CallId::fresh(),
         };
         
         pass.optimize_expression(&mut expr).unwrap();

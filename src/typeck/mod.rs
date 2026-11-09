@@ -1128,6 +1128,15 @@ pub struct TypeChecker {
     struct_instantiations: HashMap<StructInstantiation, CheckerType>,
     /// Each generic struct literal's own record (`StructLiteralRecords`, review rounds 10-11).
     struct_literal_records: StructLiteralRecords,
+    /// The type arguments inferred for each generic call, by the call
+    /// (`CallRecords`): the instantiation code generation emits it as.
+    call_records: CallRecords,
+    /// While a generic body is walked in its own type parameters
+    /// (`close_instantiations_over_generic_bodies`): those parameters, which a
+    /// type argument naming one stands for, and the generic uses the walk
+    /// meets. Empty and `None` at every other time.
+    abstract_params: Vec<String>,
+    body_uses: Option<GenericBodyUses>,
     /// Enum definitions with their variants
     enums: HashMap<String, Vec<EnumVariant>>,
     /// EVERY name declared by an `enum` item, local or imported, filled before
@@ -1237,6 +1246,9 @@ impl TypeChecker {
             trait_resolver: TraitResolver::new(),
             struct_instantiations: HashMap::new(),
             struct_literal_records: StructLiteralRecords::default(),
+            call_records: CallRecords::default(),
+            abstract_params: Vec::new(),
+            body_uses: None,
             enums: HashMap::new(),
             enum_names: HashSet::new(),
             generic_enums: HashMap::new(),
@@ -2929,6 +2941,12 @@ impl TypeChecker {
         }
         self.imported_modules = modules;
 
+        // Every body has been walked, so every call site outside a generic body is
+        // recorded: the instantiations those make are closed over the generic bodies
+        // they instantiate, and each generic use in those bodies is recorded (#86, #87).
+        // Before the deferred refusals below, which ask what is instantiated.
+        self.close_instantiations_over_generic_bodies();
+
         // AN IMPORTED GENERIC THAT WAS INSTANTIATED IS PART OF THE EMITTED
         // PROGRAM, so the refusal `check_function` applies to every LOCAL async
         // function has to apply to it too. Raised HERE and not at the opening
@@ -3972,7 +3990,7 @@ impl TypeChecker {
                     }
                 }
             }
-            Expr::Call { func, args, span } => {
+            Expr::Call { func, args, span, id } => {
                 // METHOD CALL SYNTAX (N5-17). `x.f(a)` parses as a call whose
                 // callee is a field access, and this arm used to refuse every
                 // callee that was not a bare identifier.
@@ -3983,7 +4001,7 @@ impl TypeChecker {
                 // instantiation, built-ins, the lot. Checking it separately
                 // would be a second call-checker to keep in step with this one.
                 if let Expr::FieldAccess { object, field, .. } = func.as_ref() {
-                    let rewritten = self.method_call_as_path_call(object, field, args, *span)?;
+                    let rewritten = self.method_call_as_path_call(object, field, args, *span, *id)?;
                     return self.check_expression(&rewritten);
                 }
 
@@ -4013,8 +4031,13 @@ impl TypeChecker {
 
                 // First check if it's a generic function that needs instantiation
                 if let Some(generic_func) = self.generic_functions.get(func_name).cloned() {
-                    // Infer type arguments from the call
+                    // Infer type arguments from the call, and keep them FOR THIS CALL: they
+                    // are the instantiation code generation emits it as (`CallRecords`).
                     let type_args = self.infer_type_args(&generic_func, args)?;
+                    self.call_records.record(*id, &type_args);
+                    if let Some(uses) = &mut self.body_uses {
+                        uses.calls.push((func_name.clone(), type_args.clone()));
+                    }
 
                     // Create instantiation key
                     let instantiation = FunctionInstantiation {
@@ -4475,6 +4498,9 @@ impl TypeChecker {
                     };
 
                     self.struct_literal_records.record(expr, &instantiation);
+                    if let Some(uses) = &mut self.body_uses {
+                        uses.literals.push((name.clone(), instantiation.type_args.clone()));
+                    }
                     self.struct_instantiations
                         .insert(instantiation, instantiated_type.clone());
 
@@ -4650,6 +4676,7 @@ impl TypeChecker {
                                 func: Box::new(Expr::Ident(qualified)),
                                 args: call_args,
                                 span: *span,
+                                id: crate::ast::CallId::fresh(),
                             });
                         }
                     }
@@ -5460,6 +5487,7 @@ impl TypeChecker {
         field: &str,
         args: &[Expr],
         span: Span,
+        id: crate::ast::CallId,
     ) -> Result<Expr> {
         let receiver_type = self.check_expression(object)?;
 
@@ -5572,6 +5600,7 @@ impl TypeChecker {
             func: Box::new(Expr::Ident(qualified)),
             args: call_args,
             span,
+            id,
         })
     }
 
@@ -6393,6 +6422,12 @@ impl TypeChecker {
         match ty {
             crate::ast::Type::TypeParam(param_name) => {
                 match subst_map.get(param_name) {
+                    // A generic body walked in its own type parameters calls another
+                    // generic AT one of them (`id(x)` in `wrap<T>` is `id<T>`): the
+                    // argument stands for that parameter, not for a type named `T`.
+                    Some(concrete_type) if self.abstract_params.contains(concrete_type) => {
+                        Ok(crate::ast::Type::TypeParam(concrete_type.clone()))
+                    }
                     Some(concrete_type) => {
                         // Convert string back to Type
                         match concrete_type.as_str() {
@@ -6487,27 +6522,20 @@ impl TypeChecker {
     /// emitted C: six generic functions in a program that imports nothing
     /// produced thirty distinct outputs in thirty compiles.
     ///
-    /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:8045-8109`) scans this list for every instantiation
-    /// of a name and, when a function has more than one, picks by inferring from
-    /// the first argument — so before this, *which monomorphization a call
-    /// resolved to* could also vary between runs. Sorting does not make that
-    /// selection correct; it makes it reproducible, which is the precondition
-    /// for ever seeing that it is wrong.
-    ///
-    /// AND IT IS WRONG. The cited range covers the whole function, including its
-    /// silent default, because that is where the defect lives: the match loop
-    /// accepts ANY type argument in ANY position, so `fn snd<A, B>(a: A, b: B)`
-    /// instantiated at both `(i64, String)` and `(i64, i64)` resolves the call
-    /// `snd(1, 2)` against the first sorted key — `(i64, String)`, since `S` sorts
-    /// before `i`. Measured: the emitted C contains both `snd__i64_String` and
-    /// `snd__i64_i64`, and calls `snd__i64_String(1, 2)`; the correct
-    /// monomorphization is emitted and never called. When nothing matches at all
-    /// the function still returns the first entry rather than `None`, with no
-    /// diagnostic. Sorting made that reproducible instead of a coin flip, which is
-    /// how it became visible. It is declared as
-    /// `test_a_generic_call_resolves_to_its_own_monomorphization` and is owned by
-    /// M4, not by this branch.
+    /// Emission order is the only thing that rides on this now. Until #86 code
+    /// generation's `get_mangled_name_for_call` scanned this list for every
+    /// instantiation of a name and, when a function had more than one, picked
+    /// by inferring from the first argument — so before the sort, *which
+    /// monomorphization a call resolved to* could also vary between runs.
+    /// Sorting made that selection reproducible, which is how it became visible
+    /// that it was wrong: the match accepted ANY type argument in ANY position,
+    /// so `fn snd<A, B>(a: A, b: B)` instantiated at both `(i64, String)` and
+    /// `(i64, i64)` resolved the call `snd(1, 2)` against the first sorted key —
+    /// `(i64, String)`, since `S` sorts before `i` — and when nothing matched it
+    /// returned the first entry, with no diagnostic. A call is now emitted as
+    /// the instantiation recorded for it (`CallRecords`), which no order
+    /// decides; `test_a_generic_call_resolves_to_its_own_monomorphization`, an
+    /// XFAIL owed to M4 until then, passes.
     ///
     /// This matters for the same reason the module ordering does: `make selfhost`
     /// asserts stage1 and stage2 emit byte-identical C, and it passes today only
@@ -6530,6 +6558,209 @@ impl TypeChecker {
         }
 
         result
+    }
+
+    /// THE INSTANTIATIONS, CLOSED OVER THE GENERIC BODIES THEY INSTANTIATE, and
+    /// a record for each generic use in those bodies (issues #86 and #87).
+    ///
+    /// A generic function's body is never checked (`check_function` returns
+    /// before it), so nothing recorded the calls and struct literals in it:
+    /// code generation chose an instantiation for each by C type, among
+    /// whichever ones OTHER uses had recorded. `wrap<T>` calling `id(x)` called
+    /// an `id` nothing had instantiated (gcc: undeclared function); a `u32` a
+    /// body halved beside a `half(true)` elsewhere was halved as a `bool`; and
+    /// a `G { tag: t, p: v }` in a body was built as an unrelated literal's
+    /// `G<i64, z>` (`4294967288` where the same literal in `main` is `-8`).
+    ///
+    /// Each instantiated generic's body is walked ONCE, in its own type
+    /// parameters (`walk_generic_body`), and what it records is in those
+    /// parameters: `id(x)` in `wrap<T>` is `id<T>`. Each instantiation of the
+    /// body then needs each such use through its own arguments — `wrap<String>`
+    /// needs `id<String>` — which is instantiated here if nothing else did, and
+    /// its body is walked in turn. A worklist over `(name, type arguments)`:
+    /// a use whose arguments name a parameter inside a larger type (`[T; 2]`)
+    /// is not resolved (`through`), so every argument this adds is a name the
+    /// program already instantiates something at, and the list ends.
+    ///
+    /// Sorted, so the order of what is added is a function of the program.
+    fn close_instantiations_over_generic_bodies(&mut self) {
+        let mut work: Vec<(String, Vec<String>)> = self
+            .instantiations
+            .keys()
+            .map(|k| (k.name.clone(), k.type_args.clone()))
+            .collect();
+        work.sort();
+        let mut seen: HashSet<(String, Vec<String>)> = work.iter().cloned().collect();
+        let mut walked: HashMap<String, GenericBodyUses> = HashMap::new();
+        let mut next = 0;
+        while next < work.len() {
+            let (name, type_args) = work[next].clone();
+            next += 1;
+            let Some(generic) = self.generic_functions.get(&name).cloned() else {
+                continue;
+            };
+            if !walked.contains_key(&name) {
+                let uses = self.walk_generic_body(&generic);
+                walked.insert(name.clone(), uses);
+            }
+            let subst: HashMap<String, String> = generic
+                .type_params
+                .iter()
+                .cloned()
+                .zip(type_args.iter().cloned())
+                .collect();
+            let uses = walked[&name].clone();
+            for (callee, written) in &uses.calls {
+                let Some(args) = Self::through(written, &subst) else {
+                    continue;
+                };
+                let Some(callee_generic) = self.generic_functions.get(callee).cloned() else {
+                    continue;
+                };
+                let key = FunctionInstantiation {
+                    name: callee.clone(),
+                    type_args: args.clone(),
+                };
+                if !self.instantiations.contains_key(&key) {
+                    let Ok(func_type) = self.instantiate_generic_function(&callee_generic, &args)
+                    else {
+                        continue;
+                    };
+                    self.instantiations.insert(key, func_type);
+                }
+                if seen.insert((callee.clone(), args.clone())) {
+                    work.push((callee.clone(), args));
+                }
+            }
+            for (generic_struct, written) in &uses.literals {
+                let Some(args) = Self::through(written, &subst) else {
+                    continue;
+                };
+                let instantiated = CheckerType::Generic {
+                    name: generic_struct.clone(),
+                    args: args
+                        .iter()
+                        .map(|arg| GenericArgValue::Type(self.type_argument_type(arg)))
+                        .collect(),
+                };
+                self.struct_instantiations
+                    .entry(StructInstantiation {
+                        name: generic_struct.clone(),
+                        type_args: args,
+                    })
+                    .or_insert(instantiated);
+            }
+        }
+    }
+
+    /// The type arguments `written` in a generic body's own type parameters,
+    /// through the instantiation `subst` — or `None` where one names a
+    /// parameter inside a larger type (`[T; 2]`), which this does not rewrite.
+    /// ONE RULE with code generation's reading of the same record
+    /// (`CodeGenerator::through_instantiation`), so the instantiation a use is
+    /// emitted as is the one closed over here.
+    pub(crate) fn through(
+        written: &[String],
+        subst: &HashMap<String, String>,
+    ) -> Option<Vec<String>> {
+        written
+            .iter()
+            .map(|arg| match subst.get(arg) {
+                Some(concrete) => Some(concrete.clone()),
+                None if arg
+                    .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .any(|word| subst.contains_key(word)) =>
+                {
+                    None
+                }
+                None => Some(arg.clone()),
+            })
+            .collect()
+    }
+
+    /// The checker's type for the type argument `arg`, as a generic's
+    /// instantiation reads it (`substitute_type`).
+    fn type_argument_type(&self, arg: &str) -> CheckerType {
+        let parameter = "_".to_string();
+        let subst = HashMap::from([(parameter.clone(), arg.to_string())]);
+        match self.substitute_type(&crate::ast::Type::TypeParam(parameter), &subst) {
+            Ok(ty) => self.declared_type(&ty),
+            Err(_) => CheckerType::Unit,
+        }
+    }
+
+    /// Walk `generic`'s body ONCE in its own type parameters, recording each
+    /// generic use it makes (`CallRecords`, `StructLiteralRecords`) and
+    /// returning them for `close_instantiations_over_generic_bodies`.
+    ///
+    /// The parameters are typed as written (`x: T` is the parameter `T`), so a
+    /// call `id(x)` records `id<T>` and a literal `G { tag: t, p: v }` with
+    /// `v: u32` records `G<T, i64>` — the record main's checker makes for the
+    /// same literal outside a generic body, read through the instantiation.
+    ///
+    /// NOTHING ELSE THE WALK DOES SURVIVES IT. main never checked these
+    /// bodies, so one may hold what the checker refuses and code generation
+    /// emits anyway (`x / 2` over a `T`): a statement the checker refuses
+    /// keeps the records made before the refusal and is otherwise undone, and
+    /// the walk goes on to the next. No refusal is raised — one would refuse a
+    /// program main ran. The instantiations a use at a PARAMETER makes
+    /// (`id<T>`) are no program's, and the state is restored after the walk;
+    /// the closure instantiates each use through real arguments instead.
+    fn walk_generic_body(&mut self, generic: &GenericFunction) -> GenericBodyUses {
+        let symbols = self.symbols.clone();
+        let function_return = self.current_function_return.take();
+        let loop_depth = self.loop_depth;
+        let break_targets = self.break_targets.clone();
+        let unsafe_depth = self.unsafe_depth;
+        let impl_type = self.current_impl_type.take();
+        let self_receiver = self.current_self_receiver.take();
+        let instantiations = self.instantiations.clone();
+        let struct_instantiations = self.struct_instantiations.clone();
+
+        self.abstract_params = generic.type_params.clone();
+        self.body_uses = Some(GenericBodyUses::default());
+        self.symbols.enter_scope();
+        for (name, ty) in &generic.params {
+            let ty = self.written_type(ty);
+            // Mutable: the walk records uses; a write to a parameter is not its business.
+            let _ = self.symbols.define(name.clone(), ty, true);
+        }
+        self.current_function_return = Some(
+            generic
+                .return_type
+                .as_ref()
+                .map(|t| self.ast_type_to_checker_type(t))
+                .unwrap_or(CheckerType::Unit),
+        );
+        for stmt in &generic.body {
+            let at = (
+                self.symbols.clone(),
+                self.loop_depth,
+                self.break_targets.clone(),
+                self.unsafe_depth,
+            );
+            if self.check_statement(stmt).is_err() {
+                (
+                    self.symbols,
+                    self.loop_depth,
+                    self.break_targets,
+                    self.unsafe_depth,
+                ) = at;
+            }
+        }
+        let uses = self.body_uses.take().unwrap_or_default();
+
+        self.abstract_params.clear();
+        self.symbols = symbols;
+        self.current_function_return = function_return;
+        self.loop_depth = loop_depth;
+        self.break_targets = break_targets;
+        self.unsafe_depth = unsafe_depth;
+        self.current_impl_type = impl_type;
+        self.current_self_receiver = self_receiver;
+        self.instantiations = instantiations;
+        self.struct_instantiations = struct_instantiations;
+        uses
     }
 
     /// For every generic name this compilation instantiates, WHERE the template
@@ -6599,6 +6830,13 @@ impl TypeChecker {
     /// generation emits the literal as (review round 10).
     pub fn struct_literal_records(&self) -> StructLiteralRecords {
         self.struct_literal_records.clone()
+    }
+
+    /// The type arguments this checker inferred for each generic call it
+    /// checked, by the call (`CallRecords`), which code generation emits the
+    /// call as (issue #86).
+    pub fn call_records(&self) -> CallRecords {
+        self.call_records.clone()
     }
 
     /// Get all available variable names for suggestions
@@ -7454,6 +7692,10 @@ impl TypeChecker {
             CheckerType::Bool(_) => "bool".to_string(),
             CheckerType::String(_) => "String".to_string(),
             CheckerType::Struct(n, _) | CheckerType::Enum(n, _) => n.clone(),
+            // Only in a generic body walked in its own type parameters
+            // (`walk_generic_body`): the record names the parameter, and code
+            // generation resolves it through the instantiation it emits.
+            CheckerType::TypeParam(n) => n.clone(),
             _ => UNNAMED_TYPE_ARGUMENT.to_string(),
         }
     }
@@ -8075,8 +8317,10 @@ pub const UNNAMED_TYPE_ARGUMENT: &str = "?";
 /// printed `-8`), and renaming `a` or one more space in a module "fixed" it.
 /// The key is now the literal's `LiteralId`, which the parser gives each
 /// literal it builds. A literal checked more than once (one node) keeps every
-/// record it was given; two literals never share a key; one this checker never
-/// checks (a generic function's body: monomorphized, never walked) has none.
+/// record it was given; two literals never share a key. A literal in a
+/// generic function's body is recorded in the body's own type parameters
+/// (`walk_generic_body`, #87), and code generation reads the record through
+/// the instantiation it emits.
 #[derive(Debug, Clone, Default)]
 pub struct StructLiteralRecords {
     records: HashMap<LiteralId, Vec<Vec<String>>>,
@@ -8100,6 +8344,54 @@ impl StructLiteralRecords {
     pub fn of(&self, id: LiteralId) -> Option<&[Vec<String>]> {
         self.records.get(&id).map(Vec::as_slice)
     }
+}
+
+/// The type arguments the type checker inferred for each generic CALL, by the
+/// call (`CallId`), which code generation emits the call as (issue #86).
+///
+/// Code generation used to choose among every instantiation of the callee by
+/// the C type of the call's FIRST argument, with substring tests: `"unsigned
+/// int"` contains `"int"`, so `half(v)` with `v: u32` beside a `half(true)`
+/// called `half__bool` and printed `-647483648`; a type argument matched in
+/// ANY position, so `snd(1, 2)` beside `snd(1, "x")` called `snd__i64_String`;
+/// and when nothing matched it returned the first instantiation, with no
+/// diagnostic. The checker had inferred every one of those calls' type
+/// arguments and kept none of them.
+///
+/// A call in a generic function's BODY is recorded in that body's own type
+/// parameters (`half(x)` in `wrap<T>` as `half<T>`), by the walk in
+/// `close_instantiations_over_generic_bodies`, and code generation resolves
+/// the record through the instantiation it is emitting. A call checked more
+/// than once (one node) keeps every record it was given, as a struct literal
+/// does (`StructLiteralRecords`); two calls never share a key.
+#[derive(Debug, Clone, Default)]
+pub struct CallRecords {
+    records: HashMap<CallId, Vec<Vec<String>>>,
+}
+
+impl CallRecords {
+    fn record(&mut self, id: CallId, type_args: &[String]) {
+        let records = self.records.entry(id).or_default();
+        if !records.iter().any(|r| r == type_args) {
+            records.push(type_args.to_vec());
+        }
+    }
+
+    /// The type arguments recorded for the call `id`, or `None`: it was never
+    /// checked, or is no call of a generic function.
+    pub fn of(&self, id: CallId) -> Option<&[Vec<String>]> {
+        self.records.get(&id).map(Vec::as_slice)
+    }
+}
+
+/// The generic uses one generic function's body makes, in its own type
+/// parameters: each call of a generic function and each generic struct
+/// literal, as `(generic, type arguments)`. What an instantiation of the body
+/// needs instantiated is these, through the instantiation's arguments.
+#[derive(Debug, Clone, Default)]
+struct GenericBodyUses {
+    calls: Vec<(String, Vec<String>)>,
+    literals: Vec<(String, Vec<String>)>,
 }
 
 #[cfg(test)]

@@ -225,9 +225,9 @@ impl Driver {
                 codegen.set_imported_modules(resolved_modules);
             }
 
-            // Pass generic instantiations to code generator
+            // Pass generic instantiations, and the one each call is of, to code generator
             if !instantiations.is_empty() {
-                codegen.set_generic_instantiations(instantiations);
+                codegen.set_generic_instantiations(instantiations, type_checker.call_records());
             }
             // Pass generic struct instantiations, and the one each literal is of, to code generator
             if !struct_instantiations.is_empty() {
