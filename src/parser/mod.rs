@@ -3611,7 +3611,7 @@ impl Parser {
                     let right = self.parse_comparison()?;
                     let right_span = Self::expr_span(&right);
                     // A COMPARISON IS PLACED AT ITS OPERATOR (#89/#92): its
-                    // refusal, PD0080, names the operator, and a name or a
+                    // refusal, PD0082, names the operator, and a name or a
                     // literal on the left has no position to inherit, so the
                     // left operand's line and column used to say `0`.
                     let span = Span::new(left_span.start, right_span.end, at.line, at.column);
@@ -3648,7 +3648,7 @@ impl Parser {
                     let right = self.parse_bitor()?;
                     let right_span = Self::expr_span(&right);
                     // Placed at its operator, for the reason `parse_equality`
-                    // gives: PD0080 names the operator's line and column, and
+                    // gives: PD0082 names the operator's line and column, and
                     // `a < b` has no other position to give it — neither name
                     // has one in the tree.
                     let span = Span::new(left_span.start, right_span.end, at.line, at.column);

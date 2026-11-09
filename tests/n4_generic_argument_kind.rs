@@ -141,8 +141,8 @@ fn a_one_letter_type_argument_takes_the_path_a_longer_name_takes() {
     let c_short = emitted_c(&program("K"), &short);
     let c_long = emitted_c(&program("Kind"), &long);
     assert_eq!(
-        c_short,
-        c_long.replace("Kind", "K").replace(&long, &short),
+        without_check_positions(&c_short),
+        without_check_positions(&c_long.replace("Kind", "K").replace(&long, &short)),
         "`Wrap<K>` must be emitted exactly as `Wrap<Kind>` is"
     );
 }
@@ -776,4 +776,18 @@ fn an_alias_the_checker_opens_is_judged_in_every_kind_of_item() {
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// The C with every PD0082 check's SOURCE POSITION blanked (#89/#92): each
+/// comparison code generation writes carries the line and column it is judged
+/// at (`"PD0082|line|column|..."`), and `Kind` is three letters longer than `K`,
+/// so the positions differ between the two spellings while the path does not.
+fn without_check_positions(c: &str) -> String {
+    let mut parts = c.split("\"PD0082|");
+    let mut out = parts.next().unwrap_or("").to_string();
+    for part in parts {
+        out.push_str("\"PD0082|-|-|");
+        out.push_str(part.splitn(3, '|').nth(2).unwrap_or(part));
+    }
+    out
 }

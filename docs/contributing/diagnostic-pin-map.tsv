@@ -51,10 +51,12 @@
 #      comment edit in the fixture broke the pin. Now binder kind + name
 #      (``the loop variable `LIMIT` ``, ``the pattern binding `LIMIT` ``,
 #      ``the local `LIMIT` ``); the `@` row's `` `@` `` was already that shape.
-#   #89/#92 (PD0080, a comparison only on an integer, a float, a bool or a char):
+#   #89/#92 (PD0082, a comparison only on an integer, a float, a bool or a char):
 #      six reject rows APPENDED, not amended — tests/reject/comparison_*.pd. Six
 #      payload groups (one per operand type, the sixth the generic-instantiation
 #      site), so every row carries `msg~`; each fragment verified by the generator.
+#      Review round 7 appended a seventh, its own group: the C compiler's check
+#      (`a range pattern`, tests/reject/comparison_in_a_generic_range_pattern.pd).
 #
 # KNOWN QUIRKS, recorded so the record is complete. Three fragments end mid-word,
 # where the su0 map cut them: PD0002 const_shl_negative_left `…which C leaves u`,
@@ -191,9 +193,10 @@ PD0078	a `/*` must be closed (token.rs:166, raised through scanner.rs:64-66; one
 PD0079	a macro's expansion parses as what its invocation position requires (macros, `expansion_does_not_parse`, one site reached from two positions; the fixture is the STATEMENT position, and the expression position has no fixture of its own)	1	tests/reject/macro_expansion_does_not_parse.pd	reject	yes	-	no	no	-	corpus-gap
 PD0080	a type alias the compiler expands must name a type: its expansion may not reach an alias cycle (alias_cycles.rs: the `ExpansionGuard` in typeck and codegen, judged where an alias is opened; the alias and the cycle vary)	1	tests/reject/alias_cycle_through_generic_argument.pd	reject	yes	-	no	no	-	narrow-surface
 PD0081	a generic parameter list names each parameter once (parser, `refuse_a_parameter_named_twice`, one helper at the end of all five lists; the name varies)	1	tests/reject/generic_parameter_named_twice.pd	reject	yes	-	no	no	-	narrow-surface
-PD0082	a comparison operator applies only to an integer, a float, a bool or a char (typeck `no_comparison_on`, from the comparison arm of `check_expression` and from `refuse_instantiated_comparisons` over each generic instantiation's body)	6	tests/reject/comparison_on_a_tuple.pd	reject	yes	-	yes	yes	on `(Int, Int)`	-
-PD0082	a comparison operator applies only to an integer, a float, a bool or a char (typeck `no_comparison_on`, from the comparison arm of `check_expression` and from `refuse_instantiated_comparisons` over each generic instantiation's body)	6	tests/reject/comparison_on_an_enum.pd	reject	yes	-	yes	yes	on `K`	-
-PD0082	a comparison operator applies only to an integer, a float, a bool or a char (typeck `no_comparison_on`, from the comparison arm of `check_expression` and from `refuse_instantiated_comparisons` over each generic instantiation's body)	6	tests/reject/comparison_on_a_struct.pd	reject	yes	-	yes	yes	on `P`	-
-PD0082	a comparison operator applies only to an integer, a float, a bool or a char (typeck `no_comparison_on`, from the comparison arm of `check_expression` and from `refuse_instantiated_comparisons` over each generic instantiation's body)	6	tests/reject/comparison_on_a_string.pd	reject	yes	-	yes	yes	on `String`	-
-PD0082	a comparison operator applies only to an integer, a float, a bool or a char (typeck `no_comparison_on`, from the comparison arm of `check_expression` and from `refuse_instantiated_comparisons` over each generic instantiation's body)	6	tests/reject/comparison_on_an_array.pd	reject	yes	-	yes	yes	on `[Int; 2]`	-
-PD0082	a comparison operator applies only to an integer, a float, a bool or a char (typeck `no_comparison_on`, from the comparison arm of `check_expression` and from `refuse_instantiated_comparisons` over each generic instantiation's body)	6	tests/reject/comparison_in_a_generic_instantiation.pd	reject	yes	-	yes	yes	instantiated with T = Suit	-
+PD0082	a comparison operator applies only to an integer, a float, a bool or a char (typeck `no_comparison_on`, from the comparison arm of `check_expression` and from `refuse_instantiated_comparisons` over each generic instantiation's body)	7	tests/reject/comparison_on_a_tuple.pd	reject	yes	-	yes	yes	on `(Int, Int)`	-
+PD0082	a comparison operator applies only to an integer, a float, a bool or a char (typeck `no_comparison_on`, from the comparison arm of `check_expression` and from `refuse_instantiated_comparisons` over each generic instantiation's body)	7	tests/reject/comparison_on_an_enum.pd	reject	yes	-	yes	yes	on `K`	-
+PD0082	a comparison operator applies only to an integer, a float, a bool or a char (typeck `no_comparison_on`, from the comparison arm of `check_expression` and from `refuse_instantiated_comparisons` over each generic instantiation's body)	7	tests/reject/comparison_on_a_struct.pd	reject	yes	-	yes	yes	on `P`	-
+PD0082	a comparison operator applies only to an integer, a float, a bool or a char (typeck `no_comparison_on`, from the comparison arm of `check_expression` and from `refuse_instantiated_comparisons` over each generic instantiation's body)	7	tests/reject/comparison_on_a_string.pd	reject	yes	-	yes	yes	on `String`	-
+PD0082	a comparison operator applies only to an integer, a float, a bool or a char (typeck `no_comparison_on`, from the comparison arm of `check_expression` and from `refuse_instantiated_comparisons` over each generic instantiation's body)	7	tests/reject/comparison_on_an_array.pd	reject	yes	-	yes	yes	on `[Int; 2]`	-
+PD0082	a comparison operator applies only to an integer, a float, a bool or a char (typeck `no_comparison_on`, from the comparison arm of `check_expression` and from `refuse_instantiated_comparisons` over each generic instantiation's body)	7	tests/reject/comparison_in_a_generic_instantiation.pd	reject	yes	-	yes	yes	instantiated with T = Suit	-
+PD0082	a comparison operator applies only to an integer, a float, a bool or a char (typeck `no_comparison_on`, from the comparison arm of `check_expression` and from `refuse_instantiated_comparisons` over each generic instantiation's body)	7	tests/reject/comparison_in_a_generic_range_pattern.pd	reject	yes	-	yes	yes	a range pattern	-

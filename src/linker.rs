@@ -248,12 +248,12 @@ pub const NON_FATAL_DIAGNOSTIC_TAGS: &[(&str, &str)] = &[
         "324 occurrences when it was the most common diagnostic this compiler \
          produced: codegen parenthesises every binary operand, so an `==` \
          comparison was emitted as `if ((a == b))` and gcc suspects a mistyped \
-         assignment. Since #89/#92 a comparison written in the source is emitted \
-         inside PD0080's check, `if ((check && (a == b)))`, which it does not \
-         fire on: measured over every .pd in the tree, 179 in 30 files on main \
-         903ba02, 3 in 1 now, all three the tuple-pattern lowering's own \
-         `if ((_match_expr.f0 == 0LL))` (tests/06_tuple_patterns.pd), which is \
-         why the tag is still listed. \
+         assignment. ZERO occurrences since #89/#92: every comparison code \
+         generation writes — a pattern's and a `for` bound's too — is emitted \
+         inside PD0082's check, `if ((check && (a == b)))`, which it does not \
+         fire on. Measured over every .pd in the tree: 179 in 30 files on main \
+         2ca5eb5, 0 now. Still listed, as `-Wreturn-type` is below: a tolerance \
+         a later lowering could need again is cheaper kept than rediscovered. \
          Purely a spelling of the generated C: the value computed is the one \
          intended, and no program behaves differently. It is noise from an \
          emitter that does not track precedence, not a defect in what it means.",
@@ -700,15 +700,15 @@ pub const EXIT_TOOLCHAIN: i32 = 5;
 pub const EXIT_GCC_UNEXPLAINED: i32 = 6;
 
 /// The exit code of a language rule refused by name at the link stage: the
-/// code every front-end refusal exits with, because it is one (PD0080).
+/// code every front-end refusal exits with, because it is one (PD0082).
 pub const EXIT_REFUSED: i32 = 1;
 
 /// The tag code generation writes into a comparison's static check, and the
-/// one this module reads back (`codegen`'s `c_scalar_check`): `PD0080|line|
+/// one this module reads back (`codegen`'s `c_scalar_check`): `PD0082|line|
 /// column|operator|function`. ONE literal, so the two cannot drift.
-pub const COMPARISON_CHECK_MARKER: &str = "PD0080";
+pub const COMPARISON_CHECK_MARKER: &str = "PD0082";
 
-/// PD0080 raised by the C compiler (#89/#92, review round 5): the static
+/// PD0082 raised by the C compiler (#89/#92, review round 5): the static
 /// check code generation emits beside every comparison failed, so an operand's
 /// C type is not one C compares by value. `None` when `stderr` holds no such
 /// failure.
@@ -716,7 +716,7 @@ pub const COMPARISON_CHECK_MARKER: &str = "PD0080";
 /// ONLY THE CHECK'S OWN DIAGNOSTIC COUNTS, AND ONLY ALONE (review round 6).
 /// The C compiler echoes the source line under every error, and a line that
 /// holds a comparison holds its tag, so finding the tag ANYWHERE in `stderr`
-/// named PD0080 for C that failed for another reason. Measured over 1155
+/// named PD0082 for C that failed for another reason. Measured over 1155
 /// programs: 12 — a call to a generic that was never emitted (`id`
 /// undeclared), a block inside an array literal emitted as malformed C, a
 /// parameter redeclared by a shadowing `let` — every one ill-typed C that
@@ -808,7 +808,7 @@ pub enum LinkError {
     /// error: no Palladium program asks for ill-typed C.
     IllTypedC(String),
     /// gcc refused a COMPARISON through the static check code generation puts
-    /// beside it (PD0080, `comparison_refusal`). Not a sixth cause of a failed
+    /// beside it (PD0082, `comparison_refusal`). Not a sixth cause of a failed
     /// link: a language rule, refused by name, which the C compiler is the one
     /// party able to judge exactly (#89/#92 review round 5).
     Refused(String),
@@ -1113,6 +1113,14 @@ pub fn link(
     // else entirely, so it gets a code that accuses nobody.
     if !gcc_output.status.success() {
         if let Some(refusal) = comparison_refusal(stderr) {
+            // A REFUSAL BY NAME LEAVES NO TRANSLATION UNIT, wherever it is made:
+            // the type checker's never writes one, and this one — the C
+            // compiler judging a comparison for this compiler (PD0082) — must
+            // not leave behind C that reads as an accepted program whose build
+            // failed (the conformance gate reads exactly that: a C file and a
+            // failed build are a backend defect; no C file and exit 1 are a
+            // refusal). Best effort: the refusal stands either way.
+            let _ = std::fs::remove_file(c_file);
             return Err(LinkError::Refused(refusal));
         }
         if stderr_rejects(stderr, c_file) {
@@ -1467,14 +1475,14 @@ build_output/B3.c:263:12: warning: returning 'const char *' from a function with
         assert!(msg.contains("error"), "{}", msg);
     }
 
-    /// PD0080'S JUDGE, end to end (#89/#92, review round 5): the check code
+    /// PD0082'S JUDGE, end to end (#89/#92, review round 5): the check code
     /// generation emits beside a comparison, around two `const char*`, fails
-    /// in the real C compiler, and the link reports PD0080 — the named refusal,
+    /// in the real C compiler, and the link reports PD0082 — the named refusal,
     /// with its line and column and a front-end refusal's exit code — and not a
     /// raw `gcc compilation failed`. The same check around two `long long`s
     /// compiles and links, with nothing to say.
     #[test]
-    fn a_comparison_the_c_compiler_refuses_is_reported_as_pd0080() {
+    fn a_comparison_the_c_compiler_refuses_is_reported_as_pd0082() {
         let generator = crate::codegen::CodeGenerator::new("judge").unwrap();
         let span = crate::errors::Span::new(0, 0, 7, 9);
         let dir = tempfile::TempDir::new().unwrap();
@@ -1515,30 +1523,30 @@ build_output/B3.c:263:12: warning: returning 'const char *' from a function with
     /// own stderr, captured from C this compiler emitted: under an unrelated
     /// error the compiler ECHOES the source line, which holds the tag; and a
     /// check fails as a CASCADE of an earlier error (a redeclared name keeps
-    /// its first, pointer, type). Neither is PD0080 — both are C this compiler
+    /// its first, pointer, type). Neither is PD0082 — both are C this compiler
     /// got wrong, which main reported as `gcc compilation failed` — and the
     /// check failing alone still is.
     #[test]
-    fn only_the_checks_own_failure_alone_is_pd0080() {
+    fn only_the_checks_own_failure_alone_is_pd0082() {
         let echoed = "g.c:311:78: error: call to undeclared function 'id'; ISO C99 and later do not \
                       support implicit function declarations [-Wimplicit-function-declaration]\n  \
                       311 |     return (sizeof(struct { _Static_assert((0x11E >> __builtin_classify_type(\
                       id(__pd_val0))) & (0x11E >> __builtin_classify_type(b)) & 1, \
-                      \"PD0080|1|71|==|same__i64\"); char __pd_; }) && (id(__pd_val0) == b));\n      \
+                      \"PD0082|1|71|==|same__i64\"); char __pd_; }) && (id(__pd_val0) == b));\n      \
                       |    ^\n1 warning and 1 error generated.\n";
         assert_eq!(comparison_refusal(echoed), None, "the echoed source line is not the check");
         let cascade = "s.c:307:15: error: redefinition of 'a' with a different type: 'long long' vs \
                        'const char *'\ns.c:308:15: error: redefinition of 'c' with a different type: \
                        'long long' vs 'const char *'\ns.c:309:44: error: static assertion failed due \
                        to requirement '(286 >> __builtin_classify_type(a)) & (286 >> \
-                       __builtin_classify_type(c)) & 1': PD0080|2|58|==|same__String\n1 warning and \
+                       __builtin_classify_type(c)) & 1': PD0082|2|58|==|same__String\n1 warning and \
                        3 errors generated.\n";
         assert_eq!(comparison_refusal(cascade), None, "a check failing after another error is a cascade");
         let alone = "sa.c:2:42: error: static assertion failed due to requirement '(286 >> \
                      __builtin_classify_type(s)) & (286 >> __builtin_classify_type(t)) & 1': \
-                     PD0080|4|13|<|main\n    2 |   return (sizeof(struct { _Static_assert(... \
-                     \"PD0080|4|13|<|main\"); char __pd_; }) && (s < t)); }\n1 error generated.\n";
-        let text = comparison_refusal(alone).expect("the check failing alone is PD0080");
+                     PD0082|4|13|<|main\n    2 |   return (sizeof(struct { _Static_assert(... \
+                     \"PD0082|4|13|<|main\"); char __pd_; }) && (s < t)); }\n1 error generated.\n";
+        let text = comparison_refusal(alone).expect("the check failing alone is PD0082");
         assert!(text.contains("`<`") && text.contains("line 4, column 13, in `main`"), "{}", text);
     }
 }

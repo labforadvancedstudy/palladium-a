@@ -1,5 +1,5 @@
 // NEGATIVE TEST — a comparison on a type parameter, instantiated at an enum,
-// PD0080 at its SECOND site.
+// PD0082 at its SECOND site.
 //
 // A generic body is never type-checked on its own (`check_function` returns
 // early for one), so on d5166e8 `same` was monomorphised to `same_Suit` and gcc

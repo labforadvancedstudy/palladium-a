@@ -642,7 +642,7 @@ pub enum DiagnosticCode {
     /// parameter lists (fn/struct/enum, trait, trait method, impl, type alias);
     /// the name is the parameter (#93 review round 4).
     GenericParameterIsNamedOnce,
-    /// PD0080 — a comparison operator (`==` `!=` `<` `<=` `>` `>=`) applies only
+    /// PD0082 — a comparison operator (`==` `!=` `<` `<=` `>` `>=`) applies only
     /// to a type with a comparison: an integer, a float, a `bool` or a `char`.
     /// Code generation emits C's own operator between the operands, which is
     /// ill-typed C for a tuple, struct, enum, range or unit, and well-typed but

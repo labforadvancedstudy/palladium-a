@@ -751,7 +751,7 @@ fn test_struct_with_methods() {
     );
 }
 
-/// EVERY COMPARISON IS EMITTED INSIDE PD0080'S CHECK (#89/#92): `a > b` is
+/// EVERY COMPARISON IS EMITTED INSIDE PD0082'S CHECK (#89/#92): `a > b` is
 /// `(sizeof(struct { _Static_assert(...); char __pd_; }) && (a > b))`, a static
 /// test the C compiler evaluates so that a comparison of two addresses is
 /// refused by name — the check itself is pinned in

@@ -1,4 +1,4 @@
-// NEGATIVE TEST — `==` on two arrays, PD0080. Well-typed but WRONG.
+// NEGATIVE TEST — `==` on two arrays, PD0082. Well-typed but WRONG.
 //
 // An array decays to a pointer to its first element in a C comparison, so `a ==
 // b` compared the two arrays' addresses: on d5166e8 this printed 0 for two

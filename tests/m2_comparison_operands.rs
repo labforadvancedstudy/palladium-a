@@ -15,7 +15,7 @@
 //!
 //! No requirement row and no specification text defines a comparison on any
 //! of these (N5-10 is witnessed over the primitives only), so each is now
-//! REFUSED BY NAME (PD0080) with the way to compare instead. Nothing invents a
+//! REFUSED BY NAME (PD0082) with the way to compare instead. Nothing invents a
 //! structural equality. The types that did compare correctly — the integers,
 //! the floats, `bool`, `char`, aliases of those, a reference PARAMETER (code
 //! generation reads through it) — keep exactly the output they had, which the
@@ -66,7 +66,7 @@ fn run(source: &str, prefix: &str) -> String {
     String::from_utf8_lossy(&run.stdout).to_string()
 }
 
-/// Compile only, expecting THIS compiler's refusal under PD0080 — not gcc's,
+/// Compile only, expecting THIS compiler's refusal under PD0082 — not gcc's,
 /// and not an incidental refusal that happens to share some words. Returns the
 /// message so a test can read which type it named and what it advised.
 fn refused(source: &str, prefix: &str) -> String {
@@ -88,7 +88,7 @@ fn refused(source: &str, prefix: &str) -> String {
             );
             assert_eq!(
                 e.code().map(|c| c.to_string()),
-                Some("PD0080".to_string()),
+                Some("PD0082".to_string()),
                 "refused, but not under the comparison rule: {}",
                 text
             );
@@ -506,7 +506,7 @@ fn a_string_literal_pattern_still_compares_characters() {
 // ---------------------------------------------------------------------------
 // Review round 1: the instantiated body is the WHOLE body, and another rule's
 // refusal does not end the walk. Each program below compiled on 71c4d6f and
-// printed 0 for two equal Strings (or reached gcc), with no PD0080.
+// printed 0 for two equal Strings (or reached gcc), with no PD0082.
 // ---------------------------------------------------------------------------
 
 /// A generic body over `T`, called at two equal Strings bound to locals (a
@@ -612,7 +612,7 @@ fn an_imported_bodys_refusal_names_its_module_and_function() {
     let text = String::from_utf8_lossy(&out.stderr).to_string();
     assert!(!out.status.success(), "accepted: {}", text);
     assert!(
-        text.contains("error[PD0080]") && text.contains("in `lib2::pair_is_one`, imported:"),
+        text.contains("error[PD0082]") && text.contains("in `lib2::pair_is_one`, imported:"),
         "{}",
         text
     );
@@ -701,7 +701,7 @@ fn a_shadowing_local_whose_let_is_refused_still_shadows() {
 /// the checker (`already defined in this scope`), and the parameter's String
 /// binding it left was what the comparison read. Not this rule's program to
 /// refuse: d5166e8 handed it to gcc, which refuses the redefinition, and so
-/// does this compiler now — with no PD0080 naming a String that is not there.
+/// does this compiler now — with no PD0082 naming a String that is not there.
 #[test]
 fn a_same_scope_rebinding_is_not_read_as_the_parameter() {
     let name = unique_module_name("cmp_rebind");
@@ -715,7 +715,7 @@ fn a_same_scope_rebinding_is_not_read_as_the_parameter() {
     if let Err(e) = Driver::new().compile_file(&src) {
         assert_ne!(
             e.code().map(|c| c.to_string()),
-            Some("PD0080".to_string()),
+            Some("PD0082".to_string()),
             "{}",
             e
         );
@@ -839,7 +839,7 @@ fn an_imported_generic_is_held_to_the_rule() {
         .expect("failed to run pdc");
     let text = String::from_utf8_lossy(&out.stderr).to_string();
     assert!(!out.status.success(), "accepted: {}", text);
-    assert!(text.contains("error[PD0080]"), "{}", text);
+    assert!(text.contains("error[PD0082]"), "{}", text);
     assert!(!text.contains("gcc"), "{}", text);
 }
 
@@ -921,7 +921,7 @@ fn a_break_in_a_nested_statement_loop_is_not_the_outer_loops_value() {
     let e = Driver::new()
         .compile_file(&src)
         .expect_err("d5166e8 refused this program too");
-    assert_ne!(e.code().map(|c| c.to_string()), Some("PD0080".to_string()), "{}", e);
+    assert_ne!(e.code().map(|c| c.to_string()), Some("PD0082".to_string()), "{}", e);
 }
 
 // ---------------------------------------------------------------------------
@@ -971,7 +971,7 @@ fn every_form_around_a_string_operand_is_judged() {
             "fn pick<P>(s: P) -> P { s }",
         );
         let text = refused(&program, "cmp_r5_string_forms");
-        assert!(text.contains("PD0080") || text.contains("is not defined on"), "{}: {}", tail, text);
+        assert!(text.contains("PD0082") || text.contains("is not defined on"), "{}: {}", tail, text);
     }
     for tail in ["(x + 0) == (y + 0)", "(0 + x) == (0 + y)", "(x - 0) == (y - 0)"] {
         let body = format!("{} {}", setup, tail);
@@ -1009,7 +1009,7 @@ fn a_pointer_distance_is_a_number_and_a_pointer_sum_is_not() {
 
 /// Every comparison is emitted with the static check the C compiler judges
 /// (its refusal path is `linker::tests::a_comparison_the_c_compiler_refuses_
-/// is_reported_as_pd0080`), and a program that compares integers prints what
+/// is_reported_as_pd0082`), and a program that compares integers prints what
 /// it printed before.
 #[test]
 fn every_comparison_is_emitted_with_the_c_compilers_check() {
@@ -1039,7 +1039,7 @@ fn every_comparison_is_emitted_with_the_c_compilers_check() {
 /// line, the operator at a column no operand starts at: a name, a
 /// parenthesised sum, a call, a name again under `==`. A name and a literal
 /// have no position in the tree, and the comparison took its line and column
-/// from its LEFT OPERAND, so be3efd0's check said `PD0080|0|0|<|main` for
+/// from its LEFT OPERAND, so be3efd0's check said `PD0082|0|0|<|main` for
 /// every one of the first, second and fourth, and the call's column for the
 /// third — never the operator's.
 const PLACED: &str = "fn f(x: i64) -> i64 { x }\n\
@@ -1078,14 +1078,14 @@ fn emitted_c(source: &str, prefix: &str) -> (TempDir, std::path::PathBuf, String
 fn the_c_compilers_check_names_the_operators_line_and_column() {
     let (_dir, _c_file, c) = emitted_c(PLACED, "cmp_r6_placed");
     for marker in [
-        "\"PD0080|5|13|<|main\"",
-        "\"PD0080|6|21|>=|main\"",
-        "\"PD0080|7|13|!=|main\"",
-        "\"PD0080|8|10|==|main\"",
+        "\"PD0082|5|13|<|main\"",
+        "\"PD0082|6|21|>=|main\"",
+        "\"PD0082|7|13|!=|main\"",
+        "\"PD0082|8|10|==|main\"",
     ] {
         assert!(c.contains(marker), "{} is not in the emitted C:\n{}", marker, c);
     }
-    assert!(!c.contains("PD0080|0|"), "a comparison with no place:\n{}", c);
+    assert!(!c.contains("PD0082|0|"), "a comparison with no place:\n{}", c);
 }
 
 /// THE JUDGE'S REFUSAL, END TO END. No program measured so far reaches the C
@@ -1093,11 +1093,11 @@ fn the_c_compilers_check_names_the_operators_line_and_column() {
 /// takes the C this compiler emitted for `a < b` over two integers and makes
 /// the two operands addresses, which is exactly what the check exists for (an
 /// operand whose carrier code generation got wrong). The real link must refuse
-/// it as PD0080 at the operator's source line and column, with a front-end
+/// it as PD0082 at the operator's source line and column, with a front-end
 /// refusal's exit code — not gcc's `compilation failed`, not an ICE — and the
-/// driver must carry it to the user under PD0080.
+/// driver must carry it to the user under PD0082.
 #[test]
-fn a_comparison_only_the_c_compiler_can_judge_is_pd0080_at_the_operator() {
+fn a_comparison_only_the_c_compiler_can_judge_is_pd0082_at_the_operator() {
     use palladium::driver::RunOutcome;
     use palladium::linker::{link, LinkError, EXIT_REFUSED};
     let (dir, c_file, c) = emitted_c(
@@ -1124,7 +1124,7 @@ fn a_comparison_only_the_c_compiler_can_judge_is_pd0080_at_the_operator() {
     let text = err.to_string();
     assert!(text.contains("`<`") && text.contains("line 4, column 13, in `main`"), "{}", text);
     let e = RunOutcome::Link(err).into_compile_error();
-    assert_eq!(e.code().map(|c| c.to_string()), Some("PD0080".to_string()), "{}", e);
+    assert_eq!(e.code().map(|c| c.to_string()), Some("PD0082".to_string()), "{}", e);
     assert!(e.to_string().contains("line 4, column 13"), "{}", e);
     assert!(!e.to_string().contains("gcc"), "{}", e);
 }
@@ -1133,13 +1133,13 @@ fn a_comparison_only_the_c_compiler_can_judge_is_pd0080_at_the_operator() {
 /// gets wrong for reasons that are not this rule — a generic called from a
 /// generic is never emitted (`id` undeclared), and a `let` that shadows a
 /// parameter is emitted as a C redeclaration — both comparing INTEGERS. On
-/// main both are `gcc compilation failed`. Round 5 named both PD0080, because
+/// main both are `gcc compilation failed`. Round 5 named both PD0082, because
 /// the tag was read anywhere in gcc's stderr: in the source line the compiler
 /// echoes under the first, and in a check that failed only as the
 /// redeclaration's cascade in the second. Both must stay the link failure
 /// they were, never a comparison refusal.
 #[test]
-fn a_gcc_failure_that_is_not_the_check_is_not_pd0080() {
+fn a_gcc_failure_that_is_not_the_check_is_not_pd0082() {
     use palladium::linker::{link, LinkError};
     for (program, prefix) in [
         (
@@ -1207,13 +1207,13 @@ fn generic_match(arms: &str, argument: &str) -> String {
     )
 }
 
-/// THE LOWERINGS ARE JUDGED TOO. A generic body's refusals other than PD0080
+/// THE LOWERINGS ARE JUDGED TOO. A generic body's refusals other than PD0082
 /// are not raised, so a String RANGE pattern lowered to `_match_expr >= "a"`
 /// and compared two addresses (astra, round 6: main and 76734e5 printed 0 for a
 /// run-time "m"), and an integer or bool pattern compared the String's address
 /// with a number. Every one now meets the C compiler's check where it is
 /// lowered — the first programs only that check catches — and is refused at
-/// the `match` as PD0080; at the pattern's own type each still runs.
+/// the `match` as PD0082; at the pattern's own type each still runs.
 #[test]
 fn every_pattern_a_generic_body_compares_is_judged() {
     use palladium::driver::RunOutcome;
@@ -1232,7 +1232,7 @@ fn every_pattern_a_generic_body_compares_is_judged() {
         let text = err.to_string();
         assert!(text.contains(construct) && text.contains("line 1, column 28, in `test__String`"), "{}: {}", arms, text);
         let e = RunOutcome::Link(err).into_compile_error();
-        assert_eq!(e.code().map(|c| c.to_string()), Some("PD0080".to_string()), "{}", arms);
+        assert_eq!(e.code().map(|c| c.to_string()), Some("PD0082".to_string()), "{}", arms);
     }
     for (arms, argument) in [("1..=9", "5"), ("5", "5"), ("true", "true")] {
         assert_eq!(run(&generic_match(arms, argument), "cmp_r7_pattern_ok"), "1\n", "{}", arms);
@@ -1302,7 +1302,7 @@ fn a_file_scope_comparison_is_judged_in_a_twin_and_runs() {
     let (_dir, _c_file, c) = emitted_c(source, "cmp_r7_file_scope");
     assert!(c.contains("static const int B = (1LL < 2LL);"), "{}", c);
     assert!(c.contains("static void __attribute__((unused)) __pd_judge_B(void)"), "{}", c);
-    assert!(c.contains("\"PD0080|1|19|<|B\"") && c.contains("|==|C\""), "{}", c);
+    assert!(c.contains("\"PD0082|1|19|<|B\"") && c.contains("|==|C\""), "{}", c);
     assert_eq!(run(source, "cmp_r7_file_scope_run"), "1\n2\n3\n");
 
     let deep = |depth: usize| {

@@ -377,7 +377,7 @@ fn handle_bootstrap_command(command: BootstrapCommands) -> Result<(), String> {
 fn report_link(e: palladium::linker::LinkError) -> ! {
     // Through the single choke point, bare: a link failure is gcc's verdict, not
     // a language rule this compiler enforces, so it has no PD code to carry.
-    // ...except PD0080, which the C compiler judges for this compiler (a
+    // ...except PD0082, which the C compiler judges for this compiler (a
     // comparison's static check) and which is a language rule refused by name.
     let code = matches!(e, palladium::linker::LinkError::Refused(_))
         .then_some(DiagnosticCode::ComparisonOperandIsIntFloatBoolOrChar);

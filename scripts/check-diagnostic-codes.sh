@@ -471,19 +471,20 @@ check_codes_pinned() {       # $1 = registry, $2 = manifest -> 0 clean / 1 compl
 #   tests/reject/alias_cycle_through_generic_argument.pd (reject|compile, PD0080).
 #   re-pinned 033dffe3… at #93 review round 4: 127 rows, ONE ADDED —
 #   tests/reject/generic_parameter_named_twice.pd (reject|compile, PD0081).
-#   re-pinned 5b076afe… for #89/#92 (PD0082): 131 rows, the 125 above plus six
-#   reject|compile rows ADDED — tests/reject/comparison_on_a_tuple.pd,
+#   re-pinned 924d63a5… for #89/#92 (PD0082) on top of #93: 134 rows, the 127 above
+#   plus seven reject|compile rows ADDED — tests/reject/comparison_on_a_tuple.pd,
 #   comparison_on_an_enum.pd, comparison_on_a_struct.pd,
-#   comparison_on_a_string.pd, comparison_on_an_array.pd and
-#   comparison_in_a_generic_instantiation.pd. None removed or retyped.
-REFUSAL_SET_SHA=033dffe37446920d49b68402a45dfb2c88f71d746443f651a39e7225d87c9047
+#   comparison_on_a_string.pd, comparison_on_an_array.pd,
+#   comparison_in_a_generic_instantiation.pd and (review round 7)
+#   comparison_in_a_generic_range_pattern.pd. None removed or retyped.
+REFUSAL_SET_SHA=924d63a5abd1e0720aabc47b3913997f3213dad6aba342cc63d64f784a9f2dd0
 # THE SIZE OF THAT SET, pinned beside it and re-pinned by the same deliberate
 # edit. Every row of the set is at stage compile and pins a code, so this is also
 # the number of code-pinned refusal rows and the `coded=` conformance must report.
 # It is a COMMITTED number on purpose: the counts requirement used to be held to a
 # count taken from the live manifest, and deleting refusal rows lowered both sides
 # together (suF-a review round 1).
-REFUSAL_SET_SIZE=127
+REFUSAL_SET_SIZE=134
 refusal_set_digest() {       # $1 = manifest -> sha256 on stdout
   awk -F'\t' 'NF>=2 && $1 !~ /^#/ && ($2=="reject" || $2=="skip") {print $1 "\t" $2 "\t" $3}' "$1" \
     | LC_ALL=C sort | shasum -a 256 | cut -d' ' -f1

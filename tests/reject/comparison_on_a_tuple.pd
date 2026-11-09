@@ -1,5 +1,5 @@
 // NEGATIVE TEST — `==` on a tuple (#89). A comparison operator applies only to
-// a type with a comparison: an integer, a float, a bool or a char (PD0080).
+// a type with a comparison: an integer, a float, a bool or a char (PD0082).
 //
 // No requirement row and no specification text defines equality on a tuple
 // (N5-10 is witnessed over the primitives only), and code generation emits C's

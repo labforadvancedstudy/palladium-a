@@ -3,7 +3,7 @@
 //
 // `==` `!=` `<` `<=` `>` `>=` apply to the integers, the floats, `bool` and
 // `char` — the types whose C carrier compares as the values do — and to aliases
-// of those. Every other operand type is refused by name (PD0080; the six
+// of those. Every other operand type is refused by name (PD0082; the six
 // tests/reject/comparison_*.pd rows), each with the way to compare instead, and
 // this fixture runs those ways too: a struct field by field, a tuple and an array
 // element by element, an enum with `match`, a String with `string_eq`.

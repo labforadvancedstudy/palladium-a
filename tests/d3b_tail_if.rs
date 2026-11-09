@@ -1699,7 +1699,7 @@ fn an_imported_function_is_visible_to_the_borrow_checker() {
 /// (src/codegen/mod.rs:211-224) is INSERT-ONLY — unlike `functions`, which the
 /// main-program pass overwrites entry by entry — so an imported `pub async fn f`
 /// leaves `f` in the set even when a local ordinary `fn f` replaces it, and
-/// `try_infer_expr_type` (src/codegen/mod.rs:427-427) reads the set rather than
+/// `try_infer_expr_type` (src/codegen/mod.rs:450-450) reads the set rather than
 /// asking `crate::ast::local_definition_shadows_import`.
 ///
 /// Measured: gcc reports `use of undeclared identifier 'f_Future'` against C
@@ -1715,7 +1715,7 @@ fn an_imported_function_is_visible_to_the_borrow_checker() {
 /// budget: preserving the number by omitting known debt is precisely what a
 /// closed inventory exists to prevent, so the row is here and the number moved.
 #[test]
-#[ignore = "XFAIL: CodeGenerator.async_functions (src/codegen/mod.rs:211-224) is insert-only, so an imported `pub async fn f` shadowed by a local ordinary `fn f` leaves `f` in the set and try_infer_expr_type (src/codegen/mod.rs:427-427) types the call to the LOCAL f as `f_Future`. Measured: the emitted C carries `f_Future v = f();` beside `long long f()` and gcc reports `use of undeclared identifier 'f_Future'` after the compiler reported success. Needs the set to ask crate::ast::local_definition_shadows_import, as the imported body and prototype loops now do (owned by M4)"]
+#[ignore = "XFAIL: CodeGenerator.async_functions (src/codegen/mod.rs:211-224) is insert-only, so an imported `pub async fn f` shadowed by a local ordinary `fn f` leaves `f` in the set and try_infer_expr_type (src/codegen/mod.rs:450-450) types the call to the LOCAL f as `f_Future`. Measured: the emitted C carries `f_Future v = f();` beside `long long f()` and gcc reports `use of undeclared identifier 'f_Future'` after the compiler reported success. Needs the set to ask crate::ast::local_definition_shadows_import, as the imported body and prototype loops now do (owned by M4)"]
 fn a_local_fn_shadowing_an_imported_async_fn_is_not_typed_as_a_future() {
     let out = compile_and_run_with_import(
         "pub async fn f() { print_int(1); }\n",
@@ -1806,7 +1806,7 @@ fn selective_import_excludes_a_symbol_from_the_consumers() {
 /// THE SCOPE OF THIS ROW ALSO COVERS DECLARATION IDENTITY, and it is bounded
 /// here rather than fixed. Imported generics are stored by BARE NAME
 /// (`TypeChecker.generic_functions`), and the deferred-refusal lists that
-/// src/typeck/mod.rs:2989-3010 filters carry `(name, span)` and nothing else.
+/// src/typeck/mod.rs:2996-3017 filters carry `(name, span)` and nothing else.
 /// So with two same-named imported generic `async fn`s, the refusal is raised
 /// off whichever declaration was RECORDED and the body that would have been
 /// emitted is whichever won a `HashMap`: THE REFUSAL MAY NAME A DECLARATION
@@ -1888,8 +1888,8 @@ fn two_modules_exporting_one_name_are_deterministic() {
 ///
 /// THE SHAPE. Two imported modules both export a generic `async fn agen<T>`.
 /// Only `a.pd`'s returns a value, so only `a.pd`'s is recorded in
-/// `deferred_generic_async_value_returns` (src/typeck/mod.rs:1562-1573), and the
-/// refusal is raised for it at src/typeck/mod.rs:2949-2955 once the call site
+/// `deferred_generic_async_value_returns` (src/typeck/mod.rs:1566-1577), and the
+/// refusal is raised for it at src/typeck/mod.rs:2953-2959 once the call site
 /// has instantiated the name. But `generic_functions` is keyed by BARE NAME and
 /// `set_imported_modules` iterates a `HashMap`, so WHICH module's body that key
 /// holds — and therefore which body `get_instantiations` would have handed to

@@ -3132,7 +3132,7 @@ mod alias_expansion_tests {
     }
 }
 
-/// The substitution visit (#89/#92, PD0080): each type parameter named in `.0`
+/// The substitution visit (#89/#92, PD0082): each type parameter named in `.0`
 /// becomes its argument, at every depth — the fourth visit of the one walk, so
 /// it reaches every position the other three do.
 ///

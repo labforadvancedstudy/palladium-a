@@ -266,6 +266,21 @@ pub(crate) struct ExpansionGuard {
     tripped: RefCell<Option<CompileError>>,
 }
 
+/// A copy for PD0082's generic post-pass, which probes each instantiation on a
+/// copy of the checker (#89/#92): its own state, shared with nothing. A tripped
+/// guard stays tripped in the copy, holding the error's text — the error the
+/// compilation reports is the original's (`TypeChecker::check`), never the copy's.
+impl Clone for ExpansionGuard {
+    fn clone(&self) -> Self {
+        let tripped = self.tripped.borrow().as_ref().map(|e| CompileError::Generic(e.to_string()));
+        Self {
+            open_plain: self.open_plain.clone(),
+            acyclic: self.acyclic.clone(),
+            tripped: RefCell::new(tripped),
+        }
+    }
+}
+
 impl std::fmt::Debug for ExpansionGuard {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExpansionGuard")

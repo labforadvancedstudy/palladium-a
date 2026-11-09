@@ -393,9 +393,9 @@ fn main() {
 /// The limit the help now states out loud, pinned so it cannot silently drift.
 ///
 /// Code generation skips generic enum definitions entirely, at all four sites —
-/// the two that COLLECT (`src/codegen/mod.rs:2134-2138`,
-/// `src/codegen/mod.rs:2174-2178`) and the two that EMIT
-/// (`src/codegen/mod.rs:2242-2247`, `src/codegen/mod.rs:2272-2276`) — and
+/// the two that COLLECT (`src/codegen/mod.rs:2199-2203`,
+/// `src/codegen/mod.rs:2239-2243`) and the two that EMIT
+/// (`src/codegen/mod.rs:2307-2312`, `src/codegen/mod.rs:2337-2341`) — and
 /// so a program that constructs one would reach the C compiler with no type,
 /// no tag and no constructor to link against.
 ///

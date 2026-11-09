@@ -1,4 +1,4 @@
-// NEGATIVE TEST — `==` on two values of a user enum (#92), PD0080.
+// NEGATIVE TEST — `==` on two values of a user enum (#92), PD0082.
 //
 // An enum is emitted as a C struct (a tag and a payload union), so on d5166e8
 // this type-checked and gcc refused it: "invalid operands to binary expression

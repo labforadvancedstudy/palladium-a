@@ -282,7 +282,7 @@ pub struct CodeGenerator {
     /// type is recorded as each assignment is emitted — the one moment the
     /// bindings still exist — and read back afterwards.
     hoist_types: std::collections::HashMap<String, String>,
-    /// PD0080's backstop (#89/#92, review round 4): while a comparison's
+    /// PD0082's backstop (#89/#92, review round 4): while a comparison's
     /// operands are generated, the C type each value form among them was
     /// DECLARED with, keyed by the node's address — the carrier C receives,
     /// not a reconstruction of it. `None` outside a comparison, and read only
@@ -1302,7 +1302,7 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:4927`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:4939`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
     /// (`src/ownership/borrow_checker.rs:641-643`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
@@ -5485,7 +5485,7 @@ impl CodeGenerator {
                     // same two comparisons an integer range is.
                     PatternLiteral::Char(value) => c_char_constant(*value),
                     // Refused by the type checker before this point — EXCEPT in a
-                    // generic body, whose refusals other than PD0080 are not
+                    // generic body, whose refusals other than PD0082 are not
                     // raised: there `_match_expr >= "a"` compared two addresses
                     // (review round 6). The judge refuses it now, as it does an
                     // integer bound against a String subject.
@@ -6377,7 +6377,7 @@ impl CodeGenerator {
                     op,
                     BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge
                 ) {
-                    // PD0080's backstop judges the operands AS EMITTED, so both
+                    // PD0082's backstop judges the operands AS EMITTED, so both
                     // are generated first (their hoists land in order, exactly
                     // as before) and only then checked.
                     let outer = self.comparison_carriers.replace(Default::default());
@@ -8899,7 +8899,7 @@ mod tuple_shape_tests {
     }
 }
 
-/// PD0080's BACKSTOP (#89/#92, review round 3).
+/// PD0082's BACKSTOP (#89/#92, review round 3).
 ///
 /// The type checker refuses a comparison on a type with no comparison, and it
 /// is where the good message comes from. But it reasons about Palladium types
@@ -8919,7 +8919,7 @@ mod tuple_shape_tests {
 /// an integer or a char (PD0072), a `for` over a range its `long long` bound;
 /// a String literal pattern is `__pd_string_eq`, not `==`.
 impl CodeGenerator {
-    /// `Err` with PD0080 when `op` compares and an operand's EMITTED carrier is
+    /// `Err` with PD0082 when `op` compares and an operand's EMITTED carrier is
     /// not a C type that compares by value (review round 4).
     ///
     /// Called after both operands have been generated, so every value form
@@ -8981,7 +8981,7 @@ impl CodeGenerator {
         Ok(())
     }
 
-    /// THE C COMPILER AS PD0080'S JUDGE (review round 5).
+    /// THE C COMPILER AS PD0082'S JUDGE (review round 5).
     ///
     /// Every reconstruction of an operand's C type has leaked in some review
     /// round, so every comparison is emitted with a check the C compiler
@@ -8993,7 +8993,7 @@ impl CodeGenerator {
     /// evaluate its argument. MEASURED on this toolchain (Apple clang 21 behind
     /// `gcc`): every scalar compiles without a single warning, `-Wall -Wextra`
     /// included, and a pointer, an array or a struct fails with the marker,
-    /// which `crate::linker` turns back into PD0080 at the recorded line and
+    /// which `crate::linker` turns back into PD0082 at the recorded line and
     /// column (the operator's) — never a raw C error — when it is the only
     /// error (a check failing beside another error is that error's cascade:
     /// `comparison_refusal`). A pointer distance (`p - q`) is a `ptrdiff_t` and
@@ -9006,7 +9006,7 @@ impl CodeGenerator {
         )
     }
 
-    /// `PD0080|line|column|what|function`, read back by
+    /// `PD0082|line|column|what|function`, read back by
     /// `crate::linker::comparison_refusal`.
     fn comparison_marker(&self, what: &str, span: Span) -> String {
         format!(
@@ -9252,7 +9252,7 @@ fn pattern_names(pattern: &Pattern, out: &mut Vec<String>) {
 }
 
 /// Both operands' C type class is one C compares by value: the condition of
-/// every PD0080 check (`CodeGenerator::c_scalar_check`, `checked_comparison`).
+/// every PD0082 check (`CodeGenerator::c_scalar_check`, `checked_comparison`).
 fn scalar_mask(lhs: &str, rhs: &str) -> String {
     format!(
         "(0x11E >> __builtin_classify_type({})) & (0x11E >> __builtin_classify_type({})) & 1",

@@ -1278,8 +1278,8 @@ impl TypeChecker {
     /// emitted C.
     ///
     /// Every insert below is under the BARE name as well as the qualified one
-    /// (`src/typeck/mod.rs:1643-1644`, `src/typeck/mod.rs:1646-1648`,
-    /// `src/typeck/mod.rs:1743-1744`), and the map is last-writer-wins. So when two
+    /// (`src/typeck/mod.rs:1647-1648`, `src/typeck/mod.rs:1650-1652`,
+    /// `src/typeck/mod.rs:1747-1748`), and the map is last-writer-wins. So when two
     /// imported modules export the same name, iteration order decides which
     /// signature — and, for a generic, which BODY — survives. `get_instantiations`
     /// reads `generic_functions` by bare name and hands the winner to codegen's
@@ -2890,7 +2890,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:3167-3170`), and walking an imported
+        // return (`src/typeck/mod.rs:3174-3177`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -2970,7 +2970,7 @@ impl TypeChecker {
             return Err(refusal.with_code(DiagnosticCode::AsyncFnIsNotImplemented));
         }
 
-        // PD0080 in generic bodies, which nothing above checked (#89, #92).
+        // PD0082 in generic bodies, which nothing above checked (#89, #92).
         self.refuse_instantiated_comparisons()?;
 
         Ok(())
@@ -6500,7 +6500,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:6749-6813`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:6872-6936`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that
@@ -7546,7 +7546,7 @@ impl TypeChecker {
     }
 
     /// The refusal of `op` between two values of `ty`, or `None` when `ty` has
-    /// a comparison (PD0080; #89, #92).
+    /// a comparison (PD0082; #89, #92).
     ///
     /// THE SET ADMITTED IS THE SET C ANSWERS CORRECTLY. Code generation emits
     /// C's own operator between the two operands, whatever they are, so a type
@@ -7652,7 +7652,7 @@ impl TypeChecker {
         )
     }
 
-    /// PD0080 inside the body of every generic function instantiation.
+    /// PD0082 inside the body of every generic function instantiation.
     ///
     /// A GENERIC BODY IS NEVER TYPE-CHECKED: `check_function` returns before
     /// the walk for any function with type parameters, and instantiation
@@ -7720,7 +7720,7 @@ impl TypeChecker {
         Ok(())
     }
 
-    /// The first PD0080 refusal in `generic`'s body instantiated at
+    /// The first PD0082 refusal in `generic`'s body instantiated at
     /// `type_args`, walked on `self` — a probe, never the checker itself.
     fn comparison_in_instantiation(
         &mut self,
@@ -7799,7 +7799,7 @@ impl TypeChecker {
     /// `check_statement` over `stmts`, except that a statement refused under
     /// ANOTHER rule is not the end of the walk: its parts are walked instead
     /// (`probe_statement`), so every comparison in the block is checked. Only
-    /// PD0080 comes back as an error.
+    /// PD0082 comes back as an error.
     fn probe_block(&mut self, stmts: &[Stmt]) -> Result<()> {
         for stmt in stmts {
             let at = self.probe_position();

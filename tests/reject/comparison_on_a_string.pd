@@ -1,4 +1,4 @@
-// NEGATIVE TEST — `==` on two Strings, PD0080. The well-typed-but-WRONG half.
+// NEGATIVE TEST — `==` on two Strings, PD0082. The well-typed-but-WRONG half.
 //
 // A String is a `const char*` in C and code generation emitted C's `==`, so the
 // comparison was of two ADDRESSES. gcc accepted it and the program answered
