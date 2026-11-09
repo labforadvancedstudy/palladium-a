@@ -503,8 +503,10 @@ edit to the manifest, and the pin's own validator catches a defect in the pin.)
    finding one layer in — so every inventory now carries an anchor recomputed from a tracked file
    it does not share with the test. Re-proved by reverting: replacing any inventory with that echo
    fails its anchor.)*
-   The aggregation has its own driver too, because the real tree cannot exercise it: no inventory
-   returns NO_VERDICT today, so inverting the lattice changed nothing about a real run. It is
+   The aggregation has its own driver too, because the real tree cannot exercise it: when this was
+   written no inventory returned NO_VERDICT, so inverting the lattice changed nothing about a real
+   run — and since M2 owes nothing, inventory four's NO_VERDICT is the whole verdict and no OWED
+   meets it, so the precedence is still unexercised by a real run, from the other side. It is
    driven over all 81 four-inventory combinations plus order independence
    (`scripts/m2-exit.sh --self-test`), and inverting it fails 51 of 82.
 
@@ -556,7 +558,8 @@ on, stated so it can be checked rather than remembered: every one of the 51 rows
 fixture is tagged M2; and M2's first witness, WT-01, **was not paid** — it left for M8 on
 2026-11-08 with three live workarounds owned elsewhere (item 7). M2 ships with its witness
 written and running, not workaround-free. The heading moved under *Completed* with this line; the
-text below is unchanged by the release.
+items and evidence below are kept as they were, and the release changed only sentences that said
+M2 was still open (item 8, and the `m2-exit` sentence beside GI-08).
 
 **Waits on**: M1. **Delivers**: the surface everything else is written in, **C3**, the attribute
 token N8 sits below, and the first witness program.
@@ -840,7 +843,8 @@ enum-owned method is unreachable by its path form. Each row carries a
    invisible to every other gate in the repo. *(It said `make -n m2-exit` for one round. `make -n`
    proves a recipe names a command, never that the command ran, which is the whole finding it was
    written to fix.)* It is in `gates`; `m2-exit` is not, for
-   `thesis-exit`'s reason: a target that is RED by design can never be in that list.
+   `thesis-exit`'s reason: a target that is nonzero by design — RED while M2 owed a row,
+   NO_VERDICT since — can never be in that list.
    **GI-08 is CLOSED: `make m1-exit` reads inventory four now** (`scripts/m1-exit.sh`), so both of
    the two milestone exits that exist read all four. *(The residual this item carried for several
    rounds, kept verbatim because it is the thing that closed: "`make m1-exit` does not read
