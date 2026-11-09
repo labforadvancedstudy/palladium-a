@@ -1,0 +1,58 @@
+// Test 05: a reference's referent is read in its own scope and derived exactly
+// (#88, #90, review round 1).
+//
+// Every line below RAN on main and prints what main printed. They pin the
+// two ways round 1 got them wrong:
+//
+//   * A NAME IS READ IN THE SCOPE IT IS BOUND IN. `{ let x: i64 = ..; x }`
+//     under an outer `x: u32` was read through the OUTER `x` once the block's
+//     scope had closed, and `let r: &i64 = &v` was refused — a program main
+//     ran. The same through an `if` branch, a `match` arm and a call.
+//   * A REFERENT IS DERIVED EXACTLY, as code generation declares the binding:
+//     an array repeat's element, a generic's `-> i64` result and a generic
+//     struct's field are each the type the C declares, so the `&i64` reading
+//     each one runs, and its `&u32` twin is refused by name (the reject
+//     fixtures beside this one).
+struct G<T> {
+    n: T,
+}
+
+fn read(x: &i64) -> i64 {
+    x
+}
+
+fn big<T>(t: T) -> i64 {
+    4294967297
+}
+
+fn main() {
+    let x: u32 = 2;
+
+    let v = { let x: i64 = 4294967297; x };
+    let r: &i64 = &v;
+    print_int(*r);
+    print_int(read(&v));
+
+    let c = true;
+    let w = if c { let x: i64 = 4294967298; x } else { 7 };
+    let rw: &i64 = &w;
+    print_int(*rw);
+
+    let m = match 4294967299 { x => x };
+    let rm: &i64 = &m;
+    print_int(*rm);
+
+    let a = [4294967300; 2];
+    let ra: &i64 = &a[1];
+    print_int(*ra);
+
+    let b = big(x);
+    let rb: &i64 = &b;
+    print_int(*rb);
+
+    let g = G { n: 5 };
+    let rg: &i64 = &g.n;
+    print_int(*rg);
+
+    print_int(x as i64);
+}

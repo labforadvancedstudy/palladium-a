@@ -89,6 +89,53 @@ fn outcome(source: &str, prefix: &str) -> String {
     format!("RUN: {}", String::from_utf8_lossy(&run.stdout))
 }
 
+/// `outcome`, for a program that imports `modules`. The module resolver
+/// searches the WORKING directory (`src/resolver/mod.rs`), which an in-process
+/// compile cannot own per test, so this drives the real `pdc` binary with the
+/// scratch directory as its `current_dir` (as tests/m3_imported_calls.rs does)
+/// and reads the refusal's code from its printed `error[PD####]` header.
+fn outcome_with(modules: &[(&str, &str)], source: &str, prefix: &str) -> String {
+    let dir = TempDir::new().unwrap();
+    for (name, text) in modules {
+        fs::write(dir.path().join(name), text).unwrap();
+    }
+    let name = unique_module_name(prefix);
+    fs::write(dir.path().join(format!("{}.pd", name)), source).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
+        .args(["compile", &format!("{}.pd", name), "-o", &name])
+        .current_dir(dir.path())
+        .output()
+        .expect("failed to run pdc");
+    if !out.status.success() {
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        if text.contains("gcc") || text.contains("ill-typed C") {
+            return "GCC".to_string();
+        }
+        // The header is `error[PD0022]: ...` or `error: ...`, between ANSI colours.
+        let plain: String = text
+            .split('\x1b')
+            .enumerate()
+            .map(|(i, part)| if i == 0 { part } else { part.split_once('m').map_or("", |(_, rest)| rest) })
+            .collect();
+        let header = plain
+            .lines()
+            .find(|l| l.starts_with("error"))
+            .unwrap_or("");
+        let (code, first) = match header.strip_prefix("error[") {
+            Some(rest) => rest.split_once("]: ").unwrap_or(("-", rest)),
+            None => ("-", header.strip_prefix("error: ").unwrap_or(header)),
+        };
+        return format!("REFUSED[{}]: {}", code, first);
+    }
+    let exe = dir.path().join("build_output").join(&name);
+    let run = Command::new(&exe).output().expect("run");
+    format!("RUN: {}", String::from_utf8_lossy(&run.stdout))
+}
+
 /// Run every row and compare the table whole, so one run shows every row
 /// that differs.
 fn check_table(rows: &[(&str, &str, &str)], prefix: &str) {
@@ -458,4 +505,86 @@ fn references_that_ran_before_still_run() {
         ("a reference alias's value handed to a generic", "type A = &i64;\nfn g<U>(u: U) -> i64 { return *u + *u; }\nfn main() { let m = 4; let r0: A = &m; print_int(g(r0)); }\n", "RUN: 8\n"),
     ];
     check_table(&rows, "ref_still_runs");
+}
+
+/// REVIEW ROUND 1: A NAME IS READ IN THE SCOPE IT IS BOUND IN. The referent of
+/// `&v` was derived by re-reading `v`'s initialiser after its scopes had
+/// closed, so `{ let x: i64 = ..; x }` under an outer `x: u32` was read
+/// through the OUTER `x` and refused. Each of these ran on main (903ba02)
+/// and printed what it prints here.
+#[test]
+fn a_name_inside_a_value_is_read_in_its_own_scope() {
+    let rows: Vec<(&str, &str, &str)> = vec![
+        ("a block's `let` shadowing an outer `u32`", "fn main() { let x: u32 = 2; let v = { let x: i64 = 4294967297; x }; let r: &i64 = &v; print_int(*r); }\n", "RUN: 4294967297\n"),
+        ("the same, into a parameter written `&i64`", "fn f(x: &i64) -> i64 { x }\nfn main() { let x: u32 = 2; let v = { let x: i64 = 4294967297; x }; print_int(f(&v)); }\n", "RUN: 4294967297\n"),
+        ("the reverse: an inner `u32` under an outer `i64`", "fn main() { let x: i64 = 2; let v = { let x: u32 = 4294967295; x }; let r: &u32 = &v; print_int(*r); }\n", "RUN: 4294967295\n"),
+        ("an `if` branch's `let`", "fn main() { let x: u32 = 2; let c = true; let v = if c { let x: i64 = 4294967297; x } else { 7 }; let r: &i64 = &v; print_int(*r); }\n", "RUN: 4294967297\n"),
+        ("a `match` arm's binding", "fn main() { let x: u32 = 2; let v = match 4294967297 { x => x }; let r: &i64 = &v; print_int(*r); }\n", "RUN: 4294967297\n"),
+    ];
+    check_table(&rows, "ref_scope");
+}
+
+/// REVIEW ROUND 1: AN UNKNOWN REFERENT IS NEVER A MATCH. Where nothing was
+/// known about a referent it was taken to agree, so a 64-bit value reached a
+/// `&u32` through an array repeat, a `loop`, a block, a generic's result or a
+/// generic struct's field — the ill-typed-C trap on main and on round 1. Each
+/// is now derived exactly, as code generation types it, and refused where it
+/// disagrees; the `&i64` twins run as they did.
+#[test]
+fn a_referent_is_derived_exactly_or_refused() {
+    let rows: Vec<(&str, &str, &str)> = vec![
+        ("an array repeat's element for `&u32`", "fn main() { let a = [4294967297; 2]; let r: &u32 = &a[0]; print_int(*r); }\n", "REFUSED[PD0022]"),
+        ("an array repeat's element for `&i64`", "fn main() { let a = [4294967297; 2]; let r: &i64 = &a[0]; print_int(*r); }\n", "RUN: 4294967297\n"),
+        ("a `loop`'s `break` value for `&u32`", "fn main() { let v = loop { break 4294967297; }; let r: &u32 = &v; print_int(*r); }\n", "REFUSED[PD0022]"),
+        ("a block's value for `&u32`", "fn main() { let v = { let x: i64 = 4294967297; x }; let r: &u32 = &v; print_int(*r); }\n", "REFUSED[PD0022]"),
+        ("a `match` on an `i64` for `&u32`", "fn main() { let v = match 4294967297 { x => x }; let r: &u32 = &v; print_int(*r); }\n", "REFUSED[PD0022]"),
+        ("a generic's `-> i64` result for `&u32`", "fn f<T>(x: T) -> i64 { 4294967297 }\nfn main() { let v = f(1); let r: &u32 = &v; print_int(*r); }\n", "REFUSED[PD0022]"),
+        ("a generic's `-> i64` result for `&i64`", "fn f<T>(x: T) -> i64 { 4294967297 }\nfn main() { let v = f(1); let r: &i64 = &v; print_int(*r); }\n", "RUN: 4294967297\n"),
+        ("a generic struct's field for `&u32`", "struct G<T> { n: T }\nfn main() { let g = G { n: 5 }; let r: &u32 = &g.n; print_int(*r); }\n", "REFUSED[PD0022]"),
+        ("a generic struct's field for `&i64`", "struct G<T> { n: T }\nfn main() { let g = G { n: 5 }; let r: &i64 = &g.n; print_int(*r); }\n", "RUN: 5\n"),
+        ("a generic struct's field for a parameter written `&u32`", "struct G<T> { n: T }\nfn f(x: &u32) -> i64 { x as i64 }\nfn main() { let g = G { n: 5 }; print_int(f(g.n)); }\n", "REFUSED[PD0042]"),
+        ("a generic struct's field beside a `&u32` in an `if`", "struct G<T> { n: T }\nfn main() { let g = G { n: 5 }; let m: u32 = 7; let c = true; let r = if c { &g.n } else { &m }; print_int(*r); }\n", "REFUSED[PD0058]"),
+        ("an array repeat's element beside a `&u32`, assigned", "fn main() { let a = [4294967297; 2]; let m: u32 = 7; let mut r = &a[0]; r = &m; print_int(*r); }\n", "REFUSED[-]"),
+    ];
+    check_table(&rows, "ref_exact");
+    let module = [("zwidth.pd", "pub struct S { n: i64 }\npub enum E { A(i64) }\n")];
+    let imported = [
+        ("an imported struct's field for `&u32`", "import zwidth;\nfn main() { let s = S { n: 4294967297 }; let r: &u32 = &s.n; print_int(*r); }\n", "REFUSED[PD0022]"),
+        ("an imported struct's field for `&i64`", "import zwidth;\nfn main() { let s = S { n: 4294967297 }; let r: &i64 = &s.n; print_int(*r); }\n", "RUN: 4294967297\n"),
+        ("an imported enum's payload for `&u32`", "import zwidth;\nfn main() { let e = E::A(4294967297); match e { E::A(n) => { let r: &u32 = &n; print_int(*r); } } }\n", "REFUSED[PD0022]"),
+    ];
+    let wrong: Vec<String> = imported
+        .iter()
+        .filter_map(|(what, source, expected)| {
+            let got = outcome_with(&module, source, "ref_exact_import");
+            (!got.starts_with(expected))
+                .then(|| format!("{}\n    expected: {}\n    got:      {}", what, expected, got))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{} row(s) differ:\n{}", wrong.len(), wrong.join("\n"));
+}
+
+/// REVIEW ROUND 1: THE RULES HOLD IN A GENERIC BODY, at each instantiation.
+/// A generic body is monomorphized, not walked, so `r == s` over two borrows
+/// compared ADDRESSES there and printed `ne` for `same(5, 5)`, where the
+/// non-generic twin is refused. Generic bodies that ran still run.
+#[test]
+fn the_reference_rules_hold_in_an_instantiated_generic_body() {
+    let rows: Vec<(&str, &str, &str)> = vec![
+        ("`r == s` over two borrows, in a generic", "fn same<T>(a: T, b: T) -> bool { let r = &a; let s = &b; r == s }\nfn main() { if same(5, 5) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0081]: in `same` instantiated at `i64`"),
+        ("a width mismatch in a generic body", "fn f<T>(n: T) -> i64 { let m: i64 = 4294967297; let r: &u32 = &m; *r }\nfn main() { print_int(f(5)); }\n", "REFUSED[PD0022]: in `f` instantiated at `i64`"),
+        ("a generic reached only through another generic", "fn same<T>(a: T, b: T) -> bool { let r = &a; let s = &b; r == s }\nfn outer<U>(u: U) -> bool { same(u, u) }\nfn main() { if outer(5) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0081]"),
+        ("a generic never instantiated is not checked", "fn same<T>(a: T, b: T) -> bool { let r = &a; let s = &b; r == s }\nfn main() { print_int(1); }\n", "RUN: 1\n"),
+        ("a generic body with `*u` over a reference alias", "type A = &i64;\nfn g<U>(u: U) -> i64 { return *u + *u; }\nfn main() { let m = 4; let r0: A = &m; print_int(g(r0)); }\n", "RUN: 8\n"),
+        ("a generic body that names its type parameter", "fn id<T>(x: T) -> T { let y = x; y }\nfn main() { print_int(id(4)); }\n", "RUN: 4\n"),
+        ("a generic body comparing values", "fn same<T>(a: T, b: T) -> bool { a == b }\nfn main() { if same(5, 5) { print(\"eq\"); } else { print(\"ne\"); } }\n", "RUN: eq\n"),
+        ("a generic body reading a parameter written `&T`", "fn first<T>(n: T, x: &T) -> T { x }\nfn main() { let n = 5; print_int(first(n, &n)); }\n", "RUN: 5\n"),
+        // `let x: T` is declared `void *x` (a body is not substituted), which C
+        // accepts from a `String`; the borrows of it were compared unchecked
+        // and printed `ne` for `same("k", "k")` on main, at any depth.
+        ("`r == s` over borrows of `let x: T` bindings", "fn same<T>(a: T, b: T) -> bool { let x: T = a; let y: T = b; let r = &x; let s = &y; r == s }\nfn main() { if same(\"k\", \"k\") { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0081]: in `same` instantiated at `String`"),
+        ("the same inside an `if`", "fn same<T>(a: T, b: T, c: bool) -> bool { if c { let x: T = a; let y: T = b; let r = &x; let s = &y; return r == s; } false }\nfn main() { if same(\"k\", \"k\", true) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0081]"),
+        ("a `let x: T` binding that is only passed on", "fn pass<T>(a: T) -> T { let x: T = a; let y = x; y }\nfn main() { print(pass(\"ok\")); }\n", "RUN: ok\n"),
+    ];
+    check_table(&rows, "ref_generic_body");
 }

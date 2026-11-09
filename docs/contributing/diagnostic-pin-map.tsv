@@ -2,7 +2,7 @@
 # manifest's pins by `make check-diagnostic-codes`.
 #
 # WHAT THIS IS. The su0 semantic map, as both review engines approved it, plus the
-# amendments recorded below: one row per refusal-witness manifest row (129
+# amendments recorded below: one row per refusal-witness manifest row (131
 # `reject` + 2 `skip`), saying which stable code that row's refusal carries and,
 # where the code prints more than one payload, which fragment of the PRIMARY
 # header's payload tells this row apart. The generator writes column 4 of every
@@ -56,6 +56,9 @@
 #   both codes have two payload groups and the two rows that were bare —
 #   int_is_not_a_char (``expected Char, found Int``) and value_if_branch_types
 #   (``branch of type String``) — carry a fragment now, by the rule above.
+#   #88 review round 1: PD0081 gained a second witness, the instantiated
+#   generic body, whose payload is prefixed ``in `same` instantiated at `i64`:``;
+#   both rows carry a fragment (``instantiated at``, `` `r` is a reference ``).
 #
 # KNOWN QUIRKS, recorded so the record is complete. Three fragments end mid-word,
 # where the su0 map cut them: PD0002 const_shl_negative_left `…which C leaves u`,
@@ -132,9 +135,10 @@ PD0020	a top-level initialiser must be a constant expression (parser:2005-2037, 
 PD0020	a top-level initialiser must be a constant expression (parser:2005-2037, one `refuse` closure, `form` is the offending expression kind)	2	tests/reject/const_reads_another_item.pd	reject	yes	-	yes	yes	`A`	-
 PD0021	a method taking `&mut self` may not be called through a receiver that is not `&mut self` (typeck:5538-5541, ONE Err under ONE predicate whose `detail` the CALLER's receiver form selects; merged from the two map rows PD0021+PD0064 at the su3 attachment, PD0064 tombstoned)	3	tests/reject/call_mut_method_through_chained_shared_receiver.pd	reject	yes	-	yes	yes	`D::bump`	-
 PD0021	a method taking `&mut self` may not be called through a receiver that is not `&mut self` (typeck:5538-5541, ONE Err under ONE predicate whose `detail` the CALLER's receiver form selects; merged from the two map rows PD0021+PD0064 at the su3 attachment, PD0064 tombstoned)	3	tests/reject/call_mut_method_through_shared_receiver.pd	reject	yes	-	yes	yes	`C::bump` through `self`: `&self` is a SHARED borrow	-
-PD0022	a `let` with a type annotation requires its initialiser to have exactly that type, with no implicit conversion (typeck:3319-3325, one predicate with no arms; the type pair is fixture data)	3	tests/reject/int_is_not_a_char.pd	reject	no	-	yes	yes	expected Char, found Int	-
-PD0022	a `let` with a type annotation requires its initialiser to have exactly that type, with no implicit conversion (typeck:3319-3325, one predicate with no arms; the type pair is fixture data)	3	tests/reject/reference_width_annotation.pd	reject	no	IDENTICAL	yes	yes	expected &u32, found &i64	-
-PD0022	a `let` with a type annotation requires its initialiser to have exactly that type, with no implicit conversion (typeck:3319-3325, one predicate with no arms; the type pair is fixture data)	3	tests/reject/reference_width_alias_annotation.pd	reject	no	IDENTICAL	yes	yes	expected &u32, found &i64	-
+PD0022	a `let` with a type annotation requires its initialiser to have exactly that type, with no implicit conversion (typeck:3319-3325, one predicate with no arms; the type pair is fixture data)	4	tests/reject/int_is_not_a_char.pd	reject	no	-	yes	yes	expected Char, found Int	-
+PD0022	a `let` with a type annotation requires its initialiser to have exactly that type, with no implicit conversion (typeck:3319-3325, one predicate with no arms; the type pair is fixture data)	4	tests/reject/reference_width_annotation.pd	reject	no	IDENTICAL	yes	yes	expected &u32, found &i64	-
+PD0022	a `let` with a type annotation requires its initialiser to have exactly that type, with no implicit conversion (typeck:3319-3325, one predicate with no arms; the type pair is fixture data)	4	tests/reject/reference_width_alias_annotation.pd	reject	no	IDENTICAL	yes	yes	expected &u32, found &i64	-
+PD0022	a `let` with a type annotation requires its initialiser to have exactly that type, with no implicit conversion (typeck:3319-3325, one predicate with no arms; the type pair is fixture data)	4	tests/reject/reference_width_of_repeat_element.pd	reject	no	IDENTICAL	yes	yes	expected &u32, found &i64	-
 PD0023	an enum variant's payload may not be a tuple, because tuple structs are emitted after the enums that would use them (codegen:2612-2632; the same loop enforces it over `EnumVariantData::Struct` payloads at codegen:2615, which has no fixture)	1	tests/reject/tuple_in_enum_payload.pd	reject	no	-	no	no	-	corpus-gap
 PD0024	a nested array's INNER length must be a literal this compiler resolves (codegen:1009-1032, one `Err` in `inner_dims_for_declarator`; `what` is the declaring position, supplied by the caller at codegen:2944/3278/3787)	2	tests/reject/nested_array_field_inner_length.pd	reject	yes	-	yes	yes	the field `cells` of `Board`	-
 PD0024	a nested array's INNER length must be a literal this compiler resolves (codegen:1009-1032, one `Err` in `inner_dims_for_declarator`; `what` is the declaring position, supplied by the caller at codegen:2944/3278/3787)	2	tests/reject/nested_array_param_inner_length.pd	reject	yes	-	yes	yes	the parameter `g`	-
@@ -196,5 +200,6 @@ PD0079	a macro's expansion parses as what its invocation position requires (macr
 PD0080	a type alias the compiler expands must name a type: its expansion may not reach an alias cycle (alias_cycles.rs: the `ExpansionGuard` in typeck and codegen, judged where an alias is opened; the alias and the cycle vary)	1	tests/reject/alias_cycle_through_generic_argument.pd	reject	yes	-	no	no	-	narrow-surface
 PD0081	a generic parameter list names each parameter once (parser, `refuse_a_parameter_named_twice`, one helper at the end of all five lists; the name varies)	1	tests/reject/generic_parameter_named_twice.pd	reject	yes	-	no	no	-	narrow-surface
 PD0082	`*e` dereferences a reference value only (typeck `dereferenced`, one predicate reached from a value `*e` and from an assignment through `*e`; the fixture is the ASSIGNMENT position over a parameter written `&mut T`, and the value position has no fixture of its own)	1	tests/reject/deref_needs_a_reference.pd	reject	yes	-	no	no	-	corpus-gap
-PD0083	an operand of an operator is not a reference value (typeck `refuse_reference_operand`, one predicate called for both operands of every binary operator and for every unary operator; the fixture is `==`, the others have no fixture of their own)	1	tests/reject/reference_operands_compared.pd	reject	yes	-	no	no	-	corpus-gap
+PD0083	an operand of an operator is not a reference value (typeck `refuse_reference_operand`, one predicate called for both operands of every binary operator and for every unary operator, in a non-generic body and in each instantiated generic body; the fixtures are `==` in each, the other operators have no fixture of their own)	2	tests/reject/reference_operands_compared.pd	reject	yes	-	yes	yes	`r` is a reference	-
+PD0083	an operand of an operator is not a reference value (typeck `refuse_reference_operand`, one predicate called for both operands of every binary operator and for every unary operator, in a non-generic body and in each instantiated generic body; the fixtures are `==` in each, the other operators have no fixture of their own)	2	tests/reject/reference_compare_in_generic_body.pd	reject	yes	-	yes	yes	instantiated at	-
 PD0084	an argument for a parameter written `&T` is a place or a borrow written at the call (typeck `admits_argument`, one predicate over a reference value given for such a parameter)	1	tests/reject/held_reference_to_reference_parameter.pd	reject	yes	-	no	no	-	narrow-surface

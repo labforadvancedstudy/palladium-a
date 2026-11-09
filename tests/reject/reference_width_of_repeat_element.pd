@@ -1,0 +1,13 @@
+// #90, review round 1: a referent nothing was known about was taken to agree.
+//
+// `a` is `[4294967297; 2]`, which code generation declares `long long a[2]`.
+// Round 1 derived no source for an array REPEAT, and an unknown referent was
+// treated as a match, so `&a[0]` was admitted as a `&u32`. Measured on main
+// (903ba02) and on round 1: "internal compiler error: the C backend emitted
+// ill-typed C". The repeat's element is now derived exactly, and an unknown
+// referent agrees with nothing where the width is erased.
+fn main() {
+    let a = [4294967297; 2];
+    let r: &u32 = &a[0];
+    print_int(*r);
+}

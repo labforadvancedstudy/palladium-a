@@ -1,0 +1,22 @@
+// #88, review round 1: the reference rules hold in a GENERIC body, at each
+// instantiation code generation emits, and `p == q` there is refused by name.
+//
+// A generic body is monomorphized, not walked by the type checker, so the
+// operator rule (PD0081) never saw it: `p == q` over two borrows compared the
+// two ADDRESSES. Measured on main (903ba02) and on round 1 alike: it compiled,
+// ran and printed `ne` for `same(5, 5)` — while the non-generic twin
+// (tests/reject/reference_operands_compared.pd) is refused. Each body is now
+// checked at its instantiations, and the refusal says which one.
+fn same<T>(a: T, b: T) -> bool {
+    let p = &a;
+    let q = &b;
+    p == q
+}
+
+fn main() {
+    if same(5, 5) {
+        print("eq");
+    } else {
+        print("ne");
+    }
+}

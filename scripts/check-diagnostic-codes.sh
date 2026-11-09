@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The evidence gate for stable diagnostic codes — GI-12 spec D4/R2.
 #
-# WHAT THIS TARGET IS NOT. It is NOT a second runner over the 129 reject rows.
+# WHAT THIS TARGET IS NOT. It is NOT a second runner over the 131 reject rows.
 # A gate that re-executed the corpus its own way would be a second authority, and
 # two authorities over one question means the weaker one decides every
 # disagreement — in practice the one that says PASS. Execution belongs to
@@ -479,6 +479,9 @@ REFUSAL_SET_SHA=033dffe37446920d49b68402a45dfb2c88f71d746443f651a39e7225d87c9047
 #   tests/reject/deref_needs_a_reference.pd (PD0082),
 #   tests/reject/reference_operands_compared.pd (PD0083),
 #   tests/reject/held_reference_to_reference_parameter.pd (PD0084).
+#   (#88 review round 1), TWO ADDED, reject|compile —
+#   tests/reject/reference_compare_in_generic_body.pd (PD0083) and
+#   tests/reject/reference_width_of_repeat_element.pd (PD0022).
 # THE SIZE OF THAT SET, pinned beside it and re-pinned by the same deliberate
 # edit. Every row of the set is at stage compile and pins a code, so this is also
 # the number of code-pinned refusal rows and the `coded=` conformance must report.

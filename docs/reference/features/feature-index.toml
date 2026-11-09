@@ -177,7 +177,7 @@ implementation = "partial"
 evidence = [
   "conformance: tests/05_ownership_basic.pd run",
   "conformance: tests/05_borrowing_references.pd run",
-  "src: src/typeck/mod.rs:848-855 a written `&T` is `CheckerType::Reference` with its referent recorded (#88, #90) — 'A reference is a reference' — and no lifetime or borrow region in it",
+  "src: src/typeck/mod.rs:889-896 a written `&T` is `CheckerType::Reference` with its referent recorded (#88, #90) — 'A reference is a reference' — and no lifetime or borrow region in it",
   "conformance: tests/reject/reference_meets_value_in_if.pd reject",
   "conformance: tests/reject/reference_width_annotation.pd reject",
   "src: src/ownership/borrow_checker.rs:1015 let call_lifetime = self.context.new_lifetime() — each call gets its own lifetime",

@@ -290,7 +290,7 @@ are marked, because both changed the plan.
 | | Capability | What it is | Required by | Waits on |
 |---|---|---|---|---|
 | **C0** | Abstraction | Traits, generics, bounds, `where` clauses. Trait/generic/module conformance is **zero** today | the effect system's *signatures* · a bootstrap compiler that can grow · the standard library | the surface |
-| **C1** | Reference typing | `Type::Reference` is a distinct type carrying mutability. Since #88/#90 the type checker has a reference type (`src/typeck/mod.rs:848-855`): `&i64` is not `i64`, and the referent keeps its integer width. What it still lacks: mutability is recorded but never compared, the type carries no lifetime or region, and a parameter written `&T` is read as its referent wherever the body names it, as code generation reads it | N9 in full · N12's move semantics and drop glue · moving the array rule out of codegen ([A9.2](../specification/language-spec.md#a92-array-parameters)) · C4 · **soundness** of C0's borrows | nothing |
+| **C1** | Reference typing | `Type::Reference` is a distinct type carrying mutability. Since #88/#90 the type checker has a reference type (`src/typeck/mod.rs:889-896`): `&i64` is not `i64`, and the referent keeps its integer width. What it still lacks: mutability is recorded but never compared, the type carries no lifetime or region, and a parameter written `&T` is read as its referent wherever the body names it, as code generation reads it | N9 in full · N12's move semantics and drop glue · moving the array rule out of codegen ([A9.2](../specification/language-spec.md#a92-array-parameters)) · C4 · **soundness** of C0's borrows | nothing |
 | **C2** | Call-graph fixed point | Per-function summaries propagated to a fixed point, unknown callees not assumed pure, `impl` methods included. Today a single source-order pass whose fallback is "conservatively assume it's pure" (`src/effects/mod.rs:315-319`) | N7's inference and gating · N8's propagation of totality to callees, the same shape | C0, for signatures to carry effects |
 | **C3** | Inductive pattern support | Patterns rich enough for structural recursion to have subterms. Enums, construction and `match` already work ([A4.3](../specification/language-spec.md#a43-enums)); literal, range, or-, tuple and guard forms are missing | N6 in full · N8's automatic structural termination | the parser |
 | **C4** | Alias-sensitive scheduling | Deciding two effectful operations are independent, which is an aliasing question | N7's parallel-by-default and structured concurrency only | C1, and decision **D2** |
@@ -1125,7 +1125,7 @@ show.
 is where both the bootstrap compiler and the standard library become multi-file.
 
 **Owns 8 requirement rows** — N3-11 and N11-01…N11-07 — plus the one `xfail` of the corpus's six that
-M4 owns (`tests/conformance-manifest.txt:130`, cross-file imports; the other five are su3's
+M4 owns (`tests/conformance-manifest.txt:131`, cross-file imports; the other five are su3's
 type-alias rows, owned by M3) and the vacuous `12_modules_imports`.
 
 A `mod` item, file-based nesting, **enforced** visibility (N11-02 is a `reject` row: a private item
@@ -1458,7 +1458,7 @@ refused this program* and *a declared phrase appears in the log*, not that the r
 the row names. That was requirement **GI-12**, owned by M2, and it is now `satisfied`: `pdc` prints
 a stable diagnostic **code** in the primary header of every refusal the corpus witnesses, and every
 refusal row pins one — conformance's own counts line reads
-`diagnostic-codes: coded=131 uncoded=0 malformed=0 unreadable=0`. A refusal no row witnesses may
+`diagnostic-codes: coded=133 uncoded=0 malformed=0 unreadable=0`. A refusal no row witnesses may
 still print a bare `error:`; that is the honest uncoded state, not a fallback code.
 
 What a reject row's pin is now, stated exactly, because condition 3 rests on it. Column 4 of every

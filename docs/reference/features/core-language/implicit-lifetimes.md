@@ -222,7 +222,7 @@ nothing else. There is no region inference of any kind: `grep -rn 'region\|Regio
 
 **4. References are a type with no lifetime in it.** Until #88/#90 the type checker mapped
 `Type::Reference { inner, .. }` to the inner type, and `&i64` and `i64` were indistinguishable to
-it. It now has a reference type (`src/typeck/mod.rs:848-855`) — "A reference is a reference" —
+it. It now has a reference type (`src/typeck/mod.rs:889-896`) — "A reference is a reference" —
 whose referent keeps its integer width, but the type carries no lifetime and no region, so no
 lifetime relation could be inferred even if the machinery existed.
 

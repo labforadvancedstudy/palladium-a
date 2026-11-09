@@ -683,9 +683,10 @@ pub enum CheckerType {
 /// `&i64` were one type here and `int *`, `long long *` and `unsigned int *`
 /// in C (#90). The source type is recorded where a declaration writes it (a
 /// written `&T`, with every alias expanded) or where `&e` borrows a place
-/// whose declaration is known (`TypeChecker::source_of`), and two referents
-/// differ only where BOTH are known and disagree (`sources_agree`). Unknown is
-/// what this checker always said, and is not guessed.
+/// whose declaration is known (`TypeChecker::source_of`). Two referents agree
+/// where both are known and name one C type (`sources_agree`), or where the
+/// checker type alone names it; an unknown one never stands in for a width
+/// (`erased`).
 #[derive(Debug, Clone)]
 pub struct Referent {
     /// The referent's type as the source spells it, aliases expanded.
@@ -693,6 +694,12 @@ pub struct Referent {
     /// `&mut` rather than `&`: the same C type, kept only to spell the source
     /// type back (`TypeChecker::lossless`).
     pub mutable: bool,
+    /// The referent's checker type erases what its C type says — an `Int` or
+    /// a `Float` somewhere in it (`erases_width`). Then a referent whose
+    /// source is NOT known agrees with no other referent (review round 1 of
+    /// #88): `&a[0]` over `let a = [4294967297; 2]` was taken for a `&u32`
+    /// because nothing was known about it, and the C was ill-typed.
+    pub erased: bool,
     /// A parameter WRITTEN `&T` (not through an alias): code generation reads
     /// it as its referent and adds the `&` for a place passed for it
     /// (`TypeChecker::admits_argument`). Meaningful only at the top of a
@@ -701,22 +708,43 @@ pub struct Referent {
 }
 
 impl PartialEq for Referent {
+    /// UNKNOWN IS NEVER AGREEMENT where the width is erased: two referents are
+    /// one only where both sources are known and name one C type
+    /// (`sources_agree`), or where the checker type alone names the C type
+    /// (a `bool`, a `String`, a struct by its name ...).
     fn eq(&self, other: &Self) -> bool {
         match (&self.source, &other.source) {
             (Some(a), Some(b)) => sources_agree(a, b),
-            _ => true,
+            _ => !self.erased && !other.erased,
         }
     }
 }
 
 impl Referent {
-    /// The referent of a reference whose source spelling is `source`.
-    fn of(source: Option<crate::ast::Type>, mutable: bool) -> Referent {
+    /// The referent `referent` of a reference whose source spelling is
+    /// `source`.
+    fn of(source: Option<crate::ast::Type>, mutable: bool, referent: &CheckerType) -> Referent {
         Referent {
             source,
             mutable,
             place: false,
+            erased: erases_width(referent),
         }
+    }
+}
+
+/// Does `ty` hold an `Int` or a `Float` — a checker type that names no one C
+/// type — at any depth of an array, a tuple, a reference or a generic's
+/// arguments? A type parameter says nothing either.
+fn erases_width(ty: &CheckerType) -> bool {
+    match ty {
+        CheckerType::Int(_) | CheckerType::Float(_) | CheckerType::TypeParam(_) => true,
+        CheckerType::Array(inner, _) | CheckerType::Reference(inner, ..) => erases_width(inner),
+        CheckerType::Tuple(types, _) => types.iter().any(erases_width),
+        CheckerType::Generic { args, .. } => args
+            .iter()
+            .any(|a| matches!(a, GenericArgValue::Type(t) if erases_width(t))),
+        _ => false,
     }
 }
 
@@ -740,8 +768,21 @@ fn mentions_a_name(ty: &crate::ast::Type) -> bool {
 fn sources_agree(a: &crate::ast::Type, b: &crate::ast::Type) -> bool {
     use crate::ast::Type as T;
     match (a, b) {
-        (T::Custom(_) | T::TypeParam(_) | T::Generic { .. } | T::Future { .. }, _)
-        | (_, T::Custom(_) | T::TypeParam(_) | T::Generic { .. } | T::Future { .. }) => true,
+        // A type parameter is unknown, and agrees only with itself.
+        (T::TypeParam(x), T::TypeParam(y)) => x == y,
+        (T::TypeParam(_), _) | (_, T::TypeParam(_)) => false,
+        // A name — a struct, an enum — is compared by the checker type.
+        (T::Custom(_), _) | (_, T::Custom(_)) => true,
+        (T::Generic { name: x, args: xs }, T::Generic { name: y, args: ys }) => {
+            x == y
+                && xs.len() == ys.len()
+                && xs.iter().zip(ys).all(|pair| match pair {
+                    (GenericArg::Type(x), GenericArg::Type(y)) => sources_agree(x, y),
+                    (GenericArg::Const(x), GenericArg::Const(y)) => x == y,
+                    _ => false,
+                })
+        }
+        (T::Future { output: x }, T::Future { output: y }) => sources_agree(x, y),
         (T::Reference { inner: x, .. }, T::Reference { inner: y, .. }) => sources_agree(x, y),
         (T::Array(x, n), T::Array(y, m)) => {
             let sized = match (n, m) {
@@ -848,11 +889,11 @@ impl From<&crate::ast::Type> for CheckerType {
             // A reference is a reference (#88), its referent spelled as the
             // source wrote it (#90; aliases are expanded where a table is,
             // `TypeChecker::with_enum_kinds`).
-            crate::ast::Type::Reference { inner, mutable, .. } => CheckerType::Reference(
-                Box::new(CheckerType::from(inner.as_ref())),
-                Referent::of(Some(inner.as_ref().clone()), *mutable),
-                DeclaredAs(None, false),
-            ),
+            crate::ast::Type::Reference { inner, mutable, .. } => {
+                let referent = CheckerType::from(inner.as_ref());
+                let known = Referent::of(Some(inner.as_ref().clone()), *mutable, &referent);
+                CheckerType::Reference(Box::new(referent), known, DeclaredAs(None, false))
+            }
             crate::ast::Type::Future { output } => {
                 // Create a Future generic type
                 CheckerType::Generic {
@@ -1034,6 +1075,16 @@ impl SymbolTable {
         } else {
             Err(CompileError::Generic("No active scope".to_string()))
         }
+    }
+
+    /// How many scopes are open.
+    fn depth(&self) -> usize {
+        self.scopes.len()
+    }
+
+    /// Close every scope opened since there were `depth`.
+    fn truncate(&mut self, depth: usize) {
+        self.scopes.truncate(depth.max(1));
     }
 
     /// Set the source type of `name`, just defined in the innermost scope.
@@ -1342,6 +1393,11 @@ pub struct TypeChecker {
     error_helper: TypeErrorHelper,
     /// Unsafe block depth counter (for tracking unsafe context)
     unsafe_depth: usize,
+    /// The type parameters of the generic whose body is being checked at an
+    /// instantiation (`check_instantiated_body`); empty everywhere else. A
+    /// `let` annotated with one of them is bound as code generation declares
+    /// it (`Stmt::Let`).
+    instantiated_type_params: Vec<String>,
     /// Current impl type (for resolving Self types)
     current_impl_type: Option<String>,
     /// The receiver form of the method being checked, if any.
@@ -1426,6 +1482,7 @@ impl TypeChecker {
             break_targets: Vec::new(),
             error_helper: TypeErrorHelper::new(),
             unsafe_depth: 0,
+            instantiated_type_params: Vec::new(),
             current_impl_type: None,
             current_self_receiver: None,
             impl_method_receiver: HashMap::new(),
@@ -1854,6 +1911,11 @@ impl TypeChecker {
                             self.structs.insert(struct_def.name.clone(), fields.clone());
                             self.structs
                                 .insert(format!("{}::{}", module_name, struct_def.name), fields);
+                            // Its fields as the module declares them (`source_of`).
+                            self.struct_field_sources.insert(
+                                struct_def.name.clone(),
+                                struct_def.fields.iter().cloned().collect(),
+                            );
                         }
                     }
                     crate::ast::Item::Enum(enum_def) => {
@@ -1954,6 +2016,15 @@ impl TypeChecker {
                                 variants.clone(),
                             );
                             self.enums.insert(enum_def.name.clone(), variants);
+                            // Its payloads as the module declares them (`source_of`).
+                            self.enum_variant_sources.insert(
+                                enum_def.name.clone(),
+                                enum_def
+                                    .variants
+                                    .iter()
+                                    .map(|v| (v.name.clone(), v.data.clone()))
+                                    .collect(),
+                            );
 
                             // Add variant constructors as functions
                             for variant in &enum_def.variants {
@@ -3182,7 +3253,187 @@ impl TypeChecker {
             return Err(refusal.with_code(DiagnosticCode::AsyncFnIsNotImplemented));
         }
 
+        self.check_instantiated_generic_bodies()
+    }
+
+    /// THE REFERENCE RULES HOLD IN A GENERIC BODY TOO, at every instantiation
+    /// code generation emits (review round 1 of #88). A generic body is not
+    /// walked by `check_function` — it is monomorphized — so `fn same<T>(a: T,
+    /// b: T) -> bool { let r = &a; let s = &b; r == s }` compared two
+    /// ADDRESSES and printed `ne` for `same(5, 5)` where its non-generic twin
+    /// is refused (PD0081). Each body is checked here once per instantiation,
+    /// its parameters bound at the instantiated types as `check_function`
+    /// binds them, and so is every instantiation a body's own calls reveal.
+    ///
+    /// ONLY THE REFERENCE RULES ARE ENFORCED HERE (`is_reference_refusal`).
+    /// main never checked these bodies, and its other rules were not written
+    /// for them (`let y: T = x` is a type parameter where the argument is
+    /// concrete, as code generation leaves it); refusing a body for those
+    /// would refuse programs that run. A statement refused for another reason
+    /// is skipped, and the walk goes on with the checker's state as it was
+    /// before that statement.
+    ///
+    /// NOTHING IT RECORDS SURVIVES IT. Checking a body records instantiations
+    /// and struct-literal records, and code generation reads both: they are
+    /// restored, so the emitted program is the one it was.
+    fn check_instantiated_generic_bodies(&mut self) -> Result<()> {
+        let saved = (
+            self.instantiations.clone(),
+            self.struct_instantiations.clone(),
+            self.struct_literal_records.clone(),
+        );
+        let verdict = self.walk_instantiated_generic_bodies();
+        (
+            self.instantiations,
+            self.struct_instantiations,
+            self.struct_literal_records,
+        ) = saved;
+        verdict
+    }
+
+    fn walk_instantiated_generic_bodies(&mut self) -> Result<()> {
+        let ordered = |map: &HashMap<FunctionInstantiation, CheckerType>| {
+            let mut all: Vec<(FunctionInstantiation, CheckerType)> =
+                map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            all.sort_by(|a, b| (&a.0.name, &a.0.type_args).cmp(&(&b.0.name, &b.0.type_args)));
+            all
+        };
+        let mut seen: HashSet<FunctionInstantiation> = HashSet::new();
+        // Bounded: a body's calls can reveal instantiations, which reveal more.
+        for _round in 0..64 {
+            let pending: Vec<_> = ordered(&self.instantiations)
+                .into_iter()
+                .filter(|(inst, _)| !seen.contains(inst))
+                .collect();
+            if pending.is_empty() {
+                return Ok(());
+            }
+            for (inst, func_type) in pending {
+                seen.insert(inst.clone());
+                let Some(generic) = self.generic_functions.get(&inst.name).cloned() else {
+                    continue;
+                };
+                if generic.is_async {
+                    continue;
+                }
+                self.check_instantiated_body(&inst, &generic, &func_type)?;
+            }
+        }
         Ok(())
+    }
+
+    /// `generic`'s body at the instantiation `inst`, whose signature is
+    /// `func_type` (`instantiate_generic_function`).
+    fn check_instantiated_body(
+        &mut self,
+        inst: &FunctionInstantiation,
+        generic: &GenericFunction,
+        func_type: &CheckerType,
+    ) -> Result<()> {
+        let CheckerType::Function(param_types, return_type) = func_type else {
+            return Ok(());
+        };
+        let subst: HashMap<String, String> = generic
+            .type_params
+            .iter()
+            .cloned()
+            .zip(inst.type_args.iter().cloned())
+            .collect();
+        let depth = self.symbols.depth();
+        self.symbols.enter_scope();
+        for ((name, written), checker) in generic.params.iter().zip(param_types) {
+            let written = Self::type_params_bound(written, &generic.type_params);
+            let mut source = self.substitute_type(&written, &subst).ok();
+            if let Some(source) = source.as_mut() {
+                crate::ast::expand_aliases_in_type(source, &self.type_aliases, &[]);
+            }
+            // A parameter written `&T` is its referent, as in `check_function`.
+            let (ty, source, read_as_referent) = match (checker, &written) {
+                (CheckerType::Reference(inner, ..), crate::ast::Type::Reference { .. }) => {
+                    let referent = match source {
+                        Some(crate::ast::Type::Reference { inner, .. }) => Some(*inner),
+                        _ => None,
+                    };
+                    (inner.as_ref().clone(), referent, true)
+                }
+                _ => (checker.clone(), source, false),
+            };
+            if self.symbols.define_with_source(name.clone(), ty, false, source).is_err() {
+                continue;
+            }
+            if read_as_referent {
+                self.symbols.mark_read_as_referent(name);
+            }
+        }
+        let outer_return = self.current_function_return.replace(return_type.as_ref().clone());
+        let outer_params = std::mem::replace(&mut self.instantiated_type_params, generic.type_params.clone());
+        let mut verdict = Ok(());
+        for stmt in &generic.body {
+            let (scopes, breaks, loops, unsafes) = (
+                self.symbols.depth(),
+                self.break_targets.len(),
+                self.loop_depth,
+                self.unsafe_depth,
+            );
+            if let Err(e) = self.check_statement(stmt) {
+                if self.is_reference_refusal(&e) {
+                    let code = e.code();
+                    let refusal = CompileError::Generic(format!(
+                        "in `{}` instantiated at `{}`: {}",
+                        spelled(&inst.name),
+                        inst.type_args.iter().map(|a| spelled(a)).collect::<Vec<_>>().join(", "),
+                        e
+                    ));
+                    verdict = Err(match code {
+                        Some(code) => refusal.with_code(code),
+                        None => refusal,
+                    });
+                    break;
+                }
+                self.symbols.truncate(scopes);
+                self.break_targets.truncate(breaks);
+                self.loop_depth = loops;
+                self.unsafe_depth = unsafes;
+            }
+        }
+        self.current_function_return = outer_return;
+        self.instantiated_type_params = outer_params;
+        self.symbols.truncate(depth);
+        verdict
+    }
+
+    /// Is `e` a refusal of the reference rules (#88, #90): one of their codes,
+    /// or a refusal that names a reference type — spelled `&T`, or by the name
+    /// of a reference alias (a type argument `A` under `type A = &i64` is
+    /// named `A`)?
+    fn is_reference_refusal(&self, e: &CompileError) -> bool {
+        use DiagnosticCode as D;
+        if matches!(
+            e.code(),
+            Some(
+                D::DereferenceNeedsAReferenceValue
+                    | D::OperatorOperandIsNotAReference
+                    | D::ReferenceParameterTakesAPlaceOrABorrow
+            )
+        ) {
+            return true;
+        }
+        // A reference type is printed `&T` / `&mut T`: an `&` that starts a
+        // word and is followed by a type's first character — not the `&` of
+        // `&&`, and not a quoted operator (`` `&` ``).
+        let text = e.to_string();
+        let bytes = text.as_bytes();
+        let spelled_as_reference = bytes.iter().enumerate().any(|(i, &b)| {
+            b == b'&'
+                && (i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'&'))
+                && bytes
+                    .get(i + 1)
+                    .is_some_and(|&n| n.is_ascii_alphabetic() || n == b'(' || n == b'[')
+        });
+        spelled_as_reference
+            || text
+                .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .any(|word| self.type_aliases.contains_key(word) && self.alias_is_reference(word))
     }
 
     /// Which of `deferred` are actually part of the emitted program.
@@ -3574,6 +3825,26 @@ impl TypeChecker {
 
                 // Type check the value expression
                 let value_type = self.check_expression(value)?;
+
+                // IN AN INSTANTIATED GENERIC BODY (`check_instantiated_body`), a
+                // `let` annotated with one of the generic's own type parameters
+                // is declared at that parameter's erased C type: code generation
+                // does not substitute a body (`substitute_types_in_body` in
+                // src/codegen/mod.rs), so `let x: T = a;` is `void *x = a;`.
+                // It is bound at its value's type with the annotation as its
+                // source, which agrees with no concrete referent. Without this
+                // the statement was refused as `expected T, found Int`, skipped,
+                // and every later use of `x` with it: `let r = &x; .. r == s`
+                // at `T = String` compared two addresses unchecked (review
+                // round 1 of #88).
+                if let Some(annotated_type) = ty {
+                    let written = Self::type_params_bound(annotated_type, &self.instantiated_type_params);
+                    if !self.instantiated_type_params.is_empty() && Self::mentions_type_param(&written) {
+                        return self
+                            .symbols
+                            .define_with_source(name.clone(), value_type, *mutable, Some(written));
+                    }
+                }
 
                 // If type annotation is provided, check that it matches
                 //
@@ -5200,10 +5471,10 @@ impl TypeChecker {
             // declared it where that is known (`source_of`, #90).
             Expr::Reference { mutable, expr, .. } => {
                 let inner_type = self.check_expression(expr)?;
-                let source = self.source_of(expr);
+                let referent = Referent::of(self.source_of(expr), *mutable, &inner_type);
                 Ok(CheckerType::Reference(
                     Box::new(inner_type),
-                    Referent::of(source, *mutable),
+                    referent,
                     DeclaredAs(None, false),
                 ))
             }
@@ -7056,14 +7327,15 @@ impl TypeChecker {
                 CheckerType::tuple(types.iter().map(below).collect::<Result<_>>()?)
             }
             // A reference is a reference, as in `CheckerType::from` (#88).
+            // A referent naming one of the item's own type parameters is not
+            // known here: the parameter's argument is a checker type.
             crate::ast::Type::Reference { inner, mutable, .. } => {
-                let mut source = inner.as_ref().clone();
+                let mut source = Self::type_params_bound(inner, type_params);
                 crate::ast::expand_aliases_in_type(&mut source, &self.type_aliases, &[]);
-                CheckerType::Reference(
-                    Box::new(below(inner)?),
-                    Referent::of(Some(source), *mutable),
-                    DeclaredAs(None, false),
-                )
+                let source = (!Self::mentions_type_param(&source)).then_some(source);
+                let referent = below(inner)?;
+                let known = Referent::of(source, *mutable, &referent);
+                CheckerType::Reference(Box::new(referent), known, DeclaredAs(None, false))
             }
             crate::ast::Type::Future { output } => CheckerType::Generic {
                 name: "Future".to_string(),
@@ -8140,7 +8412,7 @@ impl TypeChecker {
             ))
             .with_code(DiagnosticCode::ReferenceParameterTakesAPlaceOrABorrow));
         }
-        let place = Referent::of(self.source_of(arg), false);
+        let place = Referent::of(self.source_of(arg), false, found);
         Ok(place == *referent && self.written_admits(referent_type, found, Some(arg)))
     }
 
@@ -8200,13 +8472,22 @@ impl TypeChecker {
 
     /// The type `expr` has as the SOURCE spells it — widths, signedness and
     /// references kept, aliases expanded — where this checker can say so
-    /// without guessing (#90): a literal (an integer literal is an `i64`, the
-    /// type code generation declares its binding with), a binding whose
-    /// declaration says (`VarInfo::source`), a borrow or a dereference of such
-    /// a value, an element, a tuple element or a struct field of one, and a
-    /// cast. `None` for anything else — an operator's result, a call's: what
-    /// this checker always said of every width, and not guessed now.
+    /// EXACTLY (#90): the C type code generation gives a binding of the value
+    /// (`try_infer_expr_type` in src/codegen/mod.rs), rule for rule. `None`
+    /// is "not known", and an unknown referent never agrees with another
+    /// where the width is erased (`Referent`).
     fn source_of(&self, expr: &Expr) -> Option<crate::ast::Type> {
+        self.source_in(expr, &SourceEnv::new())
+    }
+
+    /// `source_of`, with `env` the names bound INSIDE the expression being
+    /// read (a block's `let`s, a branch's, a `match` arm's pattern, a `loop`
+    /// body's): those shadow the symbol table, which holds only the scopes
+    /// open where the expression stands (review round 1 of #88: `{ let x:
+    /// i64 = ..; x }` under an outer `x: u32` was read through the outer `x`
+    /// once the block's scope had closed). A name bound with no known source
+    /// is in `env` as `None`, so it shadows too.
+    fn source_in(&self, expr: &Expr, env: &SourceEnv) -> Option<crate::ast::Type> {
         use crate::ast::Type as T;
         let mut ty = match expr {
             Expr::Integer(_) => T::I64,
@@ -8214,44 +8495,58 @@ impl TypeChecker {
             Expr::Bool(_) => T::Bool,
             Expr::Char(_) => T::Char,
             Expr::String(_) => T::String,
-            Expr::Ident(name) => self.symbols.lookup(name)?.source.clone()?,
+            Expr::Ident(name) => match env.get(name) {
+                Some(bound) => bound.clone()?,
+                None => self.symbols.lookup(name)?.source.clone()?,
+            },
             Expr::Reference { expr, mutable, .. } => T::Reference {
                 lifetime: None,
                 mutable: *mutable,
-                inner: Box::new(self.source_of(expr)?),
+                inner: Box::new(self.source_in(expr, env)?),
             },
-            Expr::Deref { expr, .. } => match self.source_of(expr)? {
+            Expr::Deref { expr, .. } => match self.source_in(expr, env)? {
                 T::Reference { inner, .. } => *inner,
                 _ => return None,
             },
-            Expr::Index { array, .. } => match self.source_of(array)? {
+            Expr::Index { array, .. } => match self.source_in(array, env)? {
                 T::Array(elem, _) => *elem,
                 _ => return None,
             },
-            Expr::TupleIndex { expr, index, .. } => match self.source_of(expr)? {
+            Expr::TupleIndex { expr, index, .. } => match self.source_in(expr, env)? {
                 T::Tuple(mut elements) if *index < elements.len() => elements.swap_remove(*index),
                 _ => return None,
             },
-            Expr::FieldAccess { object, field, .. } => {
-                let T::Custom(owner) = self.source_of(object)? else {
-                    return None;
-                };
-                let owner = match owner.as_str() {
-                    "Self" => self.current_impl_type.clone()?,
-                    _ => owner,
-                };
-                self.struct_field_sources.get(&owner)?.get(field)?.clone()
-            }
+            Expr::FieldAccess { object, field, .. } => match self.source_in(object, env)? {
+                T::Custom(owner) => {
+                    let owner = match owner.as_str() {
+                        "Self" => self.current_impl_type.clone()?,
+                        _ => owner,
+                    };
+                    self.struct_field_sources.get(&owner)?.get(field)?.clone()
+                }
+                T::Generic { name, args } => self.generic_field_source(&name, &args, field)?,
+                _ => return None,
+            },
             Expr::Cast { ty, .. } => ty.clone(),
-            // The rest mirror the C type code generation declares a binding of
-            // the value with (`try_infer_expr_type` in src/codegen/mod.rs): a
-            // struct literal is its struct; a call, its written return type; an
-            // integer `+ - * / %` a `long long` whatever its operands' widths;
-            // a bitwise operator its left operand's type; a comparison an
-            // `int`; a value `if`, block or `match` its first arm's value; an
-            // array literal its first element's.
-            Expr::StructLiteral { name, .. } => T::Custom(name.clone()),
-            Expr::Call { func, args, .. } => self.call_source(func, args)?,
+            // A non-generic struct's literal is its struct. A generic one's is
+            // the instantiation recorded for THIS literal (`StructLiteralRecords`),
+            // which is the C struct code generation builds it as
+            // (`literal_instantiation`); a literal recorded more than once, or
+            // at an argument the record cannot name, is not known.
+            Expr::StructLiteral { name, id, .. } => match self.generic_structs.get(name) {
+                None => T::Custom(name.clone()),
+                Some(_) => match self.struct_literal_records.of(*id)? {
+                    [only] => T::Generic {
+                        name: name.clone(),
+                        args: only
+                            .iter()
+                            .map(|a| Self::type_argument_source(a).map(GenericArg::Type))
+                            .collect::<Option<Vec<_>>>()?,
+                    },
+                    _ => return None,
+                },
+            },
+            Expr::Call { func, args, .. } => self.call_source(func, args, env)?,
             Expr::EnumConstructor {
                 enum_name, variant, ..
             } => match self.return_sources.get(&format!("{}::{}", enum_name, variant)) {
@@ -8271,10 +8566,10 @@ impl TypeChecker {
                 | BinOp::And
                 | BinOp::Or => T::Bool,
                 BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
-                    self.source_of(left)?
+                    self.source_in(left, env)?
                 }
                 _ => {
-                    let sides = [self.source_of(left), self.source_of(right)];
+                    let sides = [self.source_in(left, env), self.source_in(right, env)];
                     let any = |want: &[T]| sides.iter().flatten().any(|s| want.contains(s));
                     if any(&[T::String]) {
                         T::String
@@ -8291,36 +8586,239 @@ impl TypeChecker {
             },
             Expr::Unary { op, operand, .. } => match op {
                 UnaryOp::Not => T::Bool,
-                UnaryOp::Neg | UnaryOp::BitNot => self.source_of(operand)?,
+                UnaryOp::Neg | UnaryOp::BitNot => self.source_in(operand, env)?,
             },
             Expr::ArrayLiteral { elements, .. } => T::Array(
-                Box::new(self.source_of(elements.first()?)?),
+                Box::new(self.source_in(elements.first()?, env)?),
                 ArraySize::Literal(elements.len()),
             ),
+            Expr::ArrayRepeat { value, count, .. } => match count.as_ref() {
+                Expr::Integer(n) => T::Array(
+                    Box::new(self.source_in(value, env)?),
+                    ArraySize::Literal(*n as usize),
+                ),
+                _ => return None,
+            },
             Expr::Tuple { elements, .. } => T::Tuple(
                 elements
                     .iter()
-                    .map(|e| self.source_of(e))
+                    .map(|e| self.source_in(e, env))
                     .collect::<Option<Vec<_>>>()?,
             ),
-            Expr::If { then_value, .. } => self.source_of(then_value.as_deref()?)?,
-            Expr::Block { value, .. } => self.source_of(value.as_deref()?)?,
-            Expr::Match { arms, .. } => self.source_of(arms.first()?.value.as_ref()?)?,
+            // The first branch, arm or `break` whose value has a source, as code
+            // generation types the temporary: the `then` value, else the
+            // `else` value; each arm with its pattern's bindings and its body's
+            // `let`s in scope.
+            Expr::If {
+                then_branch,
+                then_value,
+                else_branch,
+                else_value,
+                ..
+            } => {
+                let then = then_value
+                    .as_deref()
+                    .and_then(|v| self.source_in(v, &self.locals_in(then_branch, env)));
+                match then {
+                    Some(t) => t,
+                    None => {
+                        let else_env = self.locals_in(else_branch.as_deref().unwrap_or(&[]), env);
+                        self.source_in(else_value.as_deref()?, &else_env)?
+                    }
+                }
+            }
+            Expr::Block { stmts, value, .. } => {
+                self.source_in(value.as_deref()?, &self.locals_in(stmts, env))?
+            }
+            Expr::Match { expr, arms, .. } => {
+                let scrutinee = self.source_in(expr, env);
+                arms.iter().find_map(|arm| {
+                    let mut inner = env.clone();
+                    inner.extend(self.pattern_sources(&arm.pattern, scrutinee.clone()));
+                    let inner = self.locals_in(&arm.body, &inner);
+                    self.source_in(arm.value.as_ref()?, &inner)
+                })?
+            }
+            // Code generation reads a `loop`'s first `break` value with the
+            // scopes OUTSIDE the loop, so a name the body binds is not known
+            // here (it would be read as some other binding of that name).
+            Expr::Loop { body, .. } => {
+                let value = Self::first_break_value(body)?;
+                let mut inner = env.clone();
+                let mut bound = HashSet::new();
+                Self::names_bound_in(body, &mut bound);
+                inner.extend(bound.into_iter().map(|n| (n, None)));
+                self.source_in(value, &inner)?
+            }
             _ => return None,
         };
         crate::ast::expand_aliases_in_type(&mut ty, &self.type_aliases, &[]);
         Some(ty)
     }
 
+    /// `env` with the `let`s of `stmts` — the ones in scope at the statements'
+    /// end — added in order, each with its source (`source_in`), or `None`.
+    fn locals_in(&self, stmts: &[Stmt], env: &SourceEnv) -> SourceEnv {
+        let mut locals = env.clone();
+        for stmt in stmts {
+            if let Stmt::Let {
+                name, ty, value, ..
+            } = stmt
+            {
+                let source = match ty {
+                    Some(t) => {
+                        let mut t = t.clone();
+                        crate::ast::expand_aliases_in_type(&mut t, &self.type_aliases, &[]);
+                        Some(t)
+                    }
+                    None => self.source_in(value, &locals),
+                };
+                locals.insert(name.clone(), source);
+            }
+        }
+        locals
+    }
+
+    /// The value of the first `break` in `stmts` that belongs to their loop,
+    /// as code generation finds it (`first_break_value` in src/codegen/mod.rs).
+    fn first_break_value(stmts: &[Stmt]) -> Option<&Expr> {
+        stmts.iter().find_map(|stmt| match stmt {
+            Stmt::Break { value, .. } => value.as_ref(),
+            Stmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => Self::first_break_value(then_branch)
+                .or_else(|| else_branch.as_deref().and_then(Self::first_break_value)),
+            Stmt::Match { arms, .. } => arms.iter().find_map(|a| Self::first_break_value(&a.body)),
+            Stmt::Unsafe { body, .. } => Self::first_break_value(body),
+            _ => None,
+        })
+    }
+
+    /// Every name a statement in `stmts` binds, at any depth: `let`s, `for`
+    /// variables and pattern bindings.
+    fn names_bound_in(stmts: &[Stmt], out: &mut HashSet<String>) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Let { name, .. } => {
+                    out.insert(name.clone());
+                }
+                Stmt::For { var, body, .. } => {
+                    out.insert(var.clone());
+                    Self::names_bound_in(body, out);
+                }
+                Stmt::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    Self::names_bound_in(then_branch, out);
+                    Self::names_bound_in(else_branch.as_deref().unwrap_or(&[]), out);
+                }
+                Stmt::While { body, .. } | Stmt::Loop { body, .. } | Stmt::Unsafe { body, .. } => {
+                    Self::names_bound_in(body, out)
+                }
+                Stmt::Match { arms, .. } => {
+                    for arm in arms {
+                        Self::pattern_names(&arm.pattern, out);
+                        Self::names_bound_in(&arm.body, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Every name `pattern` binds.
+    fn pattern_names(pattern: &Pattern, out: &mut HashSet<String>) {
+        match pattern {
+            Pattern::Ident(name) => {
+                out.insert(name.clone());
+            }
+            Pattern::Binding { name, inner } => {
+                out.insert(name.clone());
+                Self::pattern_names(inner, out);
+            }
+            Pattern::Tuple(elements) => elements.iter().for_each(|e| Self::pattern_names(e, out)),
+            Pattern::EnumPattern {
+                data: Some(PatternData::Tuple(patterns)),
+                ..
+            } => patterns.iter().for_each(|p| Self::pattern_names(p, out)),
+            Pattern::EnumPattern {
+                data: Some(PatternData::Struct(fields)),
+                ..
+            } => fields.iter().for_each(|(_, p)| Self::pattern_names(p, out)),
+            _ => {}
+        }
+    }
+
+    /// A type argument as a record spells it (`struct_type_argument`), as the
+    /// source type it names — the spelling `substitute_type` reads back — or
+    /// `None` for the placeholder no type is spelled as.
+    fn type_argument_source(spelling: &str) -> Option<crate::ast::Type> {
+        use crate::ast::Type as T;
+        Some(match spelling {
+            "()" => T::Unit,
+            "String" => T::String,
+            "i64" => T::I64,
+            "i32" => T::I32,
+            "u64" => T::U64,
+            "u32" => T::U32,
+            "bool" => T::Bool,
+            _ => Self::type_argument_as_named_type(spelling).ok()?,
+        })
+    }
+
+    /// The field `field` of the generic struct `name` instantiated at `args`,
+    /// as the source spells it: the declared field type with each of the
+    /// struct's type parameters replaced by its argument — the field of the C
+    /// struct code generation emits for the instantiation.
+    fn generic_field_source(
+        &self,
+        name: &str,
+        args: &[GenericArg],
+        field: &str,
+    ) -> Option<crate::ast::Type> {
+        let generic = self.generic_structs.get(name)?;
+        let declared = &generic.fields.iter().find(|(f, _)| f == field)?.1;
+        let mut map = HashMap::new();
+        for (param, arg) in generic.type_params.iter().zip(args) {
+            let GenericArg::Type(arg) = arg else {
+                return None;
+            };
+            map.insert(param.clone(), arg.clone());
+        }
+        let bound = Self::type_params_bound(declared, &generic.type_params);
+        let substituted = self.substitute_type_params_map(&bound, &map);
+        (!Self::mentions_type_param(&substituted)).then_some(substituted)
+    }
+
+    /// Does `ty` still name a type parameter anywhere?
+    fn mentions_type_param(ty: &crate::ast::Type) -> bool {
+        use crate::ast::Type as T;
+        match ty {
+            T::TypeParam(_) => true,
+            T::Array(inner, _) | T::Reference { inner, .. } => Self::mentions_type_param(inner),
+            T::Future { output } => Self::mentions_type_param(output),
+            T::Tuple(types) => types.iter().any(Self::mentions_type_param),
+            T::Generic { args, .. } => args
+                .iter()
+                .any(|a| matches!(a, GenericArg::Type(t) if Self::mentions_type_param(t))),
+            _ => false,
+        }
+    }
+
     /// `source_of` a call of `func` with `args`: a method's or a function's
-    /// written return type (a generic returning its type parameter returns
-    /// what it was handed for it, as code generation reads it), or a
+    /// written return type — a generic's too, where it names none of the
+    /// generic's parameters, and where it IS one of them, what the argument
+    /// passed for that parameter is (as code generation reads it) — or a
     /// built-in's.
-    fn call_source(&self, func: &Expr, args: &[Expr]) -> Option<crate::ast::Type> {
+    fn call_source(&self, func: &Expr, args: &[Expr], env: &SourceEnv) -> Option<crate::ast::Type> {
         use crate::ast::Type as T;
         let name = match func {
             Expr::FieldAccess { object, field, .. } => {
-                let T::Custom(owner) = self.source_of(object)? else {
+                let T::Custom(owner) = self.source_in(object, env)? else {
                     return None;
                 };
                 format!("{}::{}", owner, field)
@@ -8332,13 +8830,15 @@ impl TypeChecker {
             return Some(ret.clone());
         }
         if let Some(generic) = self.generic_functions.get(&name) {
-            return match generic.return_type.as_ref()? {
-                T::TypeParam(p) | T::Custom(p) if generic.type_params.contains(p) => {
-                    let at = generic.params.iter().position(
-                        |(_, ty)| matches!(ty, T::TypeParam(n) | T::Custom(n) if n == p),
-                    )?;
-                    self.source_of(args.get(at)?)
+            let ret = Self::type_params_bound(generic.return_type.as_ref()?, &generic.type_params);
+            return match &ret {
+                T::TypeParam(p) => {
+                    let at = generic.params.iter().position(|(_, ty)| {
+                        matches!(Self::type_params_bound(ty, &generic.type_params), T::TypeParam(ref n) if n == p)
+                    })?;
+                    self.source_in(args.get(at)?, env)
                 }
+                _ if !Self::mentions_type_param(&ret) => Some(ret),
                 _ => None,
             };
         }
@@ -8352,17 +8852,22 @@ impl TypeChecker {
         }
     }
 
-    /// Record, on the names `pattern` just bound (`bind_pattern_variables`),
-    /// the source type each has where the declaration says: a variant's
-    /// payload as its enum declares it, a tuple element as the scrutinee's
-    /// source spells it (#90: what `&x` refers to in C).
-    fn record_pattern_sources(&mut self, pattern: &Pattern, source: Option<crate::ast::Type>) {
+    /// The names `pattern` binds, each with its source where the declaration
+    /// says: a variant's payload as its enum declares it, a tuple element as
+    /// the scrutinee's source spells it, the whole scrutinee for a name —
+    /// `None` otherwise, so that every name the pattern binds shadows.
+    fn pattern_sources(
+        &self,
+        pattern: &Pattern,
+        source: Option<crate::ast::Type>,
+    ) -> Vec<(String, Option<crate::ast::Type>)> {
         use crate::ast::Type as T;
+        let mut out = Vec::new();
         match pattern {
-            Pattern::Ident(name) => self.symbols.set_source(name, source),
+            Pattern::Ident(name) => out.push((name.clone(), source)),
             Pattern::Binding { name, inner } => {
-                self.symbols.set_source(name, source.clone());
-                self.record_pattern_sources(inner, source);
+                out.push((name.clone(), source.clone()));
+                out.extend(self.pattern_sources(inner, source));
             }
             Pattern::Tuple(elements) => {
                 let parts = match source {
@@ -8372,7 +8877,7 @@ impl TypeChecker {
                     _ => vec![None; elements.len()],
                 };
                 for (element, part) in elements.iter().zip(parts) {
-                    self.record_pattern_sources(element, part);
+                    out.extend(self.pattern_sources(element, part));
                 }
             }
             Pattern::EnumPattern {
@@ -8393,26 +8898,39 @@ impl TypeChecker {
                 };
                 match (data, declared) {
                     (PatternData::Tuple(patterns), Some(crate::ast::EnumVariantData::Tuple(types))) => {
-                        let types: Vec<T> = types.iter().map(expand).collect();
-                        for (p, t) in patterns.iter().zip(types) {
-                            self.record_pattern_sources(p, Some(t));
+                        for (i, p) in patterns.iter().enumerate() {
+                            out.extend(self.pattern_sources(p, types.get(i).map(expand)));
                         }
                     }
                     (PatternData::Struct(fields), Some(crate::ast::EnumVariantData::Struct(declared))) => {
-                        let found: Vec<(&Pattern, Option<T>)> = fields
-                            .iter()
-                            .map(|(f, p)| {
-                                (p, declared.iter().find(|(n, _)| n == f).map(|(_, t)| expand(t)))
-                            })
-                            .collect();
-                        for (p, t) in found {
-                            self.record_pattern_sources(p, t);
+                        for (f, p) in fields {
+                            let t = declared.iter().find(|(n, _)| n == f).map(|(_, t)| expand(t));
+                            out.extend(self.pattern_sources(p, t));
                         }
                     }
-                    _ => {}
+                    (PatternData::Tuple(patterns), _) => {
+                        for p in patterns {
+                            out.extend(self.pattern_sources(p, None));
+                        }
+                    }
+                    (PatternData::Struct(fields), _) => {
+                        for (_, p) in fields {
+                            out.extend(self.pattern_sources(p, None));
+                        }
+                    }
                 }
             }
             _ => {}
+        }
+        out
+    }
+
+    /// Record, on the names `pattern` just bound (`bind_pattern_variables`),
+    /// the source type each has (`pattern_sources`): what `&x` refers to in C
+    /// (#90).
+    fn record_pattern_sources(&mut self, pattern: &Pattern, source: Option<crate::ast::Type>) {
+        for (name, source) in self.pattern_sources(pattern, source) {
+            self.symbols.set_source(&name, source);
         }
     }
 
@@ -8515,6 +9033,10 @@ impl TypeChecker {
 /// parameter: the spelling each is instantiated at, and the type of the value
 /// that first gave it, where one is known (`TypeChecker::argument_type`).
 type TypeArguments = HashMap<String, (String, Option<CheckerType>)>;
+
+/// The names bound inside an expression `TypeChecker::source_in` is reading,
+/// each with its source type where known (`None`: bound, source unknown).
+type SourceEnv = HashMap<String, Option<crate::ast::Type>>;
 
 /// The tuple alias a value's declaration named it by: `B` for the result of
 /// `fn f<U>(x: U) -> B` under `type B = (i64, i64)`, for a binding annotated
@@ -9847,7 +10369,8 @@ mod tests {
         // The referent's source spelling is left unknown here (`Referent`
         // compares it only where both sides know it).
         let cref = |t: CheckerType| {
-            CheckerType::Reference(Box::new(t), Referent::of(None, false), DeclaredAs(None, false))
+            let known = Referent::of(None, false, &t);
+            CheckerType::Reference(Box::new(t), known, DeclaredAs(None, false))
         };
         let cases: Vec<(&str, Type, CheckerType)> = vec![
             ("K", k(), ek()),

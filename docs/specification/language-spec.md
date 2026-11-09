@@ -903,7 +903,7 @@ unrelated reason.
 | `()` | implemented | unit |
 | `[T; N]` | implemented | one dimension, `N` an integer literal. `N` as an identifier parses but is dropped (const generics, below), so such an array is uncallable and its `for` loop is a compile error |
 | `[[T; M]; N]` | implemented | works as a **local**, as a **parameter**, as a **struct field** and three deep. The dimensions are emitted after the identifier, outermost first (`long long grid[3][2]`), which is the C declarator shape — composing them into the type instead produced `long long[2] grid[3]`, which gcc refuses outright. Pinned by `tests/02_types_nested_arrays.pd`. Two refusals by name remain: `for` over a nested array, because each step would bind a whole ROW and C cannot copy an array by assignment (`tests/reject/for_over_nested_array.pd`), and an unresolved inner length in ANY declarator position (`tests/reject/nested_array_param_inner_length.pd` and its struct-field twin) |
-| `&T`, `&mut T` | partial | a type of its own in the typechecker since #88/#90 (`src/typeck/mod.rs:848-855`, "A reference is a reference"): `&i64` is not `i64`, and a referent keeps its integer width, so `let v: &u32 = &m` over an `i64` is refused by name (PD0022). A parameter written `&T` is read as its referent wherever its body names it, and takes a place or `&place` (PD0082 for a held reference); `*e` needs a reference value (PD0080), and no operator applies to one (PD0081). Mutability is recorded but not compared, and there is no lifetime in the type. |
+| `&T`, `&mut T` | partial | a type of its own in the typechecker since #88/#90 (`src/typeck/mod.rs:889-896`, "A reference is a reference"): `&i64` is not `i64`, and a referent keeps its integer width, so `let v: &u32 = &m` over an `i64` is refused by name (PD0022). A parameter written `&T` is read as its referent wherever its body names it, and takes a place or `&place` (PD0082 for a held reference); `*e` needs a reference value (PD0080), and no operator applies to one (PD0081). Mutability is recorded but not compared, and there is no lifetime in the type. |
 | `ref T`, `ref mut T` | unimplemented | `ref` is not a keyword; `fn f(x: ref String)` fails with "expected ')', found identifier 'String'" |
 | `Name<A, B>` | partial | see below |
 | `(A, B)` | **implemented** | one C struct per SHAPE, mangled from the element C types and emitted with a constructor (`src/codegen/mod.rs:4930`); `void*` is gone. Arity two or more. A tuple in an ENUM PAYLOAD is refused by name — tuple structs are emitted after the enum definitions because an element may be an enum, and a payload of tuple type needs the reverse order |
@@ -1489,7 +1489,7 @@ in the compiler can have "silently miscompiled the standard library". See
 
 **partial.** Ownership and borrowing are *checked* (`src/ownership/borrow_checker.rs`, 2268 lines)
 but not *represented* in the type system: the typechecker has a reference type since #88/#90
-(`src/typeck/mod.rs:848-855`), and that type carries no lifetime, no region and no borrow.
+(`src/typeck/mod.rs:889-896`), and that type carries no lifetime, no region and no borrow.
 
 What the borrow checker actually enforces is a move/initialization discipline plus
 conflicting-borrow detection. **A previous version of this annex asserted a defect here that does
