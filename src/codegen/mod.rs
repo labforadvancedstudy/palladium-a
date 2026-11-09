@@ -325,6 +325,10 @@ pub struct CodeGenerator {
     /// single counter over the whole translation unit costs nothing and makes every emitted name
     /// unique in the file, which is what a reader diffing generated C wants.
     hoist_counter: usize,
+    /// Numbers the temporaries a self-reading `let` is lowered through
+    /// (`fresh_shadow_name`). Its own counter, so no hoisted temporary of any
+    /// program is renumbered by the lowering.
+    shadow_counter: usize,
     /// The instantiation each generic struct literal is of (`StructLiterals`, review round 10).
     struct_literals: StructLiterals,
 }
@@ -374,11 +378,14 @@ struct LetFacts {
     escapes: bool,
     /// Its initializer's needs, then every assignment's, all to hold.
     needs: Vec<OriginNeed>,
-    /// Its initializer names the binding's OWN name (`let mut r = r;`, review
-    /// round 5). The source means the outer `r`; the C declaration `T* r = r;`
-    /// puts the new `r` in scope inside its own initializer, so the pointer is
-    /// read uninitialized (found f10). Never proven.
-    self_initialized: bool,
+    /// Its initializer names the binding's OWN name (`let x = x + 1;`, review
+    /// rounds 5-6). The source means the outer `x`, but a C declaration puts the
+    /// new `x` in scope inside its own initializer, so `T x = x + 1;` read the
+    /// new, uninitialized `x` (found f10: -16 for 6 on main). Such a `let` is
+    /// lowered through a fresh temporary (`Stmt::Let`), so the C binding is the
+    /// source binding; a name read by an inner binding of the same name inside
+    /// the initializer also sets this, which only costs a temporary.
+    reads_own_name: bool,
 }
 
 /// Every `let` binding of one function body, resolved through the scope chain
@@ -388,6 +395,9 @@ struct ReferenceFacts {
     lets: std::collections::HashMap<LetKey, LetFacts>,
     /// Keys more than one `let` of the body shares: never proven.
     ambiguous: std::collections::HashSet<LetKey>,
+    /// Every identifier the function binds or names, so a temporary the
+    /// lowering invents can be checked against them (`fresh_shadow_name`).
+    names: std::collections::HashSet<String>,
 }
 
 /// What a name resolves to while `ReferenceFacts::collect` walks a body.
@@ -409,7 +419,7 @@ struct ReferenceWalk<'a> {
     methods: &'a std::collections::HashMap<String, Vec<Param>>,
     facts: ReferenceFacts,
     /// The names of the `let`s whose initializers are being walked, each with
-    /// whether its initializer has named it (`LetFacts::self_initialized`).
+    /// whether its initializer has named it (`LetFacts::reads_own_name`).
     initializing: Vec<(String, bool)>,
 }
 
@@ -440,11 +450,13 @@ impl ReferenceFacts {
                 (p.name.clone(), bound)
             })
             .collect();
+        let mut facts = ReferenceFacts::default();
+        facts.names.extend(func.params.iter().map(|p| p.name.clone()));
         let mut walk = ReferenceWalk {
             scopes: vec![params],
             functions,
             methods,
-            facts: ReferenceFacts::default(),
+            facts,
             initializing: Vec::new(),
         };
         walk.block(&func.body);
@@ -458,6 +470,7 @@ impl ReferenceWalk<'_> {
     }
 
     fn bind(&mut self, name: &str, bound: Bound) {
+        self.facts.names.insert(name.to_string());
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.to_string(), bound);
         }
@@ -501,6 +514,7 @@ impl ReferenceWalk<'_> {
     /// A name read or written while `let`s are being initialized: a `let` of the
     /// same name is initializing from itself in the emitted C.
     fn named(&mut self, name: &str) {
+        self.facts.names.insert(name.to_string());
         for (initializing, named) in self.initializing.iter_mut() {
             if initializing == name {
                 *named = true;
@@ -528,7 +542,7 @@ impl ReferenceWalk<'_> {
             } => {
                 self.initializing.push((name.clone(), false));
                 self.expr(value);
-                let self_initialized = self.initializing.pop().is_some_and(|(_, named)| named);
+                let reads_own_name = self.initializing.pop().is_some_and(|(_, named)| named);
                 let key: LetKey = (name.clone(), span.start, span.end);
                 let needs = self.needs_of(value);
                 if self.facts.lets.contains_key(&key) {
@@ -536,7 +550,7 @@ impl ReferenceWalk<'_> {
                 }
                 let facts = self.facts.lets.entry(key.clone()).or_default();
                 facts.needs.extend(needs);
-                facts.self_initialized |= self_initialized;
+                facts.reads_own_name |= reads_own_name;
                 self.bind(name, Bound::Let(key));
             }
             Stmt::Assign { target, value, .. } => {
@@ -679,11 +693,22 @@ impl ReferenceWalk<'_> {
                 self.expr(left);
                 self.expr(right);
             }
-            Expr::StructLiteral { fields, .. } => fields.iter().for_each(|(_, v)| self.expr(v)),
-            Expr::EnumConstructor { data, .. } => match data {
-                None => {}
-                Some(EnumConstructorData::Tuple(es)) => es.iter().for_each(|e| self.expr(e)),
+            Expr::StructLiteral { name, fields, .. } => {
+                self.facts.names.insert(name.clone());
+                fields.iter().for_each(|(_, v)| self.expr(v))
+            }
+            Expr::EnumConstructor {
+                enum_name, data, ..
+            } => match data {
+                None => {
+                    self.facts.names.insert(enum_name.clone());
+                }
+                Some(EnumConstructorData::Tuple(es)) => {
+                    self.facts.names.insert(enum_name.clone());
+                    es.iter().for_each(|e| self.expr(e))
+                }
                 Some(EnumConstructorData::Struct(fields)) => {
+                    self.facts.names.insert(enum_name.clone());
                     fields.iter().for_each(|(_, v)| self.expr(v))
                 }
             },
@@ -905,6 +930,7 @@ impl CodeGenerator {
             enum_constructors: String::new(),
             pending_hoists: String::new(),
             hoist_counter: 0,
+            shadow_counter: 0,
             hoist_types: std::collections::HashMap::new(),
             open_hoists: std::collections::HashSet::new(),
             break_temps: Vec::new(),
@@ -1925,14 +1951,6 @@ impl CodeGenerator {
         let Some(facts) = self.reference_facts.lets.get(key) else {
             return Err(format!("`let {}` is not one the body was read for", name));
         };
-        if facts.self_initialized {
-            return Err(format!(
-                "its initializer names `{n}` itself, and the emitted C declaration puts the new \
-                 `{n}` in scope there (`T* {n} = {n};` reads the binding being declared, \
-                 uninitialized: found f10), so what it holds is not known. Rename the binding",
-                n = name
-            ));
-        }
         if facts.escapes {
             return Err(format!(
                 "its address is taken (`&{n}`, `&mut {n}`) or it is passed to a parameter that \
@@ -4970,6 +4988,27 @@ impl CodeGenerator {
                         Self::split_array_dims(&inferred_type)
                     }
                 };
+                // Found f10, fixed at its cause (issue #84, review round 6): a
+                // C declaration's own name is in scope in its initializer, so
+                // `let x = x + 1;` in an inner block, emitted `T x = x + 1;`,
+                // read the NEW, uninitialized `x` (-16 for 6 on main), and
+                // `let r = r;` an uninitialized pointer (signal 5). An
+                // initializer that names the binding being declared is computed
+                // into a fresh temporary FIRST, while every map here still
+                // holds the outer binding the source means, and the new binding
+                // is then initialized from the temporary.
+                let key: LetKey = (name.clone(), span.start, span.end);
+                let through = match self.reference_facts.lets.get(&key) {
+                    Some(facts) if facts.reads_own_name => {
+                        let fresh = self.fresh_shadow_name();
+                        self.output
+                            .push_str(&format!("{} {}{} = ", c_type, fresh, array_dims));
+                        self.generate_expression(value)?;
+                        self.output.push_str(";\n    ");
+                        Some(fresh)
+                    }
+                    _ => None,
+                };
                 // Track variable type for future inference. Arrays keep their
                 // dimensions in the recorded type.
                 self.variables
@@ -4979,7 +5018,6 @@ impl CodeGenerator {
                 // (`reference_local_proven`); any other binding of the name
                 // shadows it. Whether each binding is a pointer is recorded
                 // for the bindings judged after it.
-                let key: LetKey = (name.clone(), span.start, span.end);
                 let is_reference = array_dims.is_empty() && c_type.ends_with('*');
                 self.let_kinds.insert(key.clone(), is_reference);
                 if is_reference {
@@ -5010,10 +5048,23 @@ impl CodeGenerator {
                     );
                 }
 
-                self.output
-                    .push_str(&format!("{} {}{} = ", c_type, name, array_dims));
-                self.generate_expression(value)?;
-                self.output.push_str(";\n");
+                match through {
+                    None => {
+                        self.output
+                            .push_str(&format!("{} {}{} = ", c_type, name, array_dims));
+                        self.generate_expression(value)?;
+                        self.output.push_str(";\n");
+                    }
+                    Some(fresh) if array_dims.is_empty() => {
+                        self.output
+                            .push_str(&format!("{} {} = {};\n", c_type, name, fresh));
+                    }
+                    // A C array cannot be initialized from another array.
+                    Some(fresh) => self.output.push_str(&format!(
+                        "{} {}{}; memcpy({}, {}, sizeof({}));\n",
+                        c_type, name, array_dims, name, fresh, fresh
+                    )),
+                }
             }
             Stmt::Assign { target, value, .. } => {
                 if let Some(root) = Self::assign_target_root(target) {
@@ -5783,6 +5834,22 @@ impl CodeGenerator {
     }
 
     /// A name no source program can collide with, for one hoisted value.
+    /// A temporary for a self-reading `let` (`LetFacts::reads_own_name`): not
+    /// any identifier the function binds or names, nor a function or a global,
+    /// so it cannot capture or be captured by a name of the program's.
+    fn fresh_shadow_name(&mut self) -> String {
+        loop {
+            let candidate = format!("__pd_shadow{}", self.shadow_counter);
+            self.shadow_counter += 1;
+            if !self.reference_facts.names.contains(&candidate)
+                && !self.functions.contains_key(&candidate)
+                && !self.globals.contains_key(&candidate)
+            {
+                return candidate;
+            }
+        }
+    }
+
     fn fresh_hoist_name(&mut self) -> String {
         let n = self.hoist_counter;
         self.hoist_counter += 1;

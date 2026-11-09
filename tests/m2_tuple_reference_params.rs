@@ -550,51 +550,60 @@ fn a_reference_re_pointed_only_at_writable_places_stays_proven() {
     check(&table, "ref_tuple_proven");
 }
 
-/// Review round 5 (astra): a `let` whose initializer reads its OWN name. The
-/// source means the outer binding, but the C declaration `T* r = r;` puts the
-/// new `r` in scope inside its own initializer (found f10: `let x = x + 1` in
-/// an inner block prints garbage on main), so the inner reference is
-/// uninitialized. Judged as a copy of the proven outer `r`, `set(*r)` was let
-/// through and the program died on signal 5 (rc 133) on f87fb3b; the by-value
-/// row died on main too. Such a binding is never proven; renamed, it runs.
+/// Review rounds 5-6 (astra, fable): a `let` whose initializer reads its OWN
+/// name means the OUTER binding, and now reads it (found f10, fixed at its
+/// cause). A C declaration's name is in scope in its own initializer, so
+/// `T* r = r;` read the new, uninitialized pointer: on f87fb3b astra's first
+/// row died on signal 5 (rc 133), and on 1f21115 the read rows still did while
+/// the write rows were refused. The `let` is lowered through a fresh temporary
+/// computed before the new binding exists, so reads and writes are the source's.
+/// The inner-block rows, whose `r` is ANOTHER binding of the name (main: 97 83),
+/// and fable's a05/a06 (main: 9783) were refused by 1f21115's name-only check.
 #[test]
-fn a_let_that_reads_its_own_name_is_never_proven() {
+fn a_let_that_reads_its_own_name_reads_the_outer_binding() {
     let set = "fn set(q: &mut (i64, i64)) { *q = (97, 83); }\n";
     let m = "fn m(mut x: (i64, i64)) { x = (97, 83); }\n";
+    let get = "fn get(q: &(i64, i64)) -> i64 { return q.0 * 100 + q.1; }\n";
     let out = "print_int(a.0); print_int(a.1); }\n";
-    let refused: [(&str, String); 3] = [
-        ("`let mut r = r;` under `&mut *p` of a tuple parameter", format!("{set}fn f(p: &mut (i64, i64)) {{ let mut r = &mut *p; if true {{ let mut r = r; set(*r); }} }}\nfn main() {{ let mut a = (11, 29); f(&mut a); {out}")),
-        ("`let mut r = &mut *r;`", format!("{set}fn main() {{ let mut a = (11, 29); let mut r = &mut a; if true {{ let mut r = &mut *r; set(*r); }} {out}")),
-        ("`let mut r = r;` into a by-value `mut` (died on main too)", format!("{m}fn main() {{ let mut a = (11, 29); let mut r = &mut a; if true {{ let mut r = r; m(*r); }} {out}")),
+    let rows: Vec<(&str, String, &str)> = vec![
+        ("`let mut r = r;` under `&mut *p` of a tuple parameter (astra r5)", format!("{set}fn f(p: &mut (i64, i64)) {{ let mut r = &mut *p; if true {{ let mut r = r; set(*r); }} }}\nfn main() {{ let mut a = (11, 29); f(&mut a); {out}"), "RUN: 97\n83\n"),
+        ("`let mut r = &mut *r;`", format!("{set}fn main() {{ let mut a = (11, 29); let mut r = &mut a; if true {{ let mut r = &mut *r; set(*r); }} {out}"), "RUN: 97\n83\n"),
+        ("`let mut r = r;` into a by-value `mut` (died on main)", format!("{m}fn main() {{ let mut a = (11, 29); let mut r = &mut a; if true {{ let mut r = r; m(*r); }} {out}"), "RUN: 97\n83\n"),
+        ("`let mut r = r;` in a loop body", format!("{set}fn main() {{ let mut a = (11, 29); let mut r = &mut a; let mut i = 0; while i < 1 {{ let mut r = r; set(*r); i = i + 1; }} {out}"), "RUN: 97\n83\n"),
+        ("a READ: `let r = r; get(*r)` (astra r6)", format!("{get}fn main() {{ let a = (11, 29); let r = &a; if true {{ let r = r; print_int(get(*r)); }} }}\n"), "RUN: 1129\n"),
+        ("a READ through a copy: `let q = *r; get(&q)` (astra r6)", format!("{get}fn main() {{ let a = (11, 29); let r = &a; if true {{ let r = r; let q = *r; print_int(get(&q)); }} }}\n"), "RUN: 1129\n"),
+        ("an inner block's own `r`: `let mut r = {{ let mut r = &mut a; r }};` (astra r6)", format!("{set}fn main() {{ let mut a = (11, 29); let mut r = {{ let mut r = &mut a; r }}; set(*r); {out}"), "RUN: 97\n83\n"),
+        ("each `if` arm's own `r` (astra r6)", format!("{m}fn main() {{ let mut a = (11, 29); let mut b = (1, 2); let mut r = if true {{ let r = &mut a; r }} else {{ let r = &mut b; r }}; m(*r); print_int(a.0); print_int(b.0); }}\n"), "RUN: 97\n1\n"),
+        ("`let mut r = if true {{ r }} else {{ r }};` (fable a05)", format!("{m}fn main() {{ let mut t = (11, 29); let mut r = &mut t; if true {{ let mut r = if true {{ r }} else {{ r }}; m(*r); }} print_int(t.0 * 100 + t.1); }}\n"), "RUN: 9783\n"),
+        ("`let mut r = {{ r }};` (fable a06)", format!("{m}fn main() {{ let mut t = (11, 29); let mut r = &mut t; if true {{ let mut r = {{ r }}; m(*r); }} print_int(t.0 * 100 + t.1); }}\n"), "RUN: 9783\n"),
+        ("renamed control: `let mut s = r;`", format!("{set}fn f(p: &mut (i64, i64)) {{ let mut r = &mut *p; if true {{ let mut s = r; set(*s); }} }}\nfn main() {{ let mut a = (11, 29); f(&mut a); {out}"), "RUN: 97\n83\n"),
     ];
-    let mut got = Vec::new();
-    let mut want = Vec::new();
-    for (shape, program) in &refused {
-        let verdict = outcome(program, "ref_tuple_selfinit");
-        let refused_here = verdict.starts_with("REFUSED: ")
-            && verdict.contains("its initializer names `r` itself");
-        got.push(format!(
-            "{}: {}",
-            shape,
-            if refused_here { "REFUSED by name" } else { &verdict }
-        ));
-        want.push(format!("{}: REFUSED by name", shape));
-    }
-    assert_eq!(got, want);
+    let table: Vec<(&str, &str, &str)> = rows
+        .iter()
+        .map(|(shape, program, want)| (*shape, program.as_str(), *want))
+        .collect();
+    check(&table, "ref_tuple_selfinit");
+}
+
+/// Found f10 itself, measured on main 2ca5eb5: every value below was garbage
+/// or wrong there (`-16` for 6; the tuple swap `11 29`; a crash for the
+/// string), because the shadowing `let` was emitted `T x = <reads x>;`. Lowered
+/// through a fresh temporary, each prints the source's value.
+#[test]
+fn a_shadowing_let_that_reads_the_outer_binding_prints_the_source_value() {
     check(
         &[
-            (
-                "renamed: `let mut s = r;` under `&mut *p`",
-                &format!("{set}fn f(p: &mut (i64, i64)) {{ let mut r = &mut *p; if true {{ let mut s = r; set(*s); }} }}\nfn main() {{ let mut a = (11, 29); f(&mut a); {out}"),
-                "RUN: 97\n83\n",
-            ),
-            (
-                "renamed: `let mut s = r;` into a by-value `mut`",
-                &format!("{m}fn main() {{ let mut a = (11, 29); let mut r = &mut a; if true {{ let mut s = r; m(*s); }} {out}"),
-                "RUN: 97\n83\n",
-            ),
+            ("an integer, `let x = x + 1;`", "fn main() { let x = 5; if true { let x = x + 1; print_int(x); } print_int(x); }\n", "RUN: 6\n5\n"),
+            ("nested twice", "fn main() { let x = 5; if true { let x = x * 10; if true { let x = x + 3; print_int(x); } print_int(x); } print_int(x); }\n", "RUN: 53\n50\n5\n"),
+            ("a tuple swap", "fn main() { let t = (11, 29); if true { let t = (t.1, t.0); print_int(t.0); print_int(t.1); } print_int(t.0); }\n", "RUN: 29\n11\n11\n"),
+            ("a struct", "struct P { a: i64, b: i64 }\nfn main() { let p = P { a: 3, b: 4 }; if true { let p = P { a: p.b, b: p.a + 10 }; print_int(p.a); print_int(p.b); } print_int(p.a); }\n", "RUN: 4\n13\n3\n"),
+            ("a string", "fn main() { let s = \"abc\"; if true { let s = s; print(s); } print(s); }\n", "RUN: abc\nabc\n"),
+            ("an array literal (copied with memcpy)", "fn main() { let xs = [1, 2]; if true { let xs = [xs[1], xs[0] + 10]; print_int(xs[0]); print_int(xs[1]); } print_int(xs[0]); }\n", "RUN: 2\n11\n1\n"),
+            ("in a loop body", "fn main() { let mut i = 0; let k = 7; while i < 3 { let k = k + i; print_int(k); i = i + 1; } print_int(k); }\n", "RUN: 7\n8\n9\n7\n"),
+            ("a parameter", "fn f(x: i64) -> i64 { if true { let x = x + 1; return x; } return 0; }\nfn main() { print_int(f(41)); }\n", "RUN: 42\n"),
+            ("a call argument, then reassigned", "fn inc(v: i64) -> i64 { return v + 1; }\nfn main() { let mut x = 5; if true { let mut x = inc(x); x = x * 2; print_int(x); } print_int(x); }\n", "RUN: 12\n5\n"),
         ],
-        "ref_tuple_selfinit_ok",
+        "let_shadow_reads_outer",
     );
 }
 

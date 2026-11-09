@@ -189,4 +189,23 @@ fn main() {
     swap(*ri);
     print_int(ta.0 * 100 + ta.1);
     print_int(tb.0 * 10 + tb.1);
+
+    // A `let` that reads its own name reads the OUTER binding (review round 6;
+    // found f10): C would read the new, uninitialized one, so the initializer
+    // is computed into a fresh temporary first. A read, then a write.
+    let tc = (4, 7);
+    let rc = &tc;
+    if true {
+        let rc = rc;
+        print_int(tens(*rc));
+    }
+    let mut ts = (3, 4);
+    if true {
+        let mut rs = &mut ts;
+        if true {
+            let mut rs = rs;
+            swap(*rs);
+        }
+    }
+    print_int(ts.0 * 10 + ts.1);
 }

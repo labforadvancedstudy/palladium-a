@@ -1699,7 +1699,7 @@ fn an_imported_function_is_visible_to_the_borrow_checker() {
 /// (src/codegen/mod.rs:242-255) is INSERT-ONLY — unlike `functions`, which the
 /// main-program pass overwrites entry by entry — so an imported `pub async fn f`
 /// leaves `f` in the set even when a local ordinary `fn f` replaces it, and
-/// `try_infer_expr_type` (src/codegen/mod.rs:992-992) reads the set rather than
+/// `try_infer_expr_type` (src/codegen/mod.rs:1018-1018) reads the set rather than
 /// asking `crate::ast::local_definition_shadows_import`.
 ///
 /// Measured: gcc reports `use of undeclared identifier 'f_Future'` against C
@@ -1715,7 +1715,7 @@ fn an_imported_function_is_visible_to_the_borrow_checker() {
 /// budget: preserving the number by omitting known debt is precisely what a
 /// closed inventory exists to prevent, so the row is here and the number moved.
 #[test]
-#[ignore = "XFAIL: CodeGenerator.async_functions (src/codegen/mod.rs:242-255) is insert-only, so an imported `pub async fn f` shadowed by a local ordinary `fn f` leaves `f` in the set and try_infer_expr_type (src/codegen/mod.rs:992-992) types the call to the LOCAL f as `f_Future`. Measured: the emitted C carries `f_Future v = f();` beside `long long f()` and gcc reports `use of undeclared identifier 'f_Future'` after the compiler reported success. Needs the set to ask crate::ast::local_definition_shadows_import, as the imported body and prototype loops now do (owned by M4)"]
+#[ignore = "XFAIL: CodeGenerator.async_functions (src/codegen/mod.rs:242-255) is insert-only, so an imported `pub async fn f` shadowed by a local ordinary `fn f` leaves `f` in the set and try_infer_expr_type (src/codegen/mod.rs:1018-1018) types the call to the LOCAL f as `f_Future`. Measured: the emitted C carries `f_Future v = f();` beside `long long f()` and gcc reports `use of undeclared identifier 'f_Future'` after the compiler reported success. Needs the set to ask crate::ast::local_definition_shadows_import, as the imported body and prototype loops now do (owned by M4)"]
 fn a_local_fn_shadowing_an_imported_async_fn_is_not_typed_as_a_future() {
     let out = compile_and_run_with_import(
         "pub async fn f() { print_int(1); }\n",
