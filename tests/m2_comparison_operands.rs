@@ -1,0 +1,504 @@
+//! #89 and #92: a comparison operator on a type that has no comparison.
+//!
+//! THE DEFECT. The type checker admitted `==` `!=` `<` `<=` `>` `>=` between
+//! any two operands that merge to one type, and code generation emitted C's
+//! operator between them whatever they were. Two outcomes, both measured on
+//! d5166e8, neither a diagnostic of this compiler's:
+//!
+//!   * gcc refused the C (`invalid operands to binary expression ('struct K'
+//!     and 'struct K')`, pdc exit 3) for a tuple, a struct, an enum with or
+//!     without payloads, a generic struct, a range and a unit-returning call;
+//!   * gcc ACCEPTED the C and the program answered wrong, silently: a String is
+//!     a `const char*`, so `int_to_string(12) == "12"` was 0 and `"b" < "a"`
+//!     was 1; an array decays to its address, so `[1, 2] == [1, 2]` was 0; a
+//!     function name compared addresses.
+//!
+//! No requirement row and no specification text defines a comparison on any
+//! of these (N5-10 is witnessed over the primitives only), so each is now
+//! REFUSED BY NAME (PD0079) with the way to compare instead. Nothing invents a
+//! structural equality. The types that did compare correctly — the integers,
+//! the floats, `bool`, `char`, aliases of those, a reference PARAMETER (code
+//! generation reads through it) — keep exactly the output they had, which the
+//! controls at the bottom pin.
+//!
+//! A GENERIC BODY IS NEVER TYPE-CHECKED (`check_function` returns early for
+//! one), so `fn same<T>(a: T, c: T) -> bool { a == c }` reached gcc at a
+//! struct and answered 0 at two equal Strings. Each instantiation's body is
+//! now checked, on a copy of the checker, at the types it was instantiated
+//! with, for this rule alone.
+
+mod common;
+
+use common::unique_module_name;
+use palladium::linker::{link_command, OptLevel};
+use palladium::Driver;
+use std::fs;
+use std::process::Command;
+use tempfile::TempDir;
+
+/// Compile, link, run — and return stdout. Any failure on the way is the
+/// test's failure, named at the step it happened.
+fn run(source: &str, prefix: &str) -> String {
+    let name = unique_module_name(prefix);
+    let dir = TempDir::new().unwrap();
+    let src = dir.path().join(format!("{}.pd", name));
+    let exe = dir.path().join(&name);
+    fs::write(&src, source).unwrap();
+
+    let c_file = Driver::new()
+        .compile_file(&src)
+        .unwrap_or_else(|e| panic!("the front end refused a legal program: {}", e));
+    let out = link_command(&c_file, &exe, OptLevel::Default)
+        .expect("link_command")
+        .output()
+        .expect("gcc");
+    assert!(
+        out.status.success(),
+        "the front end accepted this and gcc refused the C it emitted: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&exe).output().expect("run");
+    assert!(
+        run.status.success(),
+        "the program did not exit 0: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    String::from_utf8_lossy(&run.stdout).to_string()
+}
+
+/// Compile only, expecting THIS compiler's refusal under PD0079 — not gcc's,
+/// and not an incidental refusal that happens to share some words. Returns the
+/// message so a test can read which type it named and what it advised.
+fn refused(source: &str, prefix: &str) -> String {
+    let name = unique_module_name(prefix);
+    let dir = TempDir::new().unwrap();
+    let src = dir.path().join(format!("{}.pd", name));
+    fs::write(&src, source).unwrap();
+    match Driver::new().compile_file(&src) {
+        Ok(c) => panic!(
+            "the front end accepted a comparison it must refuse: {}",
+            c.display()
+        ),
+        Err(e) => {
+            let text = e.to_string();
+            assert!(
+                !text.contains("gcc"),
+                "the refusal came from the C compiler, not from this one: {}",
+                text
+            );
+            assert_eq!(
+                e.code().map(|c| c.to_string()),
+                Some("PD0079".to_string()),
+                "refused, but not under the comparison rule: {}",
+                text
+            );
+            text
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #89 — tuples.
+// ---------------------------------------------------------------------------
+
+/// The issue's own program. On d5166e8: gcc, `invalid operands to binary ==`.
+#[test]
+fn a_tuple_equality_is_refused_by_name() {
+    let text = refused(
+        "fn main() { let a = (1, 2); let b = (1, 2); \
+         if a == b { print_int(1); } else { print_int(0); } }",
+        "cmp_tuple_eq",
+    );
+    assert!(text.contains("`==` is not defined on `(Int, Int)`"), "{}", text);
+    assert!(text.contains("element by element"), "{}", text);
+}
+
+/// Every comparison operator is the one rule, not only `==`.
+#[test]
+fn every_comparison_operator_on_a_tuple_is_refused() {
+    for op in ["==", "!=", "<", "<=", ">", ">="] {
+        let text = refused(
+            &format!(
+                "fn main() {{ let a = (1, 2); let b = (1, 3); \
+                 if a {} b {{ print_int(1); }} else {{ print_int(0); }} }}",
+                op
+            ),
+            "cmp_tuple_ops",
+        );
+        assert!(
+            text.contains(&format!("`{}` is not defined on `(Int, Int)`", op)),
+            "{}",
+            text
+        );
+    }
+}
+
+/// An alias names the type it aliases, so it has that type's comparison —
+/// here none. On d5166e8: gcc.
+#[test]
+fn a_tuple_alias_is_refused_too() {
+    refused(
+        "type Pair = (i64, i64);\n\
+         fn main() { let a: Pair = (1, 2); let b: Pair = (1, 2); \
+         if a == b { print_int(1); } else { print_int(0); } }",
+        "cmp_tuple_alias",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #92 — enums and structs.
+// ---------------------------------------------------------------------------
+
+/// The issue's enum. On d5166e8: gcc, `invalid operands to binary expression
+/// ('struct K' and 'struct K')`, pdc exit 3.
+#[test]
+fn a_fieldless_enum_equality_is_refused_by_name() {
+    let text = refused(
+        "enum K { A, B }\n\
+         fn main() { let a = K::A; let b = K::A; \
+         if a == b { print_int(1); } else { print_int(0); } }",
+        "cmp_enum_eq",
+    );
+    assert!(text.contains("`==` is not defined on `K`"), "{}", text);
+    assert!(text.contains("`match`"), "{}", text);
+}
+
+#[test]
+fn an_enum_with_a_payload_is_refused_too() {
+    let text = refused(
+        "enum E { A(i64), B }\n\
+         fn main() { let a = E::A(1); let b = E::A(1); \
+         if a != b { print_int(1); } else { print_int(0); } }",
+        "cmp_enum_payload",
+    );
+    assert!(text.contains("`!=` is not defined on `E`"), "{}", text);
+}
+
+#[test]
+fn a_struct_equality_is_refused_by_name() {
+    let text = refused(
+        "struct P { x: i64, y: i64 }\n\
+         fn main() { let a = P { x: 1, y: 2 }; let b = P { x: 1, y: 2 }; \
+         if a == b { print_int(1); } else { print_int(0); } }",
+        "cmp_struct_eq",
+    );
+    assert!(text.contains("`==` is not defined on `P`"), "{}", text);
+    assert!(text.contains("field by field"), "{}", text);
+}
+
+/// A generic struct's instantiation is a struct. On d5166e8: gcc.
+#[test]
+fn a_generic_struct_instantiation_is_refused() {
+    let text = refused(
+        "struct W<T> { v: T }\n\
+         fn main() { let a = W { v: 1 }; let b = W { v: 1 }; \
+         if a == b { print_int(1); } else { print_int(0); } }",
+        "cmp_generic_struct",
+    );
+    assert!(text.contains("field by field"), "{}", text);
+}
+
+// ---------------------------------------------------------------------------
+// The well-typed-but-wrong half: C accepted these and answered wrong.
+// ---------------------------------------------------------------------------
+
+/// MEASURED on d5166e8: `int_to_string(12) == "12"` printed 0. The C was
+/// `(s == t)` over two `const char*`, which is right only when gcc happens to
+/// pool two identical literals into one address.
+#[test]
+fn a_string_equality_is_refused_and_points_at_string_eq() {
+    let text = refused(
+        "fn main() { if int_to_string(12) == \"12\" { print_int(1); } else { print_int(0); } }",
+        "cmp_string_eq",
+    );
+    assert!(text.contains("`==` is not defined on `String`"), "{}", text);
+    assert!(text.contains("string_eq"), "{}", text);
+}
+
+/// MEASURED on d5166e8: `"b" < "a"` printed 1 — an address order.
+#[test]
+fn a_string_ordering_is_refused() {
+    let text = refused(
+        "fn main() { let s = \"b\"; let t = \"a\"; \
+         if s < t { print_int(1); } else { print_int(0); } }",
+        "cmp_string_lt",
+    );
+    assert!(text.contains("`<` is not defined on `String`"), "{}", text);
+}
+
+/// MEASURED on d5166e8: `[1, 2] == [1, 2]` printed 0 — both arrays decayed to
+/// their addresses.
+#[test]
+fn an_array_equality_is_refused_by_name() {
+    let text = refused(
+        "fn main() { let a = [1, 2]; let b = [1, 2]; \
+         if a == b { print_int(1); } else { print_int(0); } }",
+        "cmp_array_eq",
+    );
+    assert!(text.contains("`==` is not defined on `[Int; 2]`"), "{}", text);
+    assert!(text.contains("addresses"), "{}", text);
+}
+
+/// `fn(A) -> B` is unimplemented (language-spec, the type table), so a
+/// function name in a comparison is an accident of name lookup, and C
+/// compared the two functions' addresses.
+#[test]
+fn a_function_name_comparison_is_refused() {
+    refused(
+        "fn f() -> i64 { 1 }\nfn g() -> i64 { 2 }\n\
+         fn main() { if f == g { print_int(1); } else { print_int(0); } }",
+        "cmp_fn",
+    );
+}
+
+/// A range has no operation beyond being iterated (N5-14). On d5166e8: gcc.
+#[test]
+fn a_range_comparison_is_refused() {
+    refused(
+        "fn main() { let r = 0..3; let s = 0..3; \
+         if r == s { print_int(1); } else { print_int(0); } }",
+        "cmp_range",
+    );
+}
+
+/// Two unit-returning calls. On d5166e8: gcc compared two `void` values.
+#[test]
+fn a_unit_comparison_is_refused() {
+    refused(
+        "fn u() { }\nfn main() { if u() == u() { print_int(1); } else { print_int(0); } }",
+        "cmp_unit",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Every POSITION a comparison is type-checked in — one rule, so one site in
+// the checker, and these prove each position reaches it.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_match_guard_is_checked() {
+    refused(
+        "enum K { A, B }\n\
+         fn main() { let k = K::A; let x = 3; \
+         match x { n if k == K::A => { print_int(n); } _ => { print_int(0); } } }",
+        "cmp_guard",
+    );
+}
+
+#[test]
+fn a_while_condition_is_checked() {
+    refused(
+        "struct P { x: i64 }\n\
+         fn main() { let a = P { x: 1 }; let b = P { x: 2 }; let mut i = 0; \
+         while a != b { i = i + 1; if i > 2 { break; } } print_int(i); }",
+        "cmp_while",
+    );
+}
+
+#[test]
+fn compound_positions_are_checked() {
+    for body in [
+        "let c = a == K::B; if c { print_int(1); }",
+        "if !(a == K::B) { print_int(1); }",
+        "if true && a == K::A { print_int(1); }",
+        "print_int(pick(a == K::A));",
+    ] {
+        refused(
+            &format!(
+                "enum K {{ A, B }}\nfn pick(b: bool) -> i64 {{ if b {{ 1 }} else {{ 0 }} }}\n\
+                 fn main() {{ let a = K::A; {} }}",
+                body
+            ),
+            "cmp_compound",
+        );
+    }
+}
+
+#[test]
+fn a_return_value_is_checked() {
+    refused(
+        "struct P { x: i64 }\n\
+         fn eq(a: P, b: P) -> bool { return a == b; }\n\
+         fn main() { if eq(P { x: 1 }, P { x: 1 }) { print_int(1); } else { print_int(0); } }",
+        "cmp_return",
+    );
+}
+
+/// A struct field that is itself a struct, and a tuple element that is a
+/// tuple: the operand's type decides, wherever it came from.
+#[test]
+fn a_projected_composite_is_checked() {
+    refused(
+        "struct I { v: i64 }\nstruct O { i: I }\n\
+         fn main() { let a = O { i: I { v: 1 } }; let b = O { i: I { v: 1 } }; \
+         if a.i == b.i { print_int(1); } else { print_int(0); } }",
+        "cmp_field_struct",
+    );
+    refused(
+        "fn main() { let a = ((1, 2), 3); let b = ((1, 2), 3); \
+         if a.0 == b.0 { print_int(1); } else { print_int(0); } }",
+        "cmp_tuple_elem_tuple",
+    );
+}
+
+/// A macro body is re-parsed and type-checked at its call site, so `<` there
+/// (a single-character operator, which the token stream does carry) meets the
+/// same rule. On d5166e8 a tuple reached gcc and an array answered 0.
+#[test]
+fn a_macro_body_is_checked() {
+    refused(
+        "macro lt!(a, b) { $a < $b }\n\
+         fn main() { let x = (1, 2); let y = (1, 3); \
+         if lt!(x, y) { print_int(1); } else { print_int(0); } }",
+        "cmp_macro_tuple",
+    );
+    refused(
+        "macro lt!(a, b) { $a < $b }\n\
+         fn main() { let x = [1, 2]; let y = [1, 2]; \
+         if lt!(x, y) { print_int(1); } else { print_int(0); } }",
+        "cmp_macro_array",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Generic bodies, checked at each instantiation.
+// ---------------------------------------------------------------------------
+
+/// On d5166e8: gcc, `invalid operands` inside `same_P`.
+#[test]
+fn a_generic_body_instantiated_at_a_struct_is_refused() {
+    let text = refused(
+        "struct P { x: i64 }\n\
+         fn same<T>(a: T, c: T) -> bool { a == c }\n\
+         fn main() { let p = P { x: 1 }; let q = P { x: 1 }; \
+         if same(p, q) { print_int(1); } else { print_int(0); } }",
+        "cmp_generic_struct_arg",
+    );
+    assert!(text.contains("`same`"), "{}", text);
+    assert!(text.contains("T = P"), "{}", text);
+    assert!(text.contains("`==` is not defined on `P`"), "{}", text);
+}
+
+/// On d5166e8 this printed 0: two equal Strings, two addresses.
+#[test]
+fn a_generic_body_instantiated_at_a_string_is_refused() {
+    let text = refused(
+        "fn same<T>(a: T, c: T) -> bool { a == c }\n\
+         fn main() { let p = \"ab\"; let q = string_concat(\"a\", \"b\"); \
+         if same(p, q) { print_int(1); } else { print_int(0); } }",
+        "cmp_generic_string_arg",
+    );
+    assert!(text.contains("T = String"), "{}", text);
+}
+
+/// The generic is defined AFTER the call that instantiates it, and the enum
+/// case: the check runs once every body has been walked, so order is not a
+/// way around it.
+#[test]
+fn a_generic_defined_after_its_caller_is_refused_at_an_enum() {
+    refused(
+        "enum K { A, B }\n\
+         fn main() { let p = K::A; let q = K::A; \
+         if same(p, q) { print_int(1); } else { print_int(0); } }\n\
+         fn same<T>(a: T, c: T) -> bool { a == c }",
+        "cmp_generic_after",
+    );
+}
+
+/// An element of a `[T; 2]` parameter is a `T`.
+#[test]
+fn a_generic_array_element_is_checked() {
+    refused(
+        "struct P { x: i64 }\n\
+         fn first_same<T>(a: [T; 2], c: [T; 2]) -> bool { a[0] == c[0] }\n\
+         fn main() { let p = [P { x: 1 }, P { x: 2 }]; let q = [P { x: 1 }, P { x: 2 }]; \
+         if first_same(p, q) { print_int(1); } else { print_int(0); } }",
+        "cmp_generic_elem",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// CONTROLS — what compared correctly on d5166e8 still does, with the same
+// output. Each line's expected digit is the one d5166e8 printed.
+// ---------------------------------------------------------------------------
+
+/// Every integer width the checker reaches with a value (`i8`, `i16`, `u8`,
+/// `u16`, `usize`, `isize` refuse a literal with PD0042 before any comparison
+/// is written), the floats, `bool` and `char`, through aliases too.
+#[test]
+fn the_scalar_comparisons_keep_their_answers() {
+    let out = run(
+        r#"
+type N = i64;
+type B = bool;
+type C = char;
+type F = f64;
+fn b(x: bool) { if x { print_int(1); } else { print_int(0); } }
+fn m32(v: i32) -> i32 { v }
+fn mu32(v: u32) -> u32 { v }
+fn mu64(v: u64) -> u64 { v }
+fn main() {
+    let a = 3; let c = 4;
+    b(a == c); b(a != c); b(a < c); b(a <= c); b(a > c); b(a >= c);
+    let i: i32 = m32(5); let j: i32 = m32(7); b(i < j); b(i == j);
+    let u: u32 = mu32(4000000000); let v: u32 = mu32(1); b(u > v);
+    let w: u64 = mu64(3); let x: u64 = mu64(3); b(w == x);
+    let t = true; let f = false; b(t == f); b(f < t); b(t != f);
+    let p = 'a'; let q = 'b'; b(p == q); b(p < q); b(q >= 'b');
+    let g = 1.5; let h = 2.5; b(g == h); b(g < h); b(h >= 2.5);
+    let n: N = 3; b(n == 3); b(n < 4);
+    let y: B = true; let z: C = 'q'; let e: F = 2.0; b(y == true); b(z == 'q'); b(e < 3.0);
+}
+"#,
+        "cmp_scalars",
+    );
+    assert_eq!(
+        out,
+        "0\n1\n1\n1\n0\n0\n1\n0\n1\n1\n0\n1\n1\n0\n1\n1\n0\n1\n1\n1\n1\n1\n1\n1\n"
+    );
+}
+
+/// The ways to compare that the refusals point at, and the positions a
+/// scalar comparison reaches through: a reference PARAMETER (code generation
+/// reads through it), a field, a tuple element, an array element, a `match`
+/// on an enum, `string_eq`, a `for` header, a guard and a `while`.
+#[test]
+fn the_suggested_comparisons_and_scalar_projections_run() {
+    let out = run(
+        r#"
+struct P { x: i64, y: i64 }
+enum K { A, B }
+fn b(x: bool) { if x { print_int(1); } else { print_int(0); } }
+fn eq(a: &i64, c: &i64) -> bool { a == c }
+fn is_a(k: K) -> bool { match k { K::A => true, K::B => false } }
+fn same<T>(a: T, c: T) -> bool { a == c }
+fn main() {
+    let x = 5; let y = 5; b(eq(&x, &y));
+    let p = P { x: 1, y: 2 }; let q = P { x: 1, y: 2 }; b(p.x == q.x && p.y == q.y);
+    let s = (1, 2); let t = (1, 3); b(s.0 == t.0 && s.1 == t.1);
+    let u = [1, 2]; let v = [1, 2]; b(u[0] == v[0] && u[1] == v[1]);
+    b(is_a(K::A)); b(is_a(K::B));
+    b(string_eq(int_to_string(12), "12"));
+    b(same(1, 1)); b(same(true, false));
+    let mut acc = 0; for i in 0..4 { if i != 2 { acc = acc + i; } } print_int(acc);
+    match x { n if n > 2 => { print_int(n); } _ => { print_int(0); } }
+    let mut k = 0; while k < 3 { k = k + 1; } print_int(k);
+}
+"#,
+        "cmp_suggested",
+    );
+    assert_eq!(out, "1\n1\n0\n1\n1\n0\n1\n1\n0\n4\n5\n3\n");
+}
+
+/// A string literal PATTERN is the one String equality code generation does
+/// implement (`__pd_string_eq`), so it is not this rule's: it still runs, and
+/// still answers by characters.
+#[test]
+fn a_string_literal_pattern_still_compares_characters() {
+    let out = run(
+        "fn main() { let s = string_concat(\"h\", \"i\"); \
+         match s { \"hi\" => { print_int(1); } _ => { print_int(0); } } }",
+        "cmp_string_pattern",
+    );
+    assert_eq!(out, "1\n");
+}

@@ -1,0 +1,20 @@
+// NEGATIVE TEST — `!=` on two structs (#92), PD0079.
+//
+// C has no `!=` on a struct, so on d5166e8 this type-checked and gcc refused the
+// emitted C. The refusal says to compare field by field. `!=` rather than `==`
+// on purpose: the rule is every comparison operator, and the corpus witnesses
+// more than one.
+struct P {
+    x: i64,
+    y: i64,
+}
+
+fn main() {
+    let a = P { x: 1, y: 2 };
+    let b = P { x: 1, y: 3 };
+    if a != b {
+        print_int(1);
+    } else {
+        print_int(0);
+    }
+}

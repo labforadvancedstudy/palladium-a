@@ -51,6 +51,10 @@
 #      comment edit in the fixture broke the pin. Now binder kind + name
 #      (``the loop variable `LIMIT` ``, ``the pattern binding `LIMIT` ``,
 #      ``the local `LIMIT` ``); the `@` row's `` `@` `` was already that shape.
+#   #89/#92 (PD0079, a comparison only on an integer, a float, a bool or a char):
+#      six reject rows APPENDED, not amended — tests/reject/comparison_*.pd. Six
+#      payload groups (one per operand type, the sixth the generic-instantiation
+#      site), so every row carries `msg~`; each fragment verified by the generator.
 #
 # KNOWN QUIRKS, recorded so the record is complete. Three fragments end mid-word,
 # where the su0 map cut them: PD0002 const_shl_negative_left `…which C leaves u`,
@@ -184,3 +188,9 @@ PD0075	a local binder may not have a built-in's name (typeck:2069-2081, `refuse_
 PD0076	a block used as a value must end in an expression (typeck:5571-5578, one predicate in `check_value_block`)	1	tests/reject/value_block_without_tail.pd	reject	no	-	no	no	-	narrow-surface
 PD0077	a `\` in a literal must be followed by a spelling the escape table names (token.rs:117 string position, raised through scanner.rs:67-69; the identical refusal for the CHAR position at token.rs:210 has no fixture)	1	tests/reject/unknown_escape.pd	reject	yes	-	no	no	-	corpus-gap
 PD0078	a `/*` must be closed (token.rs:166, raised through scanner.rs:64-66; one site, nesting-aware)	1	tests/reject/unterminated_block_comment.pd	reject	yes	-	no	no	-	narrow-surface
+PD0079	a comparison operator applies only to an integer, a float, a bool or a char (typeck `no_comparison_on`, from the comparison arm of `check_expression` and from `refuse_instantiated_comparisons` over each generic instantiation's body)	6	tests/reject/comparison_on_a_tuple.pd	reject	yes	-	yes	yes	on `(Int, Int)`	-
+PD0079	a comparison operator applies only to an integer, a float, a bool or a char (typeck `no_comparison_on`, from the comparison arm of `check_expression` and from `refuse_instantiated_comparisons` over each generic instantiation's body)	6	tests/reject/comparison_on_an_enum.pd	reject	yes	-	yes	yes	on `K`	-
+PD0079	a comparison operator applies only to an integer, a float, a bool or a char (typeck `no_comparison_on`, from the comparison arm of `check_expression` and from `refuse_instantiated_comparisons` over each generic instantiation's body)	6	tests/reject/comparison_on_a_struct.pd	reject	yes	-	yes	yes	on `P`	-
+PD0079	a comparison operator applies only to an integer, a float, a bool or a char (typeck `no_comparison_on`, from the comparison arm of `check_expression` and from `refuse_instantiated_comparisons` over each generic instantiation's body)	6	tests/reject/comparison_on_a_string.pd	reject	yes	-	yes	yes	on `String`	-
+PD0079	a comparison operator applies only to an integer, a float, a bool or a char (typeck `no_comparison_on`, from the comparison arm of `check_expression` and from `refuse_instantiated_comparisons` over each generic instantiation's body)	6	tests/reject/comparison_on_an_array.pd	reject	yes	-	yes	yes	on `[Int; 2]`	-
+PD0079	a comparison operator applies only to an integer, a float, a bool or a char (typeck `no_comparison_on`, from the comparison arm of `check_expression` and from `refuse_instantiated_comparisons` over each generic instantiation's body)	6	tests/reject/comparison_in_a_generic_instantiation.pd	reject	yes	-	yes	yes	instantiated with T = Suit	-

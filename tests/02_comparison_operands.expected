@@ -1,0 +1,43 @@
+integers:
+0
+1
+1
+1
+0
+0
+1
+0
+1
+1
+bool, char, f64:
+0
+1
+1
+0
+1
+1
+0
+1
+1
+aliases:
+1
+1
+1
+1
+1
+through a reference parameter:
+1
+the ways to compare what has no comparison:
+1
+0
+1
+1
+0
+1
+generic, at a type with a comparison:
+1
+0
+in a for, a guard and a while:
+4
+5
+3

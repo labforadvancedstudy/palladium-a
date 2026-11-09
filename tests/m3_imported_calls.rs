@@ -1243,7 +1243,7 @@ fn test_a_block_local_shadow_does_not_change_the_outer_bindings_copy_class() {
 /// `filter_module_info` (`src/resolver/mod.rs:105-118`) narrows the `exports`
 /// set and leaves `ast` complete — and `.exports` is read nowhere but its own
 /// filter (`src/resolver/mod.rs:113` is the only hit in `src/`). Every consumer
-/// re-derives visibility from `ast.items` instead: `src/typeck/mod.rs:1526-1526`,
+/// re-derives visibility from `ast.items` instead: `src/typeck/mod.rs:1530-1530`,
 /// `src/codegen/mod.rs:1975-1975`, `src/codegen/mod.rs:1898-1898`,
 /// `src/codegen/mod.rs:2216-2216`, `src/codegen/mod.rs:3175-3175`, and the borrow checker's
 /// `register_imported_functions`. So `import lib2::{helper};` imports the whole
@@ -1341,13 +1341,13 @@ fn test_ambiguous_import_is_diagnosed_by_the_compiler_not_by_gcc() {
 }
 
 /// A qualified call cannot be written. `src/parser/mod.rs:4545-4586` turns any
-/// `a::b(...)` into `Expr::EnumConstructor`, and `src/typeck/mod.rs:4813-4817`
+/// `a::b(...)` into `Expr::EnumConstructor`, and `src/typeck/mod.rs:4825-4829`
 /// then reports `Undefined enum type: lib2`. The same holds for an alias
 /// (`import lib2 as m;` → `Undefined enum type: m`), which makes `alias`
 /// unusable too. `register_imported_functions` registers `module::name` for
 /// parity with the type checker, but nothing can currently reach it.
 #[test]
-#[ignore = "XFAIL: a qualified call `lib2::helper()` is unreachable — src/parser/mod.rs:4545-4586 turns every `a::b(...)` into Expr::EnumConstructor and src/typeck/mod.rs:4813-4817 then reports \"Undefined enum type: lib2\"; the same makes `import lib2 as m;` unusable, since `m::helper()` reports \"Undefined enum type: m\" (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: a qualified call `lib2::helper()` is unreachable — src/parser/mod.rs:4545-4586 turns every `a::b(...)` into Expr::EnumConstructor and src/typeck/mod.rs:4825-4829 then reports \"Undefined enum type: lib2\"; the same makes `import lib2 as m;` unusable, since `m::helper()` reports \"Undefined enum type: m\" (owned by M4, cross-file module imports)"]
 fn test_a_qualified_call_reaches_the_imported_function() {
     let (compiled, output, stdout) = compile_and_run(
         &[("lib2.pd", "pub fn helper() -> i64 { return 5; }\n")],
@@ -1389,7 +1389,7 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// so the two disagree about which function a call means. The call lowering
 /// tests `crate::builtins::is_builtin(name)` FIRST and unconditionally
 /// (`src/codegen/mod.rs:6032-6034`), while the type checker
-/// (`src/typeck/mod.rs:1640-1640`) and `register_imported_functions` both insert
+/// (`src/typeck/mod.rs:1644-1644`) and `register_imported_functions` both insert
 /// the imported signature OVER the built-in.
 ///
 /// With a matching signature the imported definition is merely silent dead code.
@@ -1398,7 +1398,7 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// signature and codegen emits `__pd_print_int("hello")` against the built-in's
 /// `long long`.
 #[test]
-#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:1640-1640 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:6032-6034 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:1644-1644 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:6032-6034 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M4, cross-file module imports)"]
 fn test_an_import_may_not_silently_disagree_with_a_builtin() {
     let (compiled, output, _) = compile_and_run(
         &[("lib2.pd", "pub fn print_int(s: String) { }\n")],
@@ -1599,9 +1599,9 @@ fn test_the_whole_emitted_c_is_byte_stable() {
 /// Auditing codegen for what else could put the hash seed into the output
 /// turned up a second, independent source: monomorphized generic
 /// instantiations. `TypeChecker::get_instantiations` builds its `Vec` by
-/// iterating `self.instantiations.keys()` (`src/typeck/mod.rs:6575-6575`), which is a
+/// iterating `self.instantiations.keys()` (`src/typeck/mod.rs:6587-6587`), which is a
 /// `HashMap`, and `get_struct_instantiations` does the same
-/// (`src/typeck/mod.rs:6637-6637`). Codegen then emits in that Vec's order
+/// (`src/typeck/mod.rs:6649-6649`). Codegen then emits in that Vec's order
 /// (`src/codegen/mod.rs:2162-2162`, `src/codegen/mod.rs:2347-2347`).
 ///
 /// This program imports NOTHING, which is how the two sources were told apart:
@@ -1622,7 +1622,7 @@ fn test_the_whole_emitted_c_is_byte_stable() {
 /// `(name, type_args)`.
 ///
 /// NOT COVERED by any test: the sibling sort in `get_struct_instantiations`
-/// (`src/typeck/mod.rs:6637-6637`). Generic *structs* cannot be compiled at all right
+/// (`src/typeck/mod.rs:6649-6649`). Generic *structs* cannot be compiled at all right
 /// now — `struct Box<T> { v: T }` lowers to `void*` and gcc rejects
 /// "initializing 'void *' with an expression of incompatible type
 /// 'struct Box_alpha_i64'" — so there is no program whose output that ordering

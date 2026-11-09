@@ -465,14 +465,19 @@ check_codes_pinned() {       # $1 = registry, $2 = manifest -> 0 clean / 1 compl
 #   was 15378d68… at the GI-12 cutover, over `path<TAB>class`: 122 reject + 2 skip.
 #   re-pinned e6554cd0… at suF-a review round 1: the SAME 124 rows (122
 #   reject|compile + 2 skip|compile), now hashed with their stage.
-REFUSAL_SET_SHA=e6554cd0fa978da4734b8216551a35c505c482fe9974b3b2434c27acdc4bb910
+#   re-pinned 84486334… for #89/#92 (PD0079): 130 rows, the 124 above plus six
+#   reject|compile rows ADDED — tests/reject/comparison_on_a_tuple.pd,
+#   comparison_on_an_enum.pd, comparison_on_a_struct.pd,
+#   comparison_on_a_string.pd, comparison_on_an_array.pd and
+#   comparison_in_a_generic_instantiation.pd. None removed or retyped.
+REFUSAL_SET_SHA=84486334d4e4a947bc230ed233844a06c846c03bf8adedfd2e87670b9c9f0d84
 # THE SIZE OF THAT SET, pinned beside it and re-pinned by the same deliberate
 # edit. Every row of the set is at stage compile and pins a code, so this is also
 # the number of code-pinned refusal rows and the `coded=` conformance must report.
 # It is a COMMITTED number on purpose: the counts requirement used to be held to a
 # count taken from the live manifest, and deleting refusal rows lowered both sides
 # together (suF-a review round 1).
-REFUSAL_SET_SIZE=124
+REFUSAL_SET_SIZE=130
 refusal_set_digest() {       # $1 = manifest -> sha256 on stdout
   awk -F'\t' 'NF>=2 && $1 !~ /^#/ && ($2=="reject" || $2=="skip") {print $1 "\t" $2 "\t" $3}' "$1" \
     | LC_ALL=C sort | shasum -a 256 | cut -d' ' -f1
