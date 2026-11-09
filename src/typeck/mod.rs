@@ -2403,7 +2403,7 @@ impl TypeChecker {
         }
 
         // PD0080 — AN ALIAS CYCLE IS REFUSED WHERE IT IS USED, before anything expands one.
-        alias_cycles::refuse_alias_cycle_uses(program, &self.imported_modules, &self.type_aliases, &self.generic_type_aliases)?;
+        alias_cycles::refuse_alias_cycle_uses(program, &self.imported_modules, &self.type_aliases, &self.generic_type_aliases, &self.alias_guard)?;
 
         // WHICH NAMES ARE ENUMS, BEFORE ANY TYPE IS CONVERTED.
         //
@@ -3030,7 +3030,7 @@ impl TypeChecker {
 
                 // First check if it's a type alias
                 if let Some(aliased_type) = self.type_aliases.get(name) {
-                    let resolved = self.alias_guard.expand(name, || self.resolved_alias(name, aliased_type));
+                    let resolved = self.alias_guard.expand(alias_cycles::Opening::Plain(name), || self.resolved_alias(name, aliased_type));
                     return resolved.unwrap_or_else(|| CheckerType::named_struct(name.clone())); // PD0080
                 }
 
@@ -3094,7 +3094,7 @@ impl TypeChecker {
                     // Substitute type parameters in the aliased type
                     let substituted_type =
                         self.substitute_type_params_map(&generic_alias.ty, &substitutions);
-                    return (self.alias_guard.expand(name, || self.ast_type_to_checker_type(&substituted_type))).unwrap_or_else(|| CheckerType::named_struct(name.clone()));
+                    return (self.alias_guard.expand(alias_cycles::Opening::Generic(name, type_args.len()), || self.ast_type_to_checker_type(&substituted_type))).unwrap_or_else(|| CheckerType::named_struct(name.clone()));
                 }
 
                 // Not a type alias, convert generic types normally

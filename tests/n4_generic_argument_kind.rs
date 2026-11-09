@@ -511,10 +511,10 @@ fn every_expansion_of_a_cyclic_alias_the_checker_performs_is_refused_by_name() {
     let id = "pub type Id<T> = T;\n";
     let cases: Vec<(Vec<(&str, String)>, &str, &str)> = vec![
         // An instantiated generic's result, imported, in both spellings.
-        (vec![("lib.pd", format!("{}pub type A = Id<A>;\npub fn f<T>(x: T) -> A {{ return x; }}\n", id)), ("main.pd", "import lib;\nfn main() { print_int(f(1)); }\n".to_string())], "A", "A -> Id -> A"),
-        (vec![("lib.pd", format!("{}pub type Aa = Id<Aa>;\npub fn f<T>(x: T) -> Aa {{ return x; }}\n", id)), ("main.pd", "import lib;\nfn main() { print_int(f(1)); }\n".to_string())], "Aa", "Aa -> Id -> Aa"),
+        (vec![("lib.pd", format!("{}pub type A = Id<A>;\npub fn f<T>(x: T) -> A {{ return x; }}\n", id)), ("main.pd", "import lib;\nfn main() { print_int(f(1)); }\n".to_string())], "A", "A -> A"),
+        (vec![("lib.pd", format!("{}pub type Aa = Id<Aa>;\npub fn f<T>(x: T) -> Aa {{ return x; }}\n", id)), ("main.pd", "import lib;\nfn main() { print_int(f(1)); }\n".to_string())], "Aa", "Aa -> Aa"),
         // ... and local.
-        (vec![("main.pd", "type Id<T> = T;\ntype Aa = Id<Aa>;\nfn f<T>(x: T) -> Aa { return x; }\nfn main() { print_int(f(1)); }\n".to_string())], "Aa", "Aa -> Id -> Aa"),
+        (vec![("main.pd", "type Id<T> = T;\ntype Aa = Id<Aa>;\nfn f<T>(x: T) -> Aa { return x; }\nfn main() { print_int(f(1)); }\n".to_string())], "Aa", "Aa -> Aa"),
         // A const argument leaves `T` unsubstituted; `T` is then the global
         // alias. Used, in an uncalled signature, and under a const parameter.
         (vec![("main.pd", "type T = G<1>;\ntype G<T> = T;\nfn main() { let x: T = 1; print_int(7); }\n".to_string())], "T", "T -> G -> T"),
@@ -569,6 +569,109 @@ fn a_cyclic_alias_the_checker_never_expands_still_compiles_and_runs() {
         let files: Vec<(&str, &str)> = files.iter().map(|(n, s)| (*n, s.as_str())).collect();
         let (verdict, text) = pdc_verdict_files(&files);
         if verdict != "exit 0" {
+            wrong.push(format!("case {}: {}: {}", i, verdict, text.lines().filter(|l| l.contains("error") || l.contains("fatal")).collect::<Vec<_>>().join(" | ")));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+// ---------------------------------------------------------------------------
+// Review round 3. The round-2 guard took a repeated generic alias NAME on a
+// deep open path for a cycle, so a FINITE expansion that reopens `Id` with a
+// smaller argument each time was refused: `Id<Id<a000>>` over a chain of 256
+// distinct aliases (main prints hello) and `Id` nested 270 deep both reported
+// `Id -> Id`. A cycle is now judged by the alias graph alone — an alias whose
+// route through bodies reaches a cycle — and a name repeat counts only for an
+// alias with no type parameter, whose name is its whole state. There is no
+// depth limit: main's front end takes these at 4000 deep, and so does this one.
+// ---------------------------------------------------------------------------
+
+/// `pdc compile` then the program, both in child processes (a deep expansion
+/// recurses deeper than a test thread's stack allows in-process). Returns the
+/// compile verdict and the program's stdout ("" unless it compiled).
+fn pdc_compile_and_run(source: &str) -> (String, String) {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("main.pd"), source).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_pdc"))
+        .args(["compile", "main.pd", "-o"])
+        .arg(dir.path().join("prog"))
+        .current_dir(dir.path())
+        .output()
+        .expect("pdc");
+    let verdict = match out.status.code() {
+        Some(n) => format!("exit {}", n),
+        None => "signal".to_string(),
+    };
+    if !out.status.success() {
+        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        let first = text.lines().find(|l| l.contains("error") || l.contains("fatal")).unwrap_or("").to_string();
+        return (format!("{}: {}", verdict, first), String::new());
+    }
+    let run = Command::new(dir.path().join("prog")).output().expect("run");
+    (verdict, String::from_utf8_lossy(&run.stdout).to_string())
+}
+
+fn nested_id(depth: usize, leaf: &str) -> String {
+    (0..depth).fold(leaf.to_string(), |t, _| format!("Id<{}>", t))
+}
+
+/// Every one of these is FINITE, ran on main (d5166e8) with this output, and
+/// was refused as an `Id -> Id` cycle on 3a44639 (the 2000-deep stresses aside,
+/// which round 2 refused too).
+#[test]
+fn a_finite_expansion_that_reopens_a_generic_alias_is_no_cycle() {
+    let chain_to = |n: usize, prefix: &str, end: &str, through_id: bool| -> String {
+        let mut s = String::from("type Id<T> = T;\n");
+        for i in 0..n {
+            let next = format!("{}{:04}", prefix, i + 1);
+            let body = if through_id { format!("Id<{}>", next) } else { next };
+            s.push_str(&format!("type {}{:04} = {};\n", prefix, i, body));
+        }
+        s.push_str(&format!("type {}{:04} = {};\n", prefix, n, end));
+        s
+    };
+    let sig = |ty: &str| format!("fn f(x: {}) -> i64 {{ return 1; }}\nfn main() {{ print_int(7); }}\n", ty);
+    let cases: Vec<(&str, String, &str)> = vec![
+        // astra (a): 256 distinct aliases ending in String, used through `Id<Id<…>>`.
+        ("astra a", format!("{}fn main() {{ let x: Id<Id<a0000> > = \"hello\"; print(x); }}\n", chain_to(256, "a", "String", false)), "hello\n"),
+        ("astra a, 1000", format!("{}fn main() {{ let x: Id<Id<a0000> > = \"hello\"; print(x); }}\n", chain_to(1000, "a", "String", false)), "hello\n"),
+        // astra (b) and fable d10: `Id` nested 270 and 300 deep in a signature.
+        ("astra b", format!("type Id<T> = T;\n{}", sig(&nested_id(270, "i64"))), "7\n"),
+        ("fable d10", format!("type Id<T> = T;\n{}", sig(&nested_id(300, "i64"))), "7\n"),
+        // fable d07: a chain of 150 distinct aliases, each through `Id`.
+        ("fable d07", format!("{}{}", chain_to(150, "B", "i64", true), sig("B0000")), "7\n"),
+        // Stresses: 2000 deep, nested and chained; a plain chain of 2000 used.
+        ("nested 2000", format!("type Id<T> = T;\n{}", sig(&nested_id(2000, "i64"))), "7\n"),
+        ("chain through Id 2000", format!("{}{}", chain_to(2000, "B", "i64", true), sig("B0000")), "7\n"),
+        ("plain chain 2000", format!("{}fn main() {{ let x: A0000 = 5; print_int(x); }}\n", chain_to(2000, "A", "i64", false)), "5\n"),
+    ];
+    let mut wrong = Vec::new();
+    for (name, source, want) in &cases {
+        let (verdict, out) = pdc_compile_and_run(source);
+        if verdict != "exit 0" || out != *want {
+            wrong.push(format!("{}: {} / printed {:?}", name, verdict, out));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// The genuine cycles through generic aliases are still refused by name: two
+/// generic aliases that name each other, one whose argument grows, and a pair
+/// through a generic STRUCT's argument (fable m04 — main printed 0 from an
+/// uncalled signature; it is a real cycle, and a lost run this unit owns).
+#[test]
+fn a_genuine_cycle_through_generic_aliases_is_still_refused_by_name() {
+    let cases = [
+        ("type F<T> = G<T>;\ntype G<T> = F<T>;\nfn f(x: F<i64>) -> i64 { return 1; }\nfn main() { print_int(0); }\n", "F", "F -> G -> F"),
+        ("type G<T> = G<(T, T)>;\nfn f(x: G<i64>) -> i64 { return 1; }\nfn main() { print_int(0); }\n", "G", "G -> G"),
+        ("struct W<T> { v: T }\ntype A = W<B>;\ntype B = W<A>;\nfn f(a: A) -> i64 { return 1; }\nfn main() { print_int(0); }\n", "A", "A -> B -> A"),
+        // ... and through an instantiated generic, which only the guard sees.
+        ("type F<T> = G<T>;\ntype G<T> = F<T>;\nfn g<U>(x: U) -> F<U> { return x; }\nfn main() { print_int(g(1)); }\n", "F", "F -> G -> F"),
+    ];
+    let mut wrong = Vec::new();
+    for (i, (source, used, cycle)) in cases.iter().enumerate() {
+        let (verdict, text) = pdc_verdict(source);
+        if !(verdict == "exit 1" && text.contains("error[PD0080]") && text.contains(&format!("`{}`", used)) && text.contains(cycle)) {
             wrong.push(format!("case {}: {}: {}", i, verdict, text.lines().filter(|l| l.contains("error") || l.contains("fatal")).collect::<Vec<_>>().join(" | ")));
         }
     }

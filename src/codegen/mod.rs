@@ -2495,7 +2495,7 @@ impl CodeGenerator {
                 // First check if it's a type alias
                 if let Some(aliased_type) = self.type_aliases.get(name) {
                     // Resolve the aliased type, under the PD0080 guard (`alias_cycles`)
-                    (self.alias_guard.expand(name, || self.type_to_c(aliased_type))).unwrap_or_else(|| "void*".to_string())
+                    (self.alias_guard.expand(crate::typeck::alias_cycles::Opening::Plain(name), || self.type_to_c(aliased_type))).unwrap_or_else(|| "void*".to_string())
                 } else {
                     // Otherwise it's a struct or enum name
                     // In C, structs need the "struct" prefix
@@ -7336,11 +7336,11 @@ impl CodeGenerator {
     fn register_tuple_type_behind(&mut self, ty: &Type) -> Result<()> {
         if let Type::Custom(name) = ty {
             if let Some(body) = self.type_aliases.get(name).cloned() {
-                if !self.alias_guard.enter(name) {
+                if !self.alias_guard.enter(crate::typeck::alias_cycles::Opening::Plain(name)) {
                     return Ok(()); // the guard tripped: `compile` reports PD0080
                 }
                 let registered = self.register_tuple_type(&body);
-                self.alias_guard.leave();
+                self.alias_guard.leave(crate::typeck::alias_cycles::Opening::Plain(name));
                 return registered;
             }
         }

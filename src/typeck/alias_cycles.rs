@@ -1,32 +1,46 @@
 //! PD0080 — a type alias the checker expands must name a type: its expansion
 //! may not reach an alias cycle.
 //!
-//! THE DEFECT (#93 review rounds 1 and 2, and #79). `type Id<T> = T; type A =
+//! THE DEFECT (#93 review rounds 1-3, and #79). `type Id<T> = T; type A =
 //! Id<A>;` overflowed the stack once a capital type argument was read as a
 //! type: the checker expands `A` to `Id<A>`, substitutes, meets `A` again, and
 //! recurses until the process aborts. Main refused that program only because
 //! it read the capital `A` as a const and dropped it; `type Aa = Id<Aa>`
 //! overflowed main's stack too, and `type A = B; type B = A;` (#79) hung it.
 //!
-//! TWO LAYERS, because the second is what makes the first's mistakes harmless.
+//! WHAT A CYCLE IS. An expansion of an alias reaches a cycle exactly when its
+//! route through alias BODIES — the alias graph below, whose edges are the
+//! expansions the checker performs — reaches a cycle. If it does, the same
+//! syntactic route is open again from every alias on it, so the expansion
+//! never ends. If it does not, every alias opened is either on an acyclic
+//! route through bodies (bounded) or a subterm of a written argument (finite),
+//! so the expansion ends — however deep: `Id<Id<…<i64>…>>` 4000 deep, or a
+//! chain of 4000 distinct aliases through `Id`, runs on main, and is not a
+//! cycle. A repeated alias NAME on the open path is no criterion for a generic
+//! alias (`Id` is reopened by every level of `Id<Id<i64>>`, with a smaller
+//! argument each time), and there is NO depth limit (review round 3).
+//!
+//! TWO LAYERS, one judgement.
+//!
+//!   * THE PRE-CHECK (`refuse_alias_cycle_uses`) refuses, before checking
+//!     starts, every use the checker is certain to expand whose alias reaches
+//!     a cycle in the graph, naming the alias used and the cycle: the
+//!     deterministic first report.
 //!
 //!   * THE GUARD (`ExpansionGuard`) sits in every expansion that resolves an
 //!     alias by recursion — the two arms of `ast_type_to_checker_type` that
-//!     open one, and code generation's `type_to_c` and tuple registration,
-//!     which resolve an alias the checker never expanded — so ANY
-//!     expansion that does not end is stopped where it is met, whatever path
-//!     reached it: an instantiated generic's signature, an imported one, a
-//!     type parameter a filtered const argument left unsubstituted. It trips
-//!     when more than `EXPANSION_DEPTH_LIMIT` expansions are open AND one alias
-//!     is open twice; with finitely many aliases an expansion that never ends
-//!     must repeat one, so it always trips, and a long chain of distinct
-//!     aliases or a written `Pair<Pair<…>>` never does. `check` (and code
-//!     generation's `compile`) reports a trip as PD0080, ahead of anything the
-//!     stopped expansion's placeholder caused.
-//!
-//!   * THE PRE-CHECK (`refuse_alias_cycle_uses`) refuses, before checking
-//!     starts, every use the checker is certain to expand, naming the alias
-//!     used and the cycle in the alias graph: the deterministic first report.
+//!     open one, and code generation's `type_to_c` and tuple registration — so
+//!     an expansion the pre-check does not see (an instantiated generic's
+//!     signature, imported or local; a type parameter a filtered const
+//!     argument left unsubstituted) is judged where it is met. The pre-check
+//!     ARMS it with the same graph: an alias whose route through bodies
+//!     reaches a cycle is refused the moment the checker opens it (memoized,
+//!     so each alias is searched once). Independently, an alias with no type
+//!     parameter opened again inside its own expansion is a cycle by itself —
+//!     it has no argument, so its name is its whole state — which is all code
+//!     generation needs (it resolves only those) and a backstop in the
+//!     checker. `check` (and code generation's `compile`) reports a trip as
+//!     PD0080, ahead of anything the stopped expansion's placeholder caused.
 //!
 //! WHAT IS A USE — only what the checker converts whether or not anything is
 //! instantiated, measured on main: a non-generic function's signature and
@@ -59,86 +73,137 @@ use std::collections::{HashMap, HashSet};
 /// The one PD0080 message: the alias whose expansion was asked for, and the
 /// cycle it reached.
 fn refusal(used: &str, cycle: &[String]) -> CompileError {
-    let shown = if cycle.is_empty() {
-        format!("more than {} aliases deep", EXPANSION_DEPTH_LIMIT)
-    } else {
-        format!("the alias cycle `{}`", cycle.join(" -> "))
-    };
     CompileError::Generic(format!(
-        "the type alias `{}` names no type: expanding it reaches {}, which never ends. \
-         An alias is another name for a type that exists without it; for a type that \
-         contains itself, declare an `enum` whose variant holds it",
-        used, shown
+        "the type alias `{}` names no type: expanding it reaches the alias cycle `{}`, \
+         which never ends. An alias is another name for a type that exists without it; \
+         for a type that contains itself, declare an `enum` whose variant holds it",
+        used,
+        cycle.join(" -> ")
     ))
     .with_code(DiagnosticCode::TypeAliasExpansionReachesNoCycle)
 }
 
-/// How many alias expansions may be open at once before a repeated one is
-/// taken for a cycle. Real nesting is a handful; the bound only has to be
-/// finite and well inside the stack.
-const EXPANSION_DEPTH_LIMIT: usize = 256;
+/// The alias an expansion opens: one with no type parameter by name, or a
+/// generic one with this many TYPE arguments given (a const one is filtered).
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Opening<'a> {
+    Plain(&'a str),
+    Generic(&'a str, usize),
+}
+
+impl Opening<'_> {
+    fn name(&self) -> &str {
+        match self {
+            Opening::Plain(n) | Opening::Generic(n, _) => n,
+        }
+    }
+
+    fn node(&self) -> Node {
+        match self {
+            Opening::Plain(n) => Node::Plain(n.to_string()),
+            Opening::Generic(n, given) => Node::Generic(n.to_string(), *given),
+        }
+    }
+}
+
+/// The alias graph the guard judges by, and what it has already shown.
+struct Graph {
+    aliases: Aliases,
+    live: HashSet<(String, usize)>,
+    /// Nodes whose route through bodies is known to reach no cycle.
+    acyclic: HashSet<Node>,
+}
 
 /// The checker's alias expansion, guarded (see the module comment).
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(crate) struct ExpansionGuard {
-    open: RefCell<Vec<String>>,
+    /// The aliases with no type parameter currently open, outermost first.
+    open_plain: RefCell<Vec<String>>,
+    graph: RefCell<Option<Graph>>,
     tripped: RefCell<Option<CompileError>>,
 }
 
+impl std::fmt::Debug for ExpansionGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExpansionGuard")
+            .field("open_plain", &self.open_plain)
+            .field("armed", &self.graph.borrow().is_some())
+            .finish()
+    }
+}
+
 impl ExpansionGuard {
-    /// `expand()` with the alias `name` open, or `None` once the guard has
-    /// tripped — on this call or an earlier one, so that a branching cycle
-    /// unwinds at once instead of being walked again from every branch.
-    pub(crate) fn expand<T>(&self, name: &str, expand: impl FnOnce() -> T) -> Option<T> {
-        if !self.enter(name) {
+    /// `expand()` with `opening` open, or `None` once the guard has tripped —
+    /// on this call or an earlier one, so that a branching cycle unwinds at
+    /// once instead of being walked again from every branch.
+    pub(crate) fn expand<T>(&self, opening: Opening<'_>, expand: impl FnOnce() -> T) -> Option<T> {
+        if !self.enter(opening) {
             return None;
         }
         let expanded = expand();
-        self.leave();
+        self.leave(opening);
         Some(expanded)
     }
 
-    /// Open the alias `name`, or `false` (nothing opened) once the guard has
-    /// tripped. Every `true` is closed by one `leave` — `expand`'s two halves,
-    /// for a caller whose expansion needs `&mut` access its closure cannot have.
-    pub(crate) fn enter(&self, name: &str) -> bool {
+    /// Open `opening`, or `false` (nothing opened) once the guard has tripped.
+    /// Every `true` is closed by one `leave` of the same opening — `expand`'s
+    /// two halves, for a caller whose expansion needs `&mut` access.
+    pub(crate) fn enter(&self, opening: Opening<'_>) -> bool {
         if self.tripped.borrow().is_some() {
             return false;
         }
-        let open = self.open.borrow();
-        if open.len() >= EXPANSION_DEPTH_LIMIT {
-            if let Some(cycle) = repeated(&open, name) {
-                *self.tripped.borrow_mut() = Some(refusal(&open[0], &cycle));
-                return false;
-            }
+        if let Some(cycle) = self.cycle_at(opening) {
+            *self.tripped.borrow_mut() = Some(refusal(opening.name(), &cycle));
+            return false;
         }
-        drop(open);
-        self.open.borrow_mut().push(name.to_string());
+        if let Opening::Plain(name) = opening {
+            self.open_plain.borrow_mut().push(name.to_string());
+        }
         true
     }
 
-    /// Close the alias the last successful `enter` opened.
-    pub(crate) fn leave(&self) {
-        self.open.borrow_mut().pop();
+    /// Close an opening the last successful `enter` opened.
+    pub(crate) fn leave(&self, opening: Opening<'_>) {
+        if let Opening::Plain(_) = opening {
+            self.open_plain.borrow_mut().pop();
+        }
+    }
+
+    /// The cycle `opening` reaches: in the armed graph, or — for an alias with
+    /// no type parameter — by being open already.
+    fn cycle_at(&self, opening: Opening<'_>) -> Option<Vec<String>> {
+        if let Opening::Plain(name) = opening {
+            let open = self.open_plain.borrow();
+            if let Some(i) = open.iter().position(|n| n == name) {
+                let mut cycle: Vec<String> = open[i..].to_vec();
+                cycle.push(name.to_string());
+                return Some(cycle);
+            }
+        }
+        let mut graph = self.graph.borrow_mut();
+        let graph = graph.as_mut()?;
+        let node = opening.node();
+        if !graph.aliases.knows(&node) || graph.acyclic.contains(&node) {
+            return None;
+        }
+        let Graph { aliases, live, acyclic } = graph;
+        aliases.cycle_from(&node, live, &mut Vec::new(), acyclic)
+    }
+
+    /// Judge every later opening by `graph` (the pre-check's).
+    fn arm(&self, aliases: Aliases, live: HashSet<(String, usize)>) {
+        *self.graph.borrow_mut() = Some(Graph {
+            aliases,
+            live,
+            acyclic: HashSet::new(),
+        });
     }
 
     /// The refusal a trip recorded, if any; the guard is clear afterwards.
     pub(crate) fn take(&self) -> Option<CompileError> {
-        self.open.borrow_mut().clear();
+        self.open_plain.borrow_mut().clear();
         self.tripped.borrow_mut().take()
     }
-}
-
-/// The innermost cycle among the open expansions plus `next`: from the last
-/// earlier opening of a repeated alias to its next opening.
-fn repeated(open: &[String], next: &str) -> Option<Vec<String>> {
-    let chain: Vec<&str> = open.iter().map(String::as_str).chain([next]).collect();
-    for end in (1..chain.len()).rev() {
-        if let Some(start) = chain[..end].iter().rposition(|n| *n == chain[end]) {
-            return Some(chain[start..=end].iter().map(|n| n.to_string()).collect());
-        }
-    }
-    None
 }
 
 /// An alias as the checker can reach it: by a bare name, or as `Name<…>`
@@ -189,6 +254,14 @@ impl Aliases {
             }
         }
         aliases
+    }
+
+    /// Is `node` an alias these tables hold (with the arity its edges assume)?
+    fn knows(&self, node: &Node) -> bool {
+        match node {
+            Node::Plain(n) => self.plain.contains_key(n),
+            Node::Generic(n, _) => self.generic.contains_key(n),
+        }
     }
 
     /// Walk `ty` as the checker expands it, with `bound` the parameters in
@@ -333,6 +406,7 @@ pub(super) fn refuse_alias_cycle_uses(
     modules: &HashMap<String, crate::resolver::ModuleInfo>,
     plain: &HashMap<String, Type>,
     generic: &HashMap<String, GenericTypeAlias>,
+    guard: &ExpansionGuard,
 ) -> Result<()> {
     let aliases = Aliases::of(program, plain, generic);
     if aliases.plain.is_empty() && aliases.generic.is_empty() {
@@ -357,5 +431,6 @@ pub(super) fn refuse_alias_cycle_uses(
             return Err(refusal(used.name(), &cycle));
         }
     }
+    guard.arm(aliases, live);
     Ok(())
 }
