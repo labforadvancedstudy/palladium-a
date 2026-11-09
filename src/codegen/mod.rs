@@ -166,6 +166,19 @@ pub struct CodeGenerator {
     /// `check_tuple_reference_lending`. An address, because the decision is
     /// about one node of one call and must not leak to any other.
     lent_shared_tuple_reference: Option<usize>,
+    /// The LOCAL bindings of the current function whose C value is a pointer
+    /// (`let r = &t;`, `let r: &(A, B) = ..`), to whether that pointer is
+    /// PROVEN to be a `&mut` of a writable place (issue #84, review round 3).
+    /// Scoped with `variables`; every binder that shadows a name removes it.
+    /// What it proves is read by `writable_origin`: a place reached through
+    /// a local reference may be lent to a writable parameter only when this
+    /// says `true`.
+    reference_locals: std::collections::HashMap<String, bool>,
+    /// Every name the current function's body assigns with `name = ..`
+    /// anywhere, at any depth (`collect_assigned_names`). A reference local of
+    /// such a name may have been re-pointed — in a branch, a later loop
+    /// iteration — so its origin is never proven.
+    reassigned_names: std::collections::HashSet<String>,
     /// When the function being generated returns UNIT in Palladium, the C
     /// return statement that must replace a value-bearing one — and `None`
     /// when it genuinely returns a value.
@@ -315,6 +328,26 @@ pub struct CodeGenerator {
     struct_literals: StructLiterals,
 }
 
+/// What `open_binding_scope` saves and `close_binding_scope` restores: the
+/// array bindings, the C types, and the reference locals of a scope.
+type BindingScope = (
+    std::collections::HashMap<String, ArrayBinding>,
+    std::collections::HashMap<String, String>,
+    std::collections::HashMap<String, bool>,
+);
+
+/// Where the storage behind a place comes from, for a writable parameter
+/// that is given its address (`CodeGenerator::writable_origin`, issue #84).
+enum Origin {
+    /// A binding whose writability is enforced (a `mut` value, a `&mut`
+    /// parameter), or a reference local proven to be `&mut` of one.
+    Writable,
+    /// The shared reference-to-tuple parameter it is rooted in.
+    Shared(String),
+    /// Not proven writable, and what was in the way: refused, never passed.
+    Unproven(String),
+}
+
 /// Where a payload sub-pattern applies: the C lvalue that holds it, and the C
 /// type of that lvalue.
 ///
@@ -343,6 +376,8 @@ impl CodeGenerator {
             mutable_params: std::collections::HashMap::new(),
             tuple_reference_params: std::collections::HashMap::new(),
             lent_shared_tuple_reference: None,
+            reference_locals: std::collections::HashMap::new(),
+            reassigned_names: std::collections::HashSet::new(),
             imported_modules: std::collections::HashMap::new(),
             generic_instantiations: Vec::new(),
             generic_struct_instantiations: Vec::new(),
@@ -1244,7 +1279,16 @@ impl CodeGenerator {
                         callee
                     ));
                 }
-                Ok(None)
+                match arg {
+                    Expr::Reference {
+                        mutable: true,
+                        expr: place,
+                        ..
+                    } if writable && self.receives_a_tuple(param, place) => {
+                        self.check_writable_origin(place, arg, index, callee)
+                    }
+                    _ => Ok(None),
+                }
             }
             // Review round 2. Every OTHER spelling of the argument is judged by
             // the place it names, because a writable parameter is given that
@@ -1270,9 +1314,310 @@ impl CodeGenerator {
                     root,
                     root
                 )),
+                // Review round 3: a place not rooted in a shared tuple PARAMETER
+                // is still not writable until its origin is proven — `set(*r)`
+                // with a local `let mut r = &t;` turned `(11, 29)` into
+                // `(97, 83)`, directly, through a generic and through a method.
+                None if self.receives_a_tuple(param, arg) => {
+                    self.check_writable_origin(arg, arg, index, callee)
+                }
                 None => Ok(None),
             },
             _ => Ok(None),
+        }
+    }
+
+    /// Does a writable parameter receive a TUPLE here: one it declares (`&mut
+    /// (..)`, `mut x: (..)`, through aliases), or a tuple place given to a
+    /// generic one (`&mut T` at a tuple)? The boundary issue #84 opened; a
+    /// writable parameter of any other type keeps main's behaviour.
+    fn receives_a_tuple(&self, param: Option<&Param>, place: &Expr) -> bool {
+        let declared = match param {
+            Some(Param {
+                ty: Type::Reference { inner, .. },
+                ..
+            }) => self.is_tuple(inner, 0),
+            Some(p) if p.mutable => self.is_tuple(&p.ty, 0),
+            _ => false,
+        };
+        declared
+            || self
+                .try_infer_expr_type(place)
+                .is_some_and(|ty| self.tuple_shapes.element_types(&ty).is_some())
+    }
+
+    /// Refuse, by name, a tuple place whose writable origin is not proven
+    /// (`writable_origin`), handed to a parameter that writes it.
+    fn check_writable_origin(
+        &self,
+        place: &Expr,
+        arg: &Expr,
+        index: usize,
+        callee: &str,
+    ) -> Result<Option<usize>> {
+        let why = match self.writable_origin(place) {
+            Origin::Writable => return Ok(None),
+            Origin::Shared(root) => format!(
+                "`{}`, a shared reference to a tuple, `&(..)`, or a place inside it",
+                root
+            ),
+            Origin::Unproven(what) => format!(
+                "{}, which is not proven to be writable: it is reached through a reference not \
+                 known to be `&mut`, or something that is not a place",
+                what
+            ),
+        };
+        Err(CompileError::CodegenError {
+            message: format!(
+                "cannot pass this {} as argument {} of `{}`: that parameter writes the tuple it \
+                 is given (`&mut`, or `mut`; the call passes the place's address), and its origin \
+                 is {}. Pass a `let mut` tuple, a `&mut (..)` parameter, or a reference bound \
+                 once with `let r = &mut ..` and never re-pointed",
+                Self::expr_kind_name(arg),
+                index + 1,
+                callee,
+                why
+            ),
+        })
+    }
+
+    /// Every name assigned as `name = ..` anywhere in `stmts`, at any depth —
+    /// nested blocks, loops, arms, and value blocks inside expressions (issue
+    /// #84, review round 3). Exhaustive over `Stmt` and `Expr` on purpose: a
+    /// new variant must be placed here, or a re-pointed reference could be
+    /// missed. Read-only twin of `crate::ast`'s type walker.
+    fn collect_assigned_names(stmts: &[Stmt], out: &mut std::collections::HashSet<String>) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Expr(e) => Self::collect_assigned_names_in(e, out),
+                Stmt::Return(e) => {
+                    if let Some(e) = e {
+                        Self::collect_assigned_names_in(e, out);
+                    }
+                }
+                Stmt::Let { value, .. } => Self::collect_assigned_names_in(value, out),
+                Stmt::Assign { target, value, .. } => {
+                    match target {
+                        AssignTarget::Ident(name) => {
+                            out.insert(name.clone());
+                        }
+                        AssignTarget::Index { array, index } => {
+                            Self::collect_assigned_names_in(array, out);
+                            Self::collect_assigned_names_in(index, out);
+                        }
+                        AssignTarget::FieldAccess { object, .. } => {
+                            Self::collect_assigned_names_in(object, out)
+                        }
+                        AssignTarget::Deref { expr } => Self::collect_assigned_names_in(expr, out),
+                    }
+                    Self::collect_assigned_names_in(value, out);
+                }
+                Stmt::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    Self::collect_assigned_names_in(condition, out);
+                    Self::collect_assigned_names(then_branch, out);
+                    if let Some(eb) = else_branch {
+                        Self::collect_assigned_names(eb, out);
+                    }
+                }
+                Stmt::While {
+                    condition, body, ..
+                } => {
+                    Self::collect_assigned_names_in(condition, out);
+                    Self::collect_assigned_names(body, out);
+                }
+                Stmt::Loop { body, .. } | Stmt::Unsafe { body, .. } => {
+                    Self::collect_assigned_names(body, out)
+                }
+                Stmt::For { iter, body, .. } => {
+                    Self::collect_assigned_names_in(iter, out);
+                    Self::collect_assigned_names(body, out);
+                }
+                Stmt::Match { expr, arms, .. } => {
+                    Self::collect_assigned_names_in(expr, out);
+                    for arm in arms {
+                        if let Some(g) = &arm.guard {
+                            Self::collect_assigned_names_in(g, out);
+                        }
+                        Self::collect_assigned_names(&arm.body, out);
+                    }
+                }
+                Stmt::Break { value, .. } => {
+                    if let Some(value) = value {
+                        Self::collect_assigned_names_in(value, out);
+                    }
+                }
+                Stmt::Continue { .. } => {}
+            }
+        }
+    }
+
+    fn collect_assigned_names_in(expr: &Expr, out: &mut std::collections::HashSet<String>) {
+        let each = |es: &[Expr], out: &mut std::collections::HashSet<String>| {
+            es.iter()
+                .for_each(|e| Self::collect_assigned_names_in(e, out))
+        };
+        match expr {
+            Expr::ArrayLiteral { elements, .. } | Expr::Tuple { elements, .. } => {
+                each(elements, out)
+            }
+            Expr::TupleIndex { expr, .. }
+            | Expr::Unary { operand: expr, .. }
+            | Expr::Reference { expr, .. }
+            | Expr::Deref { expr, .. }
+            | Expr::Question { expr, .. }
+            | Expr::Await { expr, .. }
+            | Expr::Cast { expr, .. }
+            | Expr::FieldAccess { object: expr, .. } => Self::collect_assigned_names_in(expr, out),
+            Expr::ArrayRepeat { value, count, .. } => {
+                Self::collect_assigned_names_in(value, out);
+                Self::collect_assigned_names_in(count, out);
+            }
+            Expr::Index { array, index, .. } => {
+                Self::collect_assigned_names_in(array, out);
+                Self::collect_assigned_names_in(index, out);
+            }
+            Expr::Call { func, args, .. } => {
+                Self::collect_assigned_names_in(func, out);
+                each(args, out);
+            }
+            Expr::Binary { left, right, .. }
+            | Expr::Range {
+                start: left,
+                end: right,
+                ..
+            } => {
+                Self::collect_assigned_names_in(left, out);
+                Self::collect_assigned_names_in(right, out);
+            }
+            Expr::StructLiteral { fields, .. } => fields
+                .iter()
+                .for_each(|(_, value)| Self::collect_assigned_names_in(value, out)),
+            Expr::EnumConstructor { data, .. } => match data {
+                None => {}
+                Some(EnumConstructorData::Tuple(es)) => each(es, out),
+                Some(EnumConstructorData::Struct(fields)) => fields
+                    .iter()
+                    .for_each(|(_, value)| Self::collect_assigned_names_in(value, out)),
+            },
+            Expr::If {
+                condition,
+                then_branch,
+                then_value,
+                else_branch,
+                else_value,
+                ..
+            } => {
+                Self::collect_assigned_names_in(condition, out);
+                Self::collect_assigned_names(then_branch, out);
+                if let Some(value) = then_value {
+                    Self::collect_assigned_names_in(value, out);
+                }
+                if let Some(eb) = else_branch {
+                    Self::collect_assigned_names(eb, out);
+                }
+                if let Some(value) = else_value {
+                    Self::collect_assigned_names_in(value, out);
+                }
+            }
+            Expr::Block { stmts, value, .. } => {
+                Self::collect_assigned_names(stmts, out);
+                if let Some(value) = value {
+                    Self::collect_assigned_names_in(value, out);
+                }
+            }
+            Expr::Loop { body, .. } => Self::collect_assigned_names(body, out),
+            Expr::Match { expr, arms, .. } => {
+                Self::collect_assigned_names_in(expr, out);
+                for arm in arms {
+                    if let Some(g) = &arm.guard {
+                        Self::collect_assigned_names_in(g, out);
+                    }
+                    Self::collect_assigned_names(&arm.body, out);
+                    if let Some(value) = &arm.value {
+                        Self::collect_assigned_names_in(value, out);
+                    }
+                }
+            }
+            // Expanded before code generation.
+            Expr::MacroInvocation { .. } => {}
+            Expr::Ident(_)
+            | Expr::String(_)
+            | Expr::Integer(_)
+            | Expr::Float(_)
+            | Expr::Char(_)
+            | Expr::Bool(_) => {}
+        }
+    }
+
+    /// Is `value` a reference PROVEN to be a `&mut` of a writable place (issue
+    /// #84, review round 3)? `&mut x` of a place `writable_origin` proves, or a
+    /// copy of a reference local already proven. Every other way to make a
+    /// pointer — `&x`, a call, a branch, a cast — proves nothing.
+    fn is_proven_writable_reference(&self, value: &Expr) -> bool {
+        match value {
+            Expr::Reference {
+                mutable: true,
+                expr,
+                ..
+            } => matches!(self.writable_origin(expr), Origin::Writable),
+            Expr::Ident(name) => self.reference_locals.get(name) == Some(&true),
+            _ => false,
+        }
+    }
+
+    /// Where the storage of `place` comes from, as far as a writable parameter
+    /// given its ADDRESS is concerned (issue #84, review round 3).
+    ///
+    /// The type checker does not tell `&` from `&mut`, and C drops a pointer's
+    /// `const` with a warning only, so this is the one place a shared origin
+    /// can be told from a writable one. UNKNOWN NEVER PASSES: a place is
+    /// `Writable` only through a binding whose own writability the borrow
+    /// checker enforces (a value local or a by-value parameter: `let mut`,
+    /// `mut`, PD0012), a `&mut` tuple-reference parameter, or a reference local
+    /// `reference_locals` proves to be `&mut`.
+    fn writable_origin(&self, place: &Expr) -> Origin {
+        match place {
+            Expr::TupleIndex { expr, .. } | Expr::FieldAccess { object: expr, .. } => {
+                self.writable_origin(expr)
+            }
+            Expr::Index { array, .. } => self.writable_origin(array),
+            Expr::Ident(name) => match self.tuple_reference_params.get(name) {
+                Some(true) => Origin::Writable,
+                Some(false) => Origin::Shared(name.clone()),
+                None => match self.reference_locals.get(name) {
+                    Some(true) | None => Origin::Writable,
+                    Some(false) => Origin::Unproven(format!("the local reference `{}`", name)),
+                },
+            },
+            Expr::Deref { expr, .. } => match expr.as_ref() {
+                Expr::Ident(name) => match self.tuple_reference_params.get(name) {
+                    Some(true) => Origin::Writable,
+                    Some(false) => Origin::Shared(name.clone()),
+                    None => match self.reference_locals.get(name) {
+                        Some(true) => Origin::Writable,
+                        Some(false) => Origin::Unproven(format!("the local reference `{}`", name)),
+                        None => Origin::Unproven(format!(
+                            "`*{}`, a dereference of a binding that is not a reference",
+                            name
+                        )),
+                    },
+                },
+                Expr::Reference {
+                    mutable: true,
+                    expr,
+                    ..
+                } => self.writable_origin(expr),
+                other => Origin::Unproven(format!(
+                    "a dereference of this {}",
+                    Self::expr_kind_name(other)
+                )),
+            },
+            other => Origin::Unproven(format!("this {}", Self::expr_kind_name(other))),
         }
     }
 
@@ -3832,6 +4177,9 @@ impl CodeGenerator {
         // Clear mutable_params from previous function and populate with current function's params
         self.mutable_params.clear();
         self.tuple_reference_params.clear();
+        self.reference_locals.clear();
+        self.reassigned_names.clear();
+        Self::collect_assigned_names(&func.body, &mut self.reassigned_names);
         self.variables.clear(); // Clear variables from previous function
         // ...and the top-level items come straight back: they are in scope in
         // every body, which is the one thing this map's per-function lifetime
@@ -4007,6 +4355,7 @@ impl CodeGenerator {
     fn bind_non_array(&mut self, name: &str, c_type: String) {
         self.variables.insert(name.to_string(), c_type);
         self.array_bindings.remove(name);
+        self.reference_locals.remove(name);
     }
 
     /// Snapshot the bindings a scope may shadow.
@@ -4016,25 +4365,19 @@ impl CodeGenerator {
     /// the block is generated, so snapshotting inside `generate_block` captured
     /// the already-overwritten map and the binder outlived its own scope: after
     /// `for v in xs { }`, an outer `v` still had the loop variable's type.
-    fn open_binding_scope(
-        &self,
-    ) -> (
-        std::collections::HashMap<String, ArrayBinding>,
-        std::collections::HashMap<String, String>,
-    ) {
-        (self.array_bindings.clone(), self.variables.clone())
+    fn open_binding_scope(&self) -> BindingScope {
+        (
+            self.array_bindings.clone(),
+            self.variables.clone(),
+            self.reference_locals.clone(),
+        )
     }
 
-    fn close_binding_scope(
-        &mut self,
-        saved: (
-            std::collections::HashMap<String, ArrayBinding>,
-            std::collections::HashMap<String, String>,
-        ),
-    ) {
-        let (arrays, variables) = saved;
+    fn close_binding_scope(&mut self, saved: BindingScope) {
+        let (arrays, variables, reference_locals) = saved;
         self.array_bindings = arrays;
         self.variables = variables;
+        self.reference_locals = reference_locals;
     }
 
     /// Generate code for a statement.
@@ -4190,6 +4533,16 @@ impl CodeGenerator {
                 // dimensions in the recorded type.
                 self.variables
                     .insert(name.clone(), format!("{}{}", c_type, array_dims));
+                // Issue #84, review round 3: a binding whose C value is a
+                // pointer records whether that pointer is a PROVEN `&mut` of a
+                // writable place; any other binding of the name shadows it.
+                if array_dims.is_empty() && c_type.ends_with('*') {
+                    let proven = !self.reassigned_names.contains(name)
+                        && self.is_proven_writable_reference(value);
+                    self.reference_locals.insert(name.clone(), proven);
+                } else {
+                    self.reference_locals.remove(name.as_str());
+                }
 
                 // A local array is a real object: its length comes from the
                 // annotation when there is one, otherwise from the initializer.

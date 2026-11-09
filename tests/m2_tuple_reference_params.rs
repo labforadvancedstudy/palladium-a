@@ -408,6 +408,73 @@ fn a_place_inside_a_shared_tuple_reference_never_reaches_a_writable_parameter() 
     assert_eq!(got, want);
 }
 
+/// A tuple place reached through a LOCAL reference reaches a writable
+/// parameter only when that reference is PROVEN to be a `&mut` (review round
+/// 3). Unknown never passes: before this, `set(*r)` with `let mut r = &t;`
+/// printed `97 83` for an immutable `t` — annotated or not, through a generic
+/// and through a method — and the round-2 rule, which followed only tuple
+/// reference PARAMETERS, called the local "origin unknown" and let it through.
+/// A reference re-pointed anywhere in the function is never proven.
+#[test]
+fn a_place_reached_through_a_local_reference_needs_a_proven_writable_origin() {
+    let set = "fn set(q: &mut (i64, i64)) { *q = (97, 83); }\n";
+    let out = "print_int(t.0); print_int(t.1); }\n";
+    let rows: [(&str, String); 10] = [
+        ("`let mut r: &(..) = &t; set(*r)`", format!("{set}fn main() {{ let t = (11, 29); let mut r: &(i64, i64) = &t; set(*r); {out}")),
+        ("`let mut r = &t; set(*r)`", format!("{set}fn main() {{ let t = (11, 29); let mut r = &t; set(*r); {out}")),
+        ("into a generic `&mut (T, T)`", format!("fn set<T>(q: &mut (T, T), x: T) {{ *q = (x, x); }}\nfn main() {{ let t = (11, 29); let mut r: &(i64, i64) = &t; set(*r, 97); {out}")),
+        ("into a method's `&mut (..)`", format!("struct S {{ k: i64 }}\nimpl S {{ fn set(&self, q: &mut (i64, i64)) {{ *q = (97, 83); }} }}\nfn main() {{ let t = (11, 29); let mut r: &(i64, i64) = &t; let s = S {{ k: 1 }}; s.set(*r); {out}")),
+        ("`&mut *r` of a shared local", format!("{set}fn main() {{ let t = (11, 29); let mut r = &t; set(&mut *r); {out}")),
+        ("re-pointed to a shared borrow", format!("{set}fn main() {{ let mut t = (11, 29); let u = (1, 2); let mut r = &mut t; r = &u; set(*r); {out}")),
+        ("re-pointed in a branch", format!("{set}fn main() {{ let mut t = (11, 29); let u = (1, 2); let mut r = &mut t; if true {{ r = &u; }} set(*r); {out}")),
+        ("re-pointed later in a loop", format!("{set}fn main() {{ let mut t = (11, 29); let u = (1, 2); let mut r = &mut t; let mut i = 0; while i < 2 {{ set(*r); r = &u; i = i + 1; }} {out}")),
+        ("a shared shadow in an inner block", format!("{set}fn main() {{ let mut t = (11, 29); let u = (1, 2); let mut r = &mut t; if true {{ let mut r = &u; set(*r); }} {out}")),
+        ("`m(*r)` into a `mut` by-value parameter (ran on main, writing the immutable `t`)", format!("fn m(mut u: (i64, i64)) {{ u = (97, 83); }}\nfn main() {{ let t = (11, 29); let mut r = &t; m(*r); {out}")),
+    ];
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    for (shape, program) in &rows {
+        let verdict = outcome(program, "ref_tuple_local");
+        let refused_here = verdict.starts_with("REFUSED: ")
+            && verdict.contains("that parameter writes the tuple it is given");
+        let seen = if refused_here {
+            "REFUSED by name"
+        } else {
+            &verdict
+        };
+        got.push(format!("{}: {}", shape, seen));
+        want.push(format!("{}: REFUSED by name", shape));
+    }
+    assert_eq!(got, want);
+}
+
+/// What the local-reference rule leaves running: a reference bound once with
+/// `&mut` (even in a `mut` binding), a proven inner shadow beside a shared
+/// outer one, and reads through a shared local.
+#[test]
+fn a_proven_local_mut_reference_still_writes_and_a_shared_one_still_reads() {
+    check(
+        &[
+            (
+                "`let mut r = &mut t; set(*r)`",
+                "fn set(q: &mut (i64, i64)) { *q = (97, 83); }\nfn main() { let mut t = (11, 29); let mut r = &mut t; set(*r); print_int(t.0); print_int(t.1); }\n",
+                "RUN: 97\n83\n",
+            ),
+            (
+                "a proven inner shadow writes, the shared outer one is unchanged",
+                "fn set(q: &mut (i64, i64)) { *q = (97, 83); }\nfn main() { let t = (11, 29); let mut u = (1, 2); let mut r = &t; if true { let mut r = &mut u; set(*r); } let q = *r; print_int(q.0); print_int(u.0); }\n",
+                "RUN: 11\n97\n",
+            ),
+            (
+                "`get(*r)` through a shared local",
+                "fn get(q: &(i64, i64)) -> i64 { return q.0 * 100 + q.1; }\nfn main() { let t = (11, 29); let r = &t; print_int(get(*r)); }\n",
+                "RUN: 1129\n",
+            ),
+        ],
+        "ref_tuple_local_ok",
+    );
+}
+
 /// `*p = v` through `&mut` stores only a value of the referent's C struct
 /// (review round 1). The type checker does not compare the two, and a tuple
 /// literal's struct is named from its elements' own C types, so each of these
