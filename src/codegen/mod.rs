@@ -149,6 +149,16 @@ pub struct CodeGenerator {
     array_bindings: std::collections::HashMap<String, ArrayBinding>,
     /// Map of parameter names to their mutability (for current function)
     mutable_params: std::collections::HashMap<String, bool>,
+    /// The parameters of the current function declared `&(A, ..)` or
+    /// `&mut (A, ..)`, to whether the reference is `&mut` (issue #84).
+    ///
+    /// Such a parameter arrives as a pointer to its tuple's struct and reads
+    /// as `(*p)`, like every pointer parameter (`mutable_params`). `*p` is
+    /// then the same object, not a second indirection, and a write through a
+    /// shared one is refused by name: both need to know it is one of these,
+    /// which neither the C type of the binding nor `mutable_params` says.
+    /// Filled and cleared with `mutable_params`.
+    tuple_reference_params: std::collections::HashMap<String, bool>,
     /// When the function being generated returns UNIT in Palladium, the C
     /// return statement that must replace a value-bearing one — and `None`
     /// when it genuinely returns a value.
@@ -324,6 +334,7 @@ impl CodeGenerator {
             globals: std::collections::HashMap::new(),
             array_bindings: std::collections::HashMap::new(),
             mutable_params: std::collections::HashMap::new(),
+            tuple_reference_params: std::collections::HashMap::new(),
             imported_modules: std::collections::HashMap::new(),
             generic_instantiations: Vec::new(),
             generic_struct_instantiations: Vec::new(),
@@ -1059,6 +1070,54 @@ impl CodeGenerator {
             ArraySize::ConstParam(name) => ArrayLen::Unproven(name.clone()),
             ArraySize::Expr(_) => ArrayLen::Unproven("<size expression>".to_string()),
         }
+    }
+
+    /// `Some(mutable)` when `expr` names a reference-to-tuple parameter of the
+    /// function being generated, one that still reads as its pointee `(*p)`
+    /// (issue #84; `tuple_reference_params`).
+    fn tuple_reference_param(&self, expr: &Expr) -> Option<bool> {
+        let Expr::Ident(name) = expr else {
+            return None;
+        };
+        if !self.mutable_params.get(name).copied().unwrap_or(false) {
+            return None;
+        }
+        self.tuple_reference_params.get(name).copied()
+    }
+
+    /// Refuse a write through a SHARED reference-to-tuple parameter (issue
+    /// #84). A shared reference does not permit mutation (`language-spec.md`
+    /// A9.2, the rule `check_array_write` states for `&[T; N]`), and the
+    /// parameter's C declarator is `const`, so without this the write reached
+    /// gcc as an assignment to a read-only lvalue.
+    ///
+    /// Both spellings that write the pointee are here: `*p = v`, and `p = v`
+    /// under `mut p: &(A, B)` (the name reads as `(*p)` on either side of an
+    /// `=`). Every other place inside the tuple is refused before code
+    /// generation: `p.0 = v` is not a place in this language (grammar.ebnf
+    /// `place`; the parser), and `p.0.f = v` writes into an element, which the
+    /// borrow checker refuses as "Cannot assign to temporary value" — through
+    /// `&mut` as well, measured.
+    fn check_tuple_reference_write(&self, target: &AssignTarget) -> Result<()> {
+        let name = match target {
+            AssignTarget::Ident(name) => name.as_str(),
+            AssignTarget::Deref { expr } => match expr.as_ref() {
+                Expr::Ident(name) => name.as_str(),
+                _ => return Ok(()),
+            },
+            _ => return Ok(()),
+        };
+        if self.tuple_reference_param(&Expr::Ident(name.to_string())) != Some(false) {
+            return Ok(());
+        }
+        Err(CompileError::CodegenError {
+            message: format!(
+                "cannot write through `{}`: it is a shared reference to a tuple, `&(..)`, and \
+                 a shared reference does not permit mutation. Declare it `&mut (..)` if this \
+                 function is meant to modify the caller's tuple",
+                name
+            ),
+        })
     }
 
     /// The variable an assignment ultimately writes into: `xs[i].f` -> `xs`.
@@ -3243,6 +3302,110 @@ impl CodeGenerator {
         Ok(())
     }
 
+    /// The C declarator for a reference-to-tuple parameter (issue #84):
+    /// `const __pd_tuple2_long_long_long_long* p` for `&(i64, i64)`, the same
+    /// without `const` for `&mut`.
+    ///
+    /// Two shapes are refused by name, each because the C it would need is not
+    /// there, and neither ever compiled — main refused every reference to a
+    /// tuple in this arm:
+    ///
+    /// * a tuple holding an ARRAY, at any depth of tuple. Its struct would
+    ///   declare `long long[3] f0;`, which is not C; gcc refuses the same tuple
+    ///   as a local (`let t = ([1, 2, 3], 4);`, measured on d5166e8), so this is
+    ///   that refusal said by name rather than by gcc.
+    /// * a function that takes one and returns a reference to a tuple. The
+    ///   parameter reads as its pointee, so `return p;` would be emitted as the
+    ///   struct where the result is a pointer; and the result is a plain `T*`,
+    ///   so a pointer derived from a shared parameter would reach the caller
+    ///   with its `const` silently dropped (a non-fatal warning here,
+    ///   `src/linker.rs`). Returning the tuple by value has neither problem.
+    ///   A reference-to-tuple result WITHOUT such a parameter is untouched: it
+    ///   compiled on main (a reference alias kept by name, returned) and still
+    ///   does.
+    fn tuple_reference_param_declarator(
+        &self,
+        func: &Function,
+        fn_name: &str,
+        referent: &Type,
+        mutable: bool,
+        param_name: &str,
+    ) -> Result<String> {
+        if self.tuple_holds_an_array(referent) {
+            return Err(CompileError::CodegenError {
+                message: format!(
+                    "cannot declare the parameter `{}` of `{}`: it is a reference to a tuple \
+                     that holds an array, and a tuple's C struct cannot declare an array \
+                     element (the same tuple is refused as a local). Wrap the array in a \
+                     struct (`struct Ks {{ ks: [i64; 3] }}`) and put that in the tuple",
+                    param_name, fn_name
+                ),
+            });
+        }
+        if let Some(result) = &func.return_type {
+            if self.is_tuple_reference(result, 0) {
+                return Err(CompileError::CodegenError {
+                    message: format!(
+                        "`{}` takes the tuple reference `{}` and returns a reference to a \
+                         tuple, which code generation does not support: the result would be \
+                         built from the parameter's pointee, and a pointer taken from a \
+                         shared parameter would reach the caller writable. Return the tuple \
+                         by value instead",
+                        fn_name, param_name
+                    ),
+                });
+            }
+        }
+        Ok(format!(
+            "{}{}* {}",
+            if mutable { "" } else { "const " },
+            self.type_to_c(referent),
+            param_name
+        ))
+    }
+
+    /// Is `ty` a reference to a tuple, written out or through aliases — a
+    /// reference alias kept by NAME (`type A = &(i64, i64)`, `reference_aliases`)
+    /// included, since `-> A` is the same pointer result as `-> &(i64, i64)`?
+    /// A cyclic alias stops at the depth bound, as in `hides_a_tuple`.
+    fn is_tuple_reference(&self, ty: &Type, depth: usize) -> bool {
+        match ty {
+            Type::Reference { inner, .. } => self.is_tuple(inner, depth),
+            Type::Custom(name) if depth < 64 => self
+                .type_aliases
+                .get(name)
+                .is_some_and(|body| self.is_tuple_reference(body, depth + 1)),
+            _ => false,
+        }
+    }
+
+    /// Is `ty` a tuple, written out or through aliases?
+    fn is_tuple(&self, ty: &Type, depth: usize) -> bool {
+        match ty {
+            Type::Tuple(_) => true,
+            Type::Custom(name) if depth < 64 => self
+                .type_aliases
+                .get(name)
+                .is_some_and(|body| self.is_tuple(body, depth + 1)),
+            _ => false,
+        }
+    }
+
+    /// Does the tuple `ty` hold an array, directly or in a tuple it holds?
+    ///
+    /// The element's C TYPE is asked, not its written type, so a reference to
+    /// an array (`long long[3]*`) counts too: either one is a declarator a
+    /// struct field cannot be written with. A struct holding an array is not
+    /// an array element — the struct declares its own fields.
+    fn tuple_holds_an_array(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Tuple(types) => types
+                .iter()
+                .any(|t| self.type_to_c(t).contains('[') || self.tuple_holds_an_array(t)),
+            _ => false,
+        }
+    }
+
     /// The C declarator for an array parameter: `long long xs[5]`.
     ///
     /// C decays every array parameter to a pointer, so `[T; N]`, `&[T; N]` and
@@ -3405,6 +3568,23 @@ impl CodeGenerator {
                         )?);
                         continue;
                     }
+                    // Issue #84. A tuple is the struct emitted for its SHAPE
+                    // (N4-12), so a reference to one is a pointer to that
+                    // struct, const-qualified for `&` exactly as the scalar and
+                    // struct referents below are. This arm refused every tuple
+                    // ("Unsupported type in reference parameter"), which W2a
+                    // made reachable from `&X` under `type X = (A, B)`: the
+                    // alias now arrives expanded.
+                    if let Type::Tuple(_) = inner.as_ref() {
+                        sig.push_str(&self.tuple_reference_param_declarator(
+                            func,
+                            name,
+                            inner,
+                            *mutable,
+                            &param.name,
+                        )?);
+                        continue;
+                    }
                     // Handle reference parameters
                     match inner.as_ref() {
                         Type::I32 => {
@@ -3495,6 +3675,7 @@ impl CodeGenerator {
 
         // Clear mutable_params from previous function and populate with current function's params
         self.mutable_params.clear();
+        self.tuple_reference_params.clear();
         self.variables.clear(); // Clear variables from previous function
         // ...and the top-level items come straight back: they are in scope in
         // every body, which is the one thing this map's per-function lifetime
@@ -3522,6 +3703,12 @@ impl CodeGenerator {
             // Track if parameter is a pointer (either mutable or reference)
             let is_pointer = param.mutable || matches!(&param.ty, Type::Reference { .. });
             self.mutable_params.insert(param.name.clone(), is_pointer);
+            if let Type::Reference { inner, mutable, .. } = &param.ty {
+                if matches!(inner.as_ref(), Type::Tuple(_)) {
+                    self.tuple_reference_params
+                        .insert(param.name.clone(), *mutable);
+                }
+            }
 
             // Record the length and the declared form of array parameters. C
             // keeps neither: every one of them arrives as a bare pointer.
@@ -3583,6 +3770,11 @@ impl CodeGenerator {
                         Type::I32 => "int".to_string(),
                         Type::I64 => "long long".to_string(),
                         Type::Array(_, _) => self.type_to_c(inner),
+                        // Issue #84. The REFERENT's struct, as for a tuple
+                        // parameter by value above: the name reads as `(*p)`,
+                        // and `p.0` is typed by looking this up in the shape
+                        // registry. The catch-all called it a `long long`.
+                        Type::Tuple(_) => self.type_to_c(inner),
                         _ => "long long".to_string(),
                     }
                 }
@@ -3605,6 +3797,7 @@ impl CodeGenerator {
 
         // Clear parameter tracking after function
         self.mutable_params.clear();
+        self.tuple_reference_params.clear();
 
         Ok(())
     }
@@ -3873,6 +4066,7 @@ impl CodeGenerator {
                 if let Some(root) = Self::assign_target_root(target) {
                     self.check_array_write(root)?;
                 }
+                self.check_tuple_reference_write(target)?;
                 self.output.push_str("    ");
                 match target {
                     AssignTarget::Ident(name) => {
@@ -3925,6 +4119,15 @@ impl CodeGenerator {
                             self.generate_expression(object)?;
                             self.output.push_str(&format!(".{} = ", field));
                         }
+                    }
+                    // Issue #84. `*p = v` through a reference-to-tuple
+                    // parameter writes the pointee the name already reads as,
+                    // `(*p) = v`; the general form below dereferenced it again
+                    // (`*((*p))`), which gcc refuses. A shared one was refused
+                    // above, before anything was emitted.
+                    AssignTarget::Deref { expr } if self.tuple_reference_param(expr).is_some() => {
+                        self.generate_expression(expr)?;
+                        self.output.push_str(" = ");
                     }
                     AssignTarget::Deref { expr } => {
                         // Generate dereference assignment: *expr = value
@@ -6554,6 +6757,14 @@ impl CodeGenerator {
                     self.output.push_str("))");
                 }
             }
+            // Issue #84. `*p` of a reference-to-tuple parameter IS the tuple the
+            // name already reads as (`(*p)`), not a second indirection — which
+            // `try_infer_expr_type_in` already says (a non-pointer operand of
+            // `*` is the operand's type). The general form below emitted
+            // `(*((*p)))` and gcc refused it.
+            Expr::Deref { expr, .. } if self.tuple_reference_param(expr).is_some() => {
+                self.generate_expression(expr)?;
+            }
             Expr::Deref { expr, .. } => {
                 // Generate dereference expression
                 self.output.push_str("(*(");
@@ -7401,8 +7612,9 @@ impl CodeGenerator {
     /// `return (*r0);` (gcc refused it), a field met "Reference types in
     /// structs not yet supported" and `&(i64, i64)` "Unsupported type in
     /// reference parameter". The alias-free spellings of those programs are
-    /// refused or gcc on main and still are: only the name is read as main
-    /// read it.
+    /// refused or gcc on main and still are (the `&(i64, i64)` one, returned,
+    /// by `tuple_reference_param_declarator` since issue #84 made the parameter
+    /// itself compile): only the name is read as main read it.
     fn reference_aliases<'a>(
         declared: impl Iterator<Item = &'a crate::ast::TypeAlias>,
         aliases: &std::collections::HashMap<String, Type>,

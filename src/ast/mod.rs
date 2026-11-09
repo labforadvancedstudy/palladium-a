@@ -2209,8 +2209,10 @@ pub fn expand_aliases_in_block(
 // Code generation decides how a value is passed from the type WRITTEN where
 // it is declared: a parameter written `&T` is a pointer it dereferences at
 // every use, a field written `&T` is refused ("Reference types in structs not
-// yet supported"), a parameter written `&(i64, i64)` is refused ("Unsupported
-// type in reference parameter"). Before this pass existed code generation saw
+// yet supported"), a parameter written `&(i64, i64)` was refused ("Unsupported
+// type in reference parameter") until issue #84 — it is a pointer to the
+// tuple's struct now, but a function taking one may still not return a
+// reference to a tuple, refused by name. Before this pass existed code generation saw
 // `type A = &i64` as the NAME `A` there and passed the pointer as a value
 // (`type_to_c` reads the name as `long long*`), so `fn w(r0: A) -> A { return
 // r0; }` was `return r0;` and the program main ran printed its value. Expanded

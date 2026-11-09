@@ -96,6 +96,7 @@ tests/04_range_endpoints.pd	run	-	expected	-	-
 tests/04_ranges.pd	run	-	expected	-	-
 tests/05_borrowing_references.pd	run	-	expected	-	-
 tests/05_ownership_basic.pd	run	-	expected	-	-
+tests/05_tuple_reference_params.pd	run	-	expected	-	-
 tests/06_at_patterns.pd	run	-	expected	-	-
 tests/06_char_patterns.pd	run	-	expected	-	-
 tests/06_field_shorthand.pd	run	-	expected	-	-

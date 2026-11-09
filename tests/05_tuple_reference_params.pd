@@ -1,0 +1,168 @@
+// Test 05: A REFERENCE TO A TUPLE IS A PARAMETER (issue #84).
+//
+// `fn h(p: &X)` under `type X = (i64, i64)` was refused by code generation as
+// "Unsupported type in reference parameter" on d5166e8, and so was every
+// `&(A, B)` and `&mut (A, B)` before it: the reference-parameter arm spelled a
+// pointer for scalars, `String` and named types only. A tuple is a C struct
+// (N4-12), so a reference to one is a pointer to it — `const` for `&`.
+//
+// Every value below is printed, and each one's digits name the elements it was
+// built from, so a wrong element, a swapped pair or a lost write prints a
+// different number. A write through `&mut` is `*p = (..)`: the grammar has no
+// tuple-element place (`p.0 = v` is refused by the parser for every tuple).
+
+type X = (i64, i64);
+
+struct P {
+    a: i64,
+    b: i64,
+}
+
+enum E {
+    A(i64),
+    B,
+}
+
+// The issue's own declaration, never called.
+fn untouched(p: &X) -> i64 {
+    return 0;
+}
+
+fn tens(p: &(i64, i64)) -> i64 {
+    return p.0 * 10 + p.1;
+}
+
+// `&X` is handed on as `&X`. Its elements are read where the type checker
+// resolves the alias — a value of `X` given to `&(i64, i64)`, in `main` —
+// because reading them through `&X` itself is that checker's open row
+// (tests/xfail/alias_tuple_behind_reference.pd, owner M3), not code generation's.
+fn alias_inner(p: &X) -> i64 {
+    return 56;
+}
+
+fn alias_outer(p: &X) -> i64 {
+    return alias_inner(p) + 1;
+}
+
+fn diff(p: &mut (i64, i64)) -> i64 {
+    return p.0 - p.1;
+}
+
+fn nested(p: &((i64, i64), i64)) -> i64 {
+    return (p.0).0 * 100 + (p.0).1 * 10 + p.1;
+}
+
+fn with_struct(p: &(P, i64)) -> i64 {
+    return p.0.a * 100 + p.0.b * 10 + p.1;
+}
+
+fn with_enum(p: &(E, i64)) -> i64 {
+    match p.0 {
+        E::A(n) => {
+            return n * 10 + p.1;
+        }
+        E::B => {
+            return p.1;
+        }
+    }
+}
+
+fn with_string(p: &(String, i64)) -> i64 {
+    print(p.0);
+    return p.1 + string_len(p.0);
+}
+
+fn copied(p: &(i64, i64)) -> (i64, i64) {
+    return p;
+}
+
+fn bound(p: &(i64, i64)) -> i64 {
+    let a = p.0;
+    let q = *p;
+    match p {
+        (x, y) => {
+            return a * 1000 + q.1 * 100 + x * 10 + y;
+        }
+    }
+}
+
+fn swap(p: &mut (i64, i64)) {
+    *p = (p.1, p.0);
+}
+
+fn grow(p: &mut (i64, i64)) {
+    *p = (p.0 + 1, p.1 + 100);
+}
+
+// Forwarded as the pointer it is: to `&mut`, then to `&`.
+fn grow_twice_then_read(p: &mut (i64, i64)) -> i64 {
+    grow(p);
+    grow(p);
+    return tens(p);
+}
+
+fn set_alias(p: &mut X) {
+    *p = (7, 8);
+}
+
+fn set_alias_through(p: &mut X) {
+    set_alias(p);
+}
+
+fn retitle(p: &mut ((i64, i64), String)) {
+    *p = (((p.0).1, (p.0).0), "new");
+}
+
+fn main() {
+    let z: X = (1, 2);
+    print_int(untouched(&z));
+
+    let t = (3, 4);
+    print_int(tens(&t));
+    print_int(tens(t));
+    let x: X = (5, 6);
+    print_int(tens(&x));
+    print_int(alias_outer(&x));
+
+    let mut d = (9, 2);
+    print_int(diff(&mut d));
+
+    let n = ((1, 2), 3);
+    print_int(nested(&n));
+    let s = P { a: 4, b: 5 };
+    let ps = (s, 6);
+    print_int(with_struct(&ps));
+    let ea = (E::A(7), 3);
+    print_int(with_enum(&ea));
+    let eb = (E::B, 5);
+    print_int(with_enum(&eb));
+    let st = ("hello", 4);
+    print_int(with_string(&st));
+
+    let c = copied(&t);
+    print_int(c.1 * 10 + c.0);
+    print_int(bound(&t));
+
+    // The caller sees every write.
+    let mut w = (11, 22);
+    swap(&mut w);
+    print_int(w.0);
+    print_int(w.1);
+    swap(&mut w);
+    swap(&mut w);
+    print_int(w.0 * 100 + w.1);
+
+    let mut g = (1, 2);
+    print_int(grow_twice_then_read(&mut g));
+    print_int(g.0);
+    print_int(g.1);
+
+    let mut xa: X = (1, 2);
+    set_alias_through(&mut xa);
+    print_int(xa.0 * 10 + xa.1);
+
+    let mut r = ((1, 2), "old");
+    retitle(&mut r);
+    print_int((r.0).0 * 10 + (r.0).1);
+    print(r.1);
+}
