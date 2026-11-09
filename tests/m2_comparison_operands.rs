@@ -1437,3 +1437,29 @@ fn an_imported_underscore_item_and_generic_run() {
         assert_eq!(String::from_utf8_lossy(&ran.stdout), expected, "{}", module);
     }
 }
+
+/// EVERY NAME CODE GENERATION COMPOSES FROM SOURCE NAMES, DEFINED BY A
+/// PROGRAM (review round 10). A composition of source names can be a source
+/// name: round 9's `id___u_S` (generic `id` at `_S`) took a program's own
+/// `fn id___u_S`, and `Box__u_S` its `struct Box__u_S` (astra: main printed 7,
+/// round 9 failed in gcc). The class was older: on main a program's
+/// `same__i64` beside `same<T>` at `i64`, `Box_i64` beside `Box<i64>`, and
+/// `E_V`, `E_W__new`, `E__W_Data` or `ETag` beside `enum E` were redefinitions.
+/// Every composed name now begins with `_g_` (`c_ident::COMPOSED_PREFIX`),
+/// where no source name can be.
+#[test]
+fn a_composed_c_name_never_meets_a_source_name() {
+    let cases = [
+        ("struct _S{x:i64}fn id<T>(x:T)->T{x}fn id___u_S(x:_S)->_S{x}fn main(){let x=_S{x:7};let q=id(x);print_int(q.x);}", "7\n"),
+        ("struct _S{x:i64}struct Box<T>{v:T}struct Box__u_S{q:i64}fn main(){let x=Box{v:_S{x:7}};print_int(x.v.x);}", "7\n"),
+        ("struct _S{x:i64}fn id<T>(x:T)->T{x}fn id___u_S()->i64{9}fn main(){let x=_S{x:7};let q=id(x);print_int(q.x);print_int(id___u_S());}", "7\n9\n"),
+        ("fn same<T>(a:T,b:T)->bool{true}\nfn same__i64(a:i64,b:i64)->bool{false}\nfn main(){ if same(1,2) {print_int(1);} if same__i64(1,2) {print_int(2);} else {print_int(3);} }", "1\n3\n"),
+        ("struct Box<T>{v:T}\nstruct Box_i64{w:i64}\nfn main(){let a=Box{v:1};let b=Box_i64{w:2};print_int(a.v+b.w);}", "3\n"),
+        ("enum E { V, W(i64) }\nfn E_V() -> i64 { 5 }\nfn E_W__new(x: i64) -> i64 { x }\nstruct E__W_Data { z: i64 }\nfn ETag() -> i64 { 1 }\nfn main() { let e = E::W(3); let d = E__W_Data { z: 2 }; match e { E::W(v) => { print_int(v + E_V() + E_W__new(4) + d.z + ETag()); } E::V => { print_int(0); } } }", "15\n"),
+        ("struct P { v: i64 }\nimpl P { fn get(self) -> i64 { self.v } }\nfn P_get(p: P) -> i64 { 100 }\nfn __pd_P_get() -> i64 { 200 }\nfn main() { let p = P { v: 1 }; let q = P { v: 2 }; print_int(p.get() + P_get(q) + __pd_P_get()); }", "301\n"),
+        ("enum _E { _V, W(i64) }\nfn _g__u__E__u__V() -> i64 { 5 }\nfn main() { let e = _E::_V; match e { _E::_V => { print_int(_g__u__E__u__V()); } _E::W(x) => { print_int(x); } } }", "5\n"),
+    ];
+    for (program, expected) in cases {
+        assert_eq!(run(program, "cmp_r10_composed"), expected, "{}", program);
+    }
+}

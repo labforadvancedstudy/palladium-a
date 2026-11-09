@@ -2677,7 +2677,7 @@ impl CodeGenerator {
             ));
         }
         self.output.push_str(&format!(
-            "}} {}Tag;
+            "}} _g_{}Tag;
 \n",
             enum_def.name
         ));
@@ -2738,7 +2738,7 @@ impl CodeGenerator {
                             ));
                         }
                         self.output.push_str(&format!(
-                            "}} {}__{}_Data;
+                            "}} _g_{}__{}_Data;
 \n",
                             enum_def.name, variant.name
                         ));
@@ -2755,7 +2755,7 @@ impl CodeGenerator {
                         ));
                     }
                     self.output.push_str(&format!(
-                        "}} {}__{}_Data;
+                        "}} _g_{}__{}_Data;
 \n",
                         enum_def.name, variant.name
                     ));
@@ -2770,7 +2770,7 @@ impl CodeGenerator {
             enum_def.name
         ));
         self.output.push_str(&format!(
-            "    {}Tag tag;
+            "    _g_{}Tag tag;
 ",
             enum_def.name
         ));
@@ -2793,7 +2793,7 @@ impl CodeGenerator {
                     EnumVariantData::Tuple(types) => {
                         if !types.is_empty() {
                             self.output.push_str(&format!(
-                                "        {}__{}_Data {};
+                                "        _g_{}__{}_Data {};
 ",
                                 enum_def.name,
                                 variant.name,
@@ -2803,7 +2803,7 @@ impl CodeGenerator {
                     }
                     EnumVariantData::Struct(_) => {
                         self.output.push_str(&format!(
-                            "        {}__{}_Data {};
+                            "        _g_{}__{}_Data {};
 ",
                             enum_def.name,
                             variant.name,
@@ -2837,7 +2837,7 @@ impl CodeGenerator {
                 EnumVariantData::Unit => {
                     // Unit variant constructor
                     self.output.push_str(&format!(
-                        "static inline {} {}_{}() {{
+                        "static inline {} _g_{}_{}() {{
 ",
                         enum_def.name, enum_def.name, variant.name
                     ));
@@ -2855,7 +2855,7 @@ impl CodeGenerator {
                 EnumVariantData::Tuple(types) => {
                     // Tuple variant constructor
                     self.output.push_str(&format!(
-                        "static inline {} {}_{}__new(",
+                        "static inline {} _g_{}_{}__new(",
                         enum_def.name, enum_def.name, variant.name
                     ));
 
@@ -2893,7 +2893,7 @@ impl CodeGenerator {
                 EnumVariantData::Struct(fields) => {
                     // Struct variant constructor
                     self.output.push_str(&format!(
-                        "static inline {} {}_{}__new(",
+                        "static inline {} _g_{}_{}__new(",
                         enum_def.name, enum_def.name, variant.name
                     ));
 
@@ -5366,7 +5366,7 @@ impl CodeGenerator {
     fn match_trap_body(&self, span: Span) -> String {
         format!(
             "            __pd_match_trap(\"{} at line {}\");\n            abort();\n",
-            self.current_fn_name, span.line
+            shown_c_fn(&self.current_fn_name), span.line
         )
     }
 
@@ -6589,13 +6589,13 @@ impl CodeGenerator {
                 match data {
                     None => {
                         // Unit variant
-                        self.output.push_str(&format!("{}_{}", enum_name, variant));
+                        self.output.push_str(&format!("_g_{}_{}", enum_name, variant));
                         self.output.push_str("()");
                     }
                     Some(EnumConstructorData::Tuple(exprs)) => {
                         // Tuple variant
                         self.output
-                            .push_str(&format!("{}_{}__new", enum_name, variant));
+                            .push_str(&format!("_g_{}_{}__new", enum_name, variant));
                         self.output.push('(');
                         for (i, expr) in exprs.iter().enumerate() {
                             if i > 0 {
@@ -6608,7 +6608,7 @@ impl CodeGenerator {
                     Some(EnumConstructorData::Struct(fields)) => {
                         // Struct variant
                         self.output
-                            .push_str(&format!("{}_{}__new", enum_name, variant));
+                            .push_str(&format!("_g_{}_{}__new", enum_name, variant));
                         self.output.push('(');
                         for (i, (_, expr)) in fields.iter().enumerate() {
                             if i > 0 {
@@ -6755,7 +6755,7 @@ impl CodeGenerator {
         generic_struct: &crate::typeck::GenericStruct,
     ) -> Result<StructDef> {
         // Generate a mangled name for the concrete struct
-        let mangled_name = format!("{}_{}", struct_name, type_args.join("_"));
+        let mangled_name = format!("_g_{}_{}", struct_name, type_args.join("_"));
 
         // Create a mapping from type parameters to concrete types
         let mut type_map = std::collections::HashMap::new();
@@ -6800,7 +6800,7 @@ impl CodeGenerator {
         generic_func: &crate::typeck::GenericFunction,
     ) -> Result<Function> {
         // Generate a mangled name for the concrete function
-        let mangled_name = format!("{}__{}", func_name, type_args.join("_"));
+        let mangled_name = format!("_g_{}__{}", func_name, type_args.join("_"));
 
         // Create a mapping from type parameters to concrete types
         let mut type_map = std::collections::HashMap::new();
@@ -6863,7 +6863,7 @@ impl CodeGenerator {
 
     /// Create a mangled name for a generic function
     fn mangle_generic_name(&self, func_name: &str, type_args: &[String]) -> String {
-        format!("{}__{}", func_name, type_args.join("_"))
+        format!("_g_{}__{}", func_name, type_args.join("_"))
     }
 
     /// Get the mangled name for a generic function call
@@ -7876,7 +7876,7 @@ mod tests {
         "#,
         )
         .unwrap();
-        assert!(c.contains("struct N n = N_A__new(5LL);"), "{}", c);
+        assert!(c.contains("struct N n = _g_N_A__new(5LL);"), "{}", c);
     }
 
     #[test]
@@ -9263,9 +9263,16 @@ fn scalar_mask(lhs: &str, rhs: &str) -> String {
 /// A function's name as the comparison check records it: only the characters
 /// a C string literal can hold without escaping, so the marker always parses.
 fn spelled_c_fn(name: &str) -> String {
-    // A name the `_u` prefix moved (`c_ident::c_name`) is shown as written.
-    let name = name.strip_prefix("_u").filter(|rest| rest.starts_with('_')).unwrap_or(name);
-    name.chars()
+    shown_c_fn(name)
+        .chars()
         .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == ':' { c } else { '_' })
         .collect()
+}
+
+/// A function's C name as a person reads it: a composed name's `_g_` and a
+/// moved source name's `_u` (`c_ident::COMPOSED_PREFIX`, `c_ident::c_name`)
+/// taken off, so `_g_same__String` reads `same__String` and `_u__f` reads `_f`.
+fn shown_c_fn(name: &str) -> &str {
+    let name = name.strip_prefix(c_ident::COMPOSED_PREFIX).unwrap_or(name);
+    name.strip_prefix("_u").filter(|rest| rest.starts_with('_')).unwrap_or(name)
 }

@@ -548,7 +548,7 @@ fn a_bool_instantiation_shadowing_an_i64_alias_declares_a_bool_field() {
     fs::write(&src, source).unwrap();
     let c = fs::read_to_string(Driver::new().compile_file(&src).unwrap()).unwrap();
     assert!(
-        c.contains("typedef struct G_bool {\n    int v;\n"),
+        c.contains("typedef struct _g_G_bool {\n    int v;\n"),
         "G_bool.v is not declared as the bool it is:\n{}",
         c
     );

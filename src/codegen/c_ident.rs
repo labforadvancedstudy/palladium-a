@@ -865,6 +865,27 @@ pub fn c_name(name: &str) -> Cow<'_, str> {
     }
 }
 
+/// THE PREFIX OF EVERY C NAME CODE GENERATION COMPOSES FROM SOURCE NAMES
+/// (#89/#92 review round 10). A composition of two source names can be a
+/// source name: main emitted a generic `id` at `S` as `id__S`, an enum `E`'s
+/// unit variant `V` as the function `E_V`, its payload as `E__V_Data`, its tag
+/// type as `ETag`, a generic struct `Box<S>` as `Box_S` — and a program may
+/// define `id__S`, `E_V` or `Box_S` itself (loud on main: a redefinition; and
+/// round 9's `_u` spelling made `id___u_S` a NEW such name, silently taking a
+/// program's `fn id___u_S` — astra). So every composed name begins with
+/// `_g_`, which no source name can (`c_name`: a source name beginning with `_`
+/// becomes `_u_…`) and no other generated name does (`c_name`'s list):
+/// `_g_<f>__<args>` (a generic instantiation, `mangle_generic_name` and
+/// `monomorphize_function`), `_g_<S>_<args>` (a generic struct,
+/// `monomorphize_struct`), `_g_<E>_<V>` / `_g_<E>_<V>__new` (variant
+/// constructors, defined and called), `_g_<E>__<V>_Data` (payload structs),
+/// `_g_<E>Tag` (the tag type). Names composed under `__pd_` (methods
+/// `__pd_<T>_<m>`, imports `__pd_<module>_<fn>`, `__pd_tuple…`) and the tag
+/// constants `__<E>__<V>` already lie outside every source spelling. Two
+/// composed names can still meet each other exactly as they did on main; the
+/// prefix adds no such meeting and removes every meeting with a source name.
+pub const COMPOSED_PREFIX: &str = "_g_";
+
 /// A TYPE ARGUMENT as the type checker hands it to code generation —
 /// `checker_type_to_string`'s spelling: `_S`, `Box<_S>`, `[_S; 2]`,
 /// `(i64, _E)`, `fn(_S) -> i64` — with every user name in it in its C
