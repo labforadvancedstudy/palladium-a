@@ -290,6 +290,16 @@ pub struct CodeGenerator {
     comparison_carriers: Option<std::collections::HashMap<usize, String>>,
     /// The check is reading `comparison_carriers` (see there).
     reading_carriers: bool,
+    /// Names `checked_comparison`'s statement-expression temporaries apart.
+    comparison_counter: std::cell::Cell<usize>,
+    /// `Some(count)` while a FILE-SCOPE initialiser is generated, where C has
+    /// no statement expression: `checked_comparison` emits the comparison
+    /// plain and counts it, and `generate_global_items` then emits the same
+    /// initialiser again, judged, inside a function (`__pd_judge_<item>`).
+    file_scope_comparisons: std::cell::Cell<Option<usize>>,
+    /// The `match` whose patterns `pattern_condition` is lowering: the place
+    /// a pattern's comparison is judged at (a `Pattern` carries no span).
+    pattern_span: Span,
     /// Temporaries currently being lowered into, so `Stmt::Assign` knows which assignments to
     /// record a type for. Membership, not a name prefix: the prefix is reserved, but a set says
     /// what is true rather than what is merely conventional.
@@ -351,6 +361,9 @@ impl CodeGenerator {
             hoist_types: std::collections::HashMap::new(),
             comparison_carriers: None,
             reading_carriers: false,
+            comparison_counter: std::cell::Cell::new(0),
+            file_scope_comparisons: std::cell::Cell::new(None),
+            pattern_span: Span::dummy(),
             open_hoists: std::collections::HashSet::new(),
             break_temps: Vec::new(),
             struct_literals: StructLiterals::default(),
@@ -3155,8 +3168,11 @@ impl CodeGenerator {
             // this asserts rather than assumes.
             let outer = std::mem::take(&mut self.output);
             let hoists_before = self.pending_hoists.len();
-            self.generate_expression(&global.value)?;
+            self.file_scope_comparisons.set(Some(0));
+            let generated = self.generate_expression(&global.value);
+            let plain = self.file_scope_comparisons.replace(None).unwrap_or(0);
             let value = std::mem::replace(&mut self.output, outer);
+            generated?;
             if self.pending_hoists.len() != hoists_before {
                 return Err(CompileError::Generic(format!(
                     "the initialiser of `{}` needs statements to run before it, \
@@ -3166,6 +3182,21 @@ impl CodeGenerator {
             }
             definition.push_str(&value);
             definition.push_str(";\n");
+            // A FILE-SCOPE COMPARISON IS JUDGED TOO, in a twin. C has no
+            // statement expression outside a function, so the initialiser
+            // above holds its comparisons plain; the same expression is
+            // generated again here, inside a function nothing calls, where
+            // `checked_comparison` judges each one — a `_Static_assert` is
+            // evaluated when it is compiled, called or not.
+            if plain > 0 {
+                let item = std::mem::replace(&mut self.current_fn_name, global.name.clone());
+                let judged = self.capture_output(|g| g.generate_expression(&global.value));
+                self.current_fn_name = item;
+                definition.push_str(&format!(
+                    "static void __attribute__((unused)) __pd_judge_{}(void) {{ (void)({}); }}\n",
+                    global.name, judged?
+                ));
+            }
             self.output.push_str(&definition);
         }
         self.output.push('\n');
@@ -4093,7 +4124,7 @@ impl CodeGenerator {
                 self.output.push_str("    }\n");
             }
             Stmt::For {
-                var, iter, body, ..
+                var, iter, body, span,
             } => {
                 self.output.push_str("    {\n"); // Create a new scope
 
@@ -4154,8 +4185,8 @@ impl CodeGenerator {
                         let loop_scope = self.open_binding_scope();
                         self.bind_non_array(var, "long long".to_string());
                         if *inclusive {
-                            self.output
-                                .push_str(&format!("        if ({} <= {}) {{\n", lo, hi));
+                            let nonempty = self.checked_comparison(&lo, "<=", &hi, "for", *span);
+                            self.output.push_str(&format!("        if ({}) {{\n", nonempty));
                             // THE SPAN IS COMPUTED IN UNSIGNED ARITHMETIC,
                             // OPERAND BY OPERAND. `(unsigned long long)(hi - lo)`
                             // does the SUBTRACTION first, in `long long`, and
@@ -4180,11 +4211,19 @@ impl CodeGenerator {
                                 hi = hi,
                                 lo = lo
                             ));
+                            let last = self.checked_comparison(
+                                &format!("__pd_k{}", n),
+                                "==",
+                                &format!("__pd_n{}", n),
+                                "for",
+                                *span,
+                            );
                             self.output.push_str(&format!(
                                 "        for (unsigned long long __pd_k{n} = 0, __pd_done{n} = 0; \
-                                 !__pd_done{n}; __pd_done{n} = (__pd_k{n} == __pd_n{n}), \
+                                 !__pd_done{n}; __pd_done{n} = {last}, \
                                  __pd_k{n}++) {{\n",
-                                n = n
+                                n = n,
+                                last = last
                             ));
                             // AND THE VISITED VALUE IS ADDED IN UNSIGNED
                             // ARITHMETIC TOO. `lo + (long long)k` is a SIGNED
@@ -4204,11 +4243,12 @@ impl CodeGenerator {
                                 var, lo, n
                             ));
                         } else {
+                            let test = self.checked_comparison(var, "<", &hi, "for", *span);
                             self.output.push_str(&format!(
-                                "        for (long long {v} = {lo}; {v} < {hi}; {v}++) {{\n",
+                                "        for (long long {v} = {lo}; {test}; {v}++) {{\n",
                                 v = var,
                                 lo = lo,
-                                hi = hi
+                                test = test
                             ));
                         }
 
@@ -4355,7 +4395,8 @@ impl CodeGenerator {
                             _ => None,
                         };
 
-                        self.output.push_str("        for (long long _i = 0; _i < ");
+                        self.output.push_str("        for (long long _i = 0; ");
+                        let bound_at = self.output.len();
                         match (&len, storage) {
                             (Some(ArrayLen::Proven(n)), _) => {
                                 self.output.push_str(&n.to_string());
@@ -4390,6 +4431,9 @@ impl CodeGenerator {
                                 self.output.push_str("[0])");
                             }
                         }
+                        let bound = self.output.split_off(bound_at);
+                        let test = self.checked_comparison("_i", "<", &bound, "for", *span);
+                        self.output.push_str(&test);
                         self.output.push_str("; _i++) {\n");
 
                         // Declare loop variable and assign current element.
@@ -4491,6 +4535,7 @@ impl CodeGenerator {
                     self.hoist_counter += 1;
 
                     for arm in arms {
+                        self.pattern_span = *span;
                         let condition = self.pattern_condition(&arm.pattern, "_match_expr")?;
                         self.output
                             .push_str(&format!("        if ({}) {{\n", condition));
@@ -4552,6 +4597,7 @@ impl CodeGenerator {
                         self.output.push_str(" else if (");
                     }
 
+                    self.pattern_span = *span;
                     let condition = self.pattern_condition(&arm.pattern, "_match_expr")?;
                     self.output.push_str(&condition);
                     self.output.push_str(") {\n");
@@ -5377,7 +5423,13 @@ impl CodeGenerator {
                 variant,
                 data,
             } => {
-                let mut condition = format!("{}.tag == __{}__{}", subject, enum_name, variant);
+                let mut condition = self.checked_comparison(
+                    &format!("{}.tag", subject),
+                    "==",
+                    &format!("__{}__{}", enum_name, variant),
+                    "tag",
+                    self.pattern_span,
+                );
                 for (sub_pattern, member) in self.payload_subjects(enum_name, variant, data.as_ref(), subject)
                 {
                     let sub_condition = self.pattern_condition(&sub_pattern, &member.subject)?;
@@ -5393,12 +5445,20 @@ impl CodeGenerator {
             // runtime already carries `__pd_string_eq` (a `strcmp`), emitted
             // into every output file, and this is the comparison a reader means
             // by a string pattern.
-            Pattern::Literal(PatternLiteral::Int(value)) => {
-                format!("{} == {}", subject, Self::c_i64_literal(*value))
-            }
-            Pattern::Literal(PatternLiteral::Bool(value)) => {
-                format!("{} == {}", subject, if *value { 1 } else { 0 })
-            }
+            Pattern::Literal(PatternLiteral::Int(value)) => self.checked_comparison(
+                subject,
+                "==",
+                &Self::c_i64_literal(*value),
+                "pattern",
+                self.pattern_span,
+            ),
+            Pattern::Literal(PatternLiteral::Bool(value)) => self.checked_comparison(
+                subject,
+                "==",
+                if *value { "1" } else { "0" },
+                "pattern",
+                self.pattern_span,
+            ),
             Pattern::Literal(PatternLiteral::Str(value)) => {
                 format!("__pd_string_eq({}, \"{}\")", subject, c_string_body(value))
             }
@@ -5406,9 +5466,13 @@ impl CodeGenerator {
             // `long long` holding the Unicode scalar, so the test is numeric.
             // `c_char_constant` is the one place that spells one, and it carries
             // the source spelling in a trailing comment for a reader of the C.
-            Pattern::Literal(PatternLiteral::Char(value)) => {
-                format!("{} == {}", subject, c_char_constant(*value))
-            }
+            Pattern::Literal(PatternLiteral::Char(value)) => self.checked_comparison(
+                subject,
+                "==",
+                &c_char_constant(*value),
+                "pattern",
+                self.pattern_span,
+            ),
             // N6-03. Two comparisons on the same subject. Parenthesised because
             // this string is pasted into larger conditions — an `&&` inside an
             // `||` alternative, or beside an enum tag test.
@@ -5420,17 +5484,23 @@ impl CodeGenerator {
                     // equality arm above compares — so a char range is the very
                     // same two comparisons an integer range is.
                     PatternLiteral::Char(value) => c_char_constant(*value),
-                    // Refused by the type checker before this point; a range of
-                    // strings has no `>=` in C either.
+                    // Refused by the type checker before this point — EXCEPT in a
+                    // generic body, whose refusals other than PD0080 are not
+                    // raised: there `_match_expr >= "a"` compared two addresses
+                    // (review round 6). The judge refuses it now, as it does an
+                    // integer bound against a String subject.
                     PatternLiteral::Str(value) => format!("\"{}\"", c_string_body(value)),
                 };
                 format!(
-                    "({} >= {} && {} {} {})",
-                    subject,
-                    bound(lo),
-                    subject,
-                    if *inclusive { "<=" } else { "<" },
-                    bound(hi)
+                    "({} && {})",
+                    self.checked_comparison(subject, ">=", &bound(lo), "range", self.pattern_span),
+                    self.checked_comparison(
+                        subject,
+                        if *inclusive { "<=" } else { "<" },
+                        &bound(hi),
+                        "range",
+                        self.pattern_span
+                    )
                 )
             }
         })
@@ -6330,9 +6400,9 @@ impl CodeGenerator {
                         BinOp::Le => " <= ",
                         _ => " >= ",
                     };
-                    let check = self.c_scalar_check(&lhs, &rhs, *op, *span);
-                    self.output
-                        .push_str(&format!("({} && ({}{}{}))", check, lhs, c_op, rhs));
+                    let compared =
+                        self.checked_comparison(&lhs, c_op.trim(), &rhs, &op.to_string(), *span);
+                    self.output.push_str(&compared);
                 } else {
                     // Regular binary operation
                     self.output.push('(');
@@ -6347,14 +6417,11 @@ impl CodeGenerator {
                         BinOp::Mul => " * ",
                         BinOp::Div => " / ",
                         BinOp::Mod => " % ",
-                        BinOp::Eq => " == ",
-                        BinOp::Ne => " != ",
-                        BinOp::Lt => " < ",
-                        BinOp::Gt => " > ",
-                        BinOp::Le => " <= ",
-                        BinOp::Ge => " >= ",
-                        BinOp::And => " && ",
-                        BinOp::Or => " || ",
+                        // Every comparison is emitted by the branch above, through
+                        // `checked_comparison`, and `&&`/`||` by the first branch:
+                        // none reaches this table, so none can bypass the judge.
+                        BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge
+                        | BinOp::And | BinOp::Or => unreachable!("emitted by the branches above"),
                         // N5-12. Every binary operand is already wrapped in
                         // parentheses by the emitter around this match, so C's
                         // own precedence for these — which puts `&`/`^`/`|`
@@ -6638,7 +6705,7 @@ impl CodeGenerator {
             // where those get spliced back in.
             Expr::If { .. } => self.generate_if_expression(expr)?,
             Expr::Block { .. } => self.generate_block_expression(expr)?,
-            Expr::Cast { expr, ty, .. } => {
+            Expr::Cast { expr, ty, span } => {
                 // `(long long)5`, with no parentheses added around the operand:
                 // `generate_expression` already parenthesises every compound
                 // form, and the reviewed test `test_as_cast` reads the emitted
@@ -6665,9 +6732,10 @@ impl CodeGenerator {
                     self.generate_expression(expr)?;
                     self.output.push(')');
                 } else if matches!(ty, Type::Bool) {
-                    self.output.push_str("((");
-                    self.generate_expression(expr)?;
-                    self.output.push_str(") != 0)");
+                    let value = self.capture_output(|g| g.generate_expression(expr))?;
+                    let truth =
+                        self.checked_comparison(&format!("({})", value), "!=", "0", "as", *span);
+                    self.output.push_str(&truth);
                 } else {
                     self.output.push_str(&format!("({})", self.type_to_c(ty)));
                     self.generate_expression(expr)?;
@@ -7997,7 +8065,11 @@ mod tests {
         "#,
         )
         .unwrap();
-        assert!(c.contains("for (long long _i = 0; _i < 4; _i++)"), "{}", c);
+        assert!(
+            c.contains("for (long long _i = 0; (sizeof(struct {") && c.contains("&& (_i < 4)); _i++)"),
+            "{}",
+            c
+        );
         assert!(!c.contains("sizeof(xs)"), "{}", c);
     }
 
@@ -8017,7 +8089,11 @@ mod tests {
         "#,
         )
         .unwrap();
-        assert!(c.contains("for (long long _i = 0; _i < 0; _i++)"), "{}", c);
+        assert!(
+            c.contains("for (long long _i = 0; (sizeof(struct {") && c.contains("&& (_i < 0)); _i++)"),
+            "{}",
+            c
+        );
         assert!(!c.contains("sizeof(xs)"), "{}", c);
     }
 
@@ -8275,7 +8351,11 @@ mod tests {
         // declaration must be `const char*` and its bound 2 - both of which
         // come from bindings the loop variable had overwritten.
         assert!(c.contains("const char* s = v[_i];"), "{}", c);
-        assert!(c.contains("for (long long _i = 0; _i < 2; _i++)"), "{}", c);
+        assert!(
+            c.contains("for (long long _i = 0; (sizeof(struct {") && c.contains("&& (_i < 2)); _i++)"),
+            "{}",
+            c
+        );
     }
 
     #[test]
@@ -8385,8 +8465,12 @@ mod tests {
         )
         .unwrap();
         // The inner loop-free block keeps its own length; the parameter keeps 4.
-        assert!(c.contains("for (long long _i = 0; _i < 4; _i++)"), "{}", c);
-        assert!(!c.contains("_i < 2;"), "{}", c);
+        assert!(
+            c.contains("for (long long _i = 0; (sizeof(struct {") && c.contains("&& (_i < 4)); _i++)"),
+            "{}",
+            c
+        );
+        assert!(!c.contains("&& (_i < 2));"), "{}", c);
     }
 
     // The prototype and the definition are built by one helper, so they cannot
@@ -8900,31 +8984,97 @@ impl CodeGenerator {
     /// THE C COMPILER AS PD0080'S JUDGE (review round 5).
     ///
     /// Every reconstruction of an operand's C type has leaked in some review
-    /// round, so every Palladium comparison is emitted with a check the C
-    /// compiler itself evaluates: a `_Static_assert` that each operand's
+    /// round, so every comparison is emitted with a check the C compiler
+    /// itself evaluates: a `_Static_assert` that each operand's
     /// `__builtin_classify_type` is an integer (1), a character (2), an enum
-    /// (3), a boolean (4) or a real (8) — the bit mask `0x11E` — inside a
-    /// `sizeof`, so it costs nothing at run time and `&&` keeps the result the
-    /// comparison's own `int`. `__builtin_classify_type` does not evaluate its
-    /// argument, so each operand still runs exactly once. MEASURED on this
-    /// toolchain (Apple clang behind `gcc`): every scalar carrier compiles
-    /// without a single warning, `-Wall -Wextra` included, and a pointer, an
-    /// array or a struct fails with the message below, which `crate::linker`
-    /// turns back into PD0080 at the recorded line and column (the operator's)
-    /// — never a raw C error — when it is the only error (a check failing
-    /// beside another error is that error's cascade: `comparison_refusal`).
-    /// A pointer distance (`p - q`) is a `ptrdiff_t` and passes: a number.
-    pub(crate) fn c_scalar_check(&self, lhs: &str, rhs: &str, op: BinOp, span: Span) -> String {
+    /// (3), a boolean (4) or a real (8) — the bit mask `0x11E`. This is the
+    /// check's `sizeof` form: it costs nothing at run time, `&&` keeps the
+    /// result the comparison's own `int`, and `__builtin_classify_type` does not
+    /// evaluate its argument. MEASURED on this toolchain (Apple clang 21 behind
+    /// `gcc`): every scalar compiles without a single warning, `-Wall -Wextra`
+    /// included, and a pointer, an array or a struct fails with the marker,
+    /// which `crate::linker` turns back into PD0080 at the recorded line and
+    /// column (the operator's) — never a raw C error — when it is the only
+    /// error (a check failing beside another error is that error's cascade:
+    /// `comparison_refusal`). A pointer distance (`p - q`) is a `ptrdiff_t` and
+    /// passes: a number. `what` names the source construct (`comparison_what`).
+    pub(crate) fn c_scalar_check(&self, lhs: &str, rhs: &str, what: &str, span: Span) -> String {
         format!(
-            "sizeof(struct {{ _Static_assert((0x11E >> __builtin_classify_type({})) \
-             & (0x11E >> __builtin_classify_type({})) & 1, \"{}|{}|{}|{}|{}\"); char __pd_; }})",
-            lhs,
-            rhs,
+            "sizeof(struct {{ _Static_assert({}, \"{}\"); char __pd_; }})",
+            scalar_mask(lhs, rhs),
+            self.comparison_marker(what, span)
+        )
+    }
+
+    /// `PD0080|line|column|what|function`, read back by
+    /// `crate::linker::comparison_refusal`.
+    fn comparison_marker(&self, what: &str, span: Span) -> String {
+        format!(
+            "{}|{}|{}|{}|{}",
             crate::linker::COMPARISON_CHECK_MARKER,
             span.line,
             span.column,
-            op,
+            what,
             spelled_c_fn(&self.current_fn_name)
+        )
+    }
+
+    /// THE ONE DOOR FOR A C COMPARISON (#89/#92, review round 7). Every
+    /// comparison this generator writes — a Palladium `==` `!=` `<` `<=` `>`
+    /// `>=`, a literal or range pattern, an enum pattern's tag test, a `for`
+    /// loop's bound tests, `as bool` — is `lhs c_op rhs` judged here, so no
+    /// lowering can compare two addresses unseen. (Round 6: a String range
+    /// pattern in a generic body compared `_match_expr >= "a"` unjudged.)
+    ///
+    /// AND THE C IS LINEAR IN NESTING DEPTH. Round 6's check wrapped every
+    /// comparison as `(sizeof(...classify(L)...classify(R)...) && (L op R))`, so
+    /// an operand that was itself a comparison appeared twice, and its own
+    /// operands four times: measured, 17 nested `== yes()` emitted 23,405,093
+    /// bytes of C and clang timed out. An operand holding a check is therefore
+    /// named ONCE, in a GNU statement expression — `({ __auto_type l = (L);
+    /// __auto_type r = (R); _Static_assert(<classify l, r>, marker); l op r; })`
+    /// — which evaluates L then R exactly once each, left to right, and is an
+    /// `int` like the comparison. Measured on clang 21: no warning with `-Wall
+    /// -Wextra -Wshadow`; an array decays under `__auto_type` and is refused,
+    /// as is a pointer or a struct; 200 levels compile in a third of a second.
+    /// Operands with no check inside keep the `sizeof` form, whose second copy
+    /// is check-free and so adds at most the operand's own length. At file
+    /// scope a statement expression is not C: see `file_scope_comparisons`.
+    pub(crate) fn checked_comparison(
+        &self,
+        lhs: &str,
+        c_op: &str,
+        rhs: &str,
+        what: &str,
+        span: Span,
+    ) -> String {
+        if let Some(count) = self.file_scope_comparisons.get() {
+            self.file_scope_comparisons.set(Some(count + 1));
+            return format!("({} {} {})", lhs, c_op, rhs);
+        }
+        let holds_a_check = |text: &str| text.contains("__builtin_classify_type");
+        if !holds_a_check(lhs) && !holds_a_check(rhs) {
+            return format!(
+                "({} && ({} {} {}))",
+                self.c_scalar_check(lhs, rhs, what, span),
+                lhs,
+                c_op,
+                rhs
+            );
+        }
+        let n = self.comparison_counter.get();
+        self.comparison_counter.set(n + 1);
+        let (l, r) = (format!("__pd_cl{}", n), format!("__pd_cr{}", n));
+        format!(
+            "({{ __auto_type {l} = ({lhs}); __auto_type {r} = ({rhs}); \
+             _Static_assert({mask}, \"{marker}\"); {l} {op} {r}; }})",
+            l = l,
+            r = r,
+            lhs = lhs,
+            rhs = rhs,
+            mask = scalar_mask(&l, &r),
+            marker = self.comparison_marker(what, span),
+            op = c_op
         )
     }
 
@@ -9099,6 +9249,15 @@ fn pattern_names(pattern: &Pattern, out: &mut Vec<String>) {
         },
         Pattern::Wildcard | Pattern::Literal(_) | Pattern::Range { .. } => {}
     }
+}
+
+/// Both operands' C type class is one C compares by value: the condition of
+/// every PD0080 check (`CodeGenerator::c_scalar_check`, `checked_comparison`).
+fn scalar_mask(lhs: &str, rhs: &str) -> String {
+    format!(
+        "(0x11E >> __builtin_classify_type({})) & (0x11E >> __builtin_classify_type({})) & 1",
+        lhs, rhs
+    )
 }
 
 /// A function's name as the comparison check records it: only the characters

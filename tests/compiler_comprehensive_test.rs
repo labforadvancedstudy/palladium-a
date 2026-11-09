@@ -103,7 +103,7 @@ fn test_all_keywords() {
         ("fn main() { while true { } }", vec!["while (1)"]),
         (
             "fn main() { for i in 0..10 { } }",
-            vec!["for (long long i = __pd_lo", "; i < __pd_hi"],
+            vec!["for (long long i = __pd_lo", "&& (i < __pd_hi"],
         ),
         (
             "fn foo() -> int { return 42; }\nfn main() { }",
@@ -377,7 +377,7 @@ fn test_control_flow() {
                     print_int(i);
                 }
             }",
-            vec!["for (long long i = __pd_lo", "; i < __pd_hi", "__pd_print_int"],
+            vec!["for (long long i = __pd_lo", "; (i < __pd_hi", "__pd_print_int"],
         ),
     ];
 
@@ -507,7 +507,7 @@ fn test_arrays() {
                     print_int(arr[i]);
                 }
             }",
-            vec!["for (long long i = __pd_lo", "; i < __pd_hi", "arr[i]"],
+            vec!["for (long long i = __pd_lo", "&& (i < __pd_hi", "arr[i]"],
         ),
     ];
 
@@ -761,11 +761,13 @@ fn test_struct_with_methods() {
 /// operator written in the source (each written with spaces round it, as a
 /// token of its own) — and then reads the C with each check taken back out,
 /// which is the C these patterns were written against. A range `for`'s bound
-/// test is not a Palladium comparison and carries none.
+/// test is judged too (review round 7: every comparison code generation
+/// emits is), so each `for … in a..b` written counts one more — these sources
+/// write only exclusive ranges.
 fn compile_and_verify_comparisons(source: &str, expected_patterns: &[&str]) {
     let written = source
         .split_whitespace()
-        .filter(|t| ["==", "!=", "<", ">", "<=", ">="].contains(t))
+        .filter(|t| ["==", "!=", "<", ">", "<=", ">=", "in"].contains(t))
         .count();
     let c = compile_source(source)
         .unwrap_or_else(|e| panic!("Failed to compile:\n{}\nError: {}", source, e));

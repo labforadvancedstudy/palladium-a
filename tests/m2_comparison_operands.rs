@@ -1163,3 +1163,157 @@ fn a_gcc_failure_that_is_not_the_check_is_not_pd0080() {
         assert!(!err.to_string().contains("does not compare by value"), "{}: {}", prefix, err);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Review round 7: one door for every C comparison, and C linear in nesting.
+// ---------------------------------------------------------------------------
+
+/// astra's round-6 shape: `tick()` compared with `yes()`, `depth` times, each
+/// comparison the left operand of the next. main prints `7` then `1`.
+fn nested_calls(depth: usize) -> String {
+    let mut condition = "tick()".to_string();
+    for _ in 0..depth {
+        condition = format!("({} == yes())", condition);
+    }
+    format!(
+        "fn tick() -> bool {{ print_int(7); true }}\nfn yes() -> bool {{ true }}\n\
+         fn main() {{ if {} {{ print_int(1); }} else {{ print_int(0); }} }}\n",
+        condition
+    )
+}
+
+/// THE CHECK NAMES EACH OPERAND ONCE. Round 6 put both operands inside the
+/// check AND in the comparison, so a comparison that was an operand appeared
+/// twice and its own operands four times: measured on 76734e5, depth 17
+/// emitted 23,405,093 bytes of C (main: 9,107) and clang timed out. Each level
+/// must now cost a constant, and the deepest program must still run once.
+#[test]
+fn nested_comparisons_emit_c_linear_in_their_depth() {
+    let size = |depth: usize| emitted_c(&nested_calls(depth), "cmp_r7_depth").2.len();
+    let (one, sixteen, seventeen) = (size(1), size(16), size(17));
+    assert!(seventeen - sixteen < 1024, "one more level cost {} bytes", seventeen - sixteen);
+    assert!(seventeen < one + 17 * 1024, "depth 1: {} bytes, depth 17: {}", one, seventeen);
+    assert!(seventeen < 2 * sixteen, "depth 16: {} bytes, depth 17: {}", sixteen, seventeen);
+    assert_eq!(run(&nested_calls(17), "cmp_r7_depth_run"), "7\n1\n");
+}
+
+/// A pattern this generic body compares its subject against, at a String and
+/// at a type the pattern belongs to.
+fn generic_match(arms: &str, argument: &str) -> String {
+    format!(
+        "fn test<T>(a: T) -> bool {{ match a {{ {} => true, _ => false }} }}\n\
+         fn main() {{ let a = {}; if test(a) {{ print_int(1); }} else {{ print_int(0); }} }}\n",
+        arms, argument
+    )
+}
+
+/// THE LOWERINGS ARE JUDGED TOO. A generic body's refusals other than PD0080
+/// are not raised, so a String RANGE pattern lowered to `_match_expr >= "a"`
+/// and compared two addresses (astra, round 6: main and 76734e5 printed 0 for a
+/// run-time "m"), and an integer or bool pattern compared the String's address
+/// with a number. Every one now meets the C compiler's check where it is
+/// lowered — the first programs only that check catches — and is refused at
+/// the `match` as PD0080; at the pattern's own type each still runs.
+#[test]
+fn every_pattern_a_generic_body_compares_is_judged() {
+    use palladium::driver::RunOutcome;
+    use palladium::linker::{link, LinkError};
+    for (arms, construct) in [
+        ("\"a\"..=\"z\"", "a range pattern"),
+        ("0..=9", "a range pattern"),
+        ("0", "a literal pattern"),
+        ("true", "a literal pattern"),
+    ] {
+        let program = generic_match(arms, "string_concat(\"\", \"m\")");
+        let (dir, c_file, _c) = emitted_c(&program, "cmp_r7_pattern");
+        let err = link(&c_file, &dir.path().join("p"), OptLevel::Default)
+            .expect_err("a String compared by its address must not link");
+        assert!(matches!(err, LinkError::Refused(_)), "{}: {:?}", arms, err);
+        let text = err.to_string();
+        assert!(text.contains(construct) && text.contains("line 1, column 28, in `test__String`"), "{}: {}", arms, text);
+        let e = RunOutcome::Link(err).into_compile_error();
+        assert_eq!(e.code().map(|c| c.to_string()), Some("PD0080".to_string()), "{}", arms);
+    }
+    for (arms, argument) in [("1..=9", "5"), ("5", "5"), ("true", "true")] {
+        assert_eq!(run(&generic_match(arms, argument), "cmp_r7_pattern_ok"), "1\n", "{}", arms);
+    }
+    // A char range, outside a generic: a generic body at `char` is refused
+    // before any of this ("expected char, found Char" — not this rule).
+    assert_eq!(
+        run(
+            "fn main() { let c = 'm'; match c { 'a'..='z' => { print_int(1); } _ => { print_int(0); } } }",
+            "cmp_r7_char_range"
+        ),
+        "1\n"
+    );
+    // A String LITERAL pattern is `__pd_string_eq`, a comparison of characters.
+    assert_eq!(
+        run(&generic_match("\"m\"", "string_concat(\"\", \"m\")"), "cmp_r7_string_eq"),
+        "1\n"
+    );
+}
+
+/// `as bool` is a comparison with zero, and a String's is its address's
+/// (main printed 1 for any String). Judged where it is lowered.
+#[test]
+fn as_bool_is_judged_where_it_is_lowered() {
+    use palladium::linker::{link, LinkError};
+    let program = |argument: &str| {
+        format!(
+            "fn t<T>(x: T) -> bool {{ x as bool }}\n\
+             fn main() {{ let v = {}; if t(v) {{ print_int(1); }} else {{ print_int(0); }} }}\n",
+            argument
+        )
+    };
+    let (dir, c_file, _c) = emitted_c(&program("int_to_string(1)"), "cmp_r7_as_bool");
+    let err = link(&c_file, &dir.path().join("b"), OptLevel::Default).expect_err("an address is not a bool");
+    assert!(matches!(err, LinkError::Refused(_)) && err.to_string().contains("`as bool`"), "{:?}", err);
+    assert_eq!(run(&program("5"), "cmp_r7_as_bool_ok"), "1\n");
+}
+
+/// A `for` loop's bound tests are comparisons code generation writes, and
+/// they meet the same check; every loop shape still visits what it did.
+#[test]
+fn a_for_loops_bound_tests_are_judged_and_loops_still_run() {
+    let source = "fn main() {\n\
+                  for i in 0..3 { print_int(i); }\n\
+                  for j in 5..=6 { print_int(j); }\n\
+                  let xs = [7, 8];\n\
+                  for x in xs { print_int(x); }\n\
+                  }\n";
+    let (_dir, _c_file, c) = emitted_c(source, "cmp_r7_for");
+    for test in ["&& (i < __pd_hi", "&& (__pd_lo", "&& (__pd_k", "&& (_i < 2))"] {
+        assert!(c.contains(test), "{} is not judged:\n{}", test, c);
+    }
+    assert_eq!(run(source, "cmp_r7_for_run"), "0\n1\n2\n5\n6\n7\n8\n");
+}
+
+/// AT FILE SCOPE C HAS NO STATEMENT EXPRESSION, and a `const` or `static`
+/// initialiser may compare (fable, round 6: they compile today). The
+/// initialiser is emitted plain — a constant expression — and the same
+/// expression, judged, in a function nothing calls, where the
+/// `_Static_assert`s are still evaluated. Nested 17 deep it stays linear.
+#[test]
+fn a_file_scope_comparison_is_judged_in_a_twin_and_runs() {
+    let source = "const B: bool = 1 < 2;\n\
+                  const C: bool = (1 < 2) == true;\n\
+                  static D: bool = 3 >= 2;\n\
+                  fn main() { if B { print_int(1); } if C { print_int(2); } if D { print_int(3); } }\n";
+    let (_dir, _c_file, c) = emitted_c(source, "cmp_r7_file_scope");
+    assert!(c.contains("static const int B = (1LL < 2LL);"), "{}", c);
+    assert!(c.contains("static void __attribute__((unused)) __pd_judge_B(void)"), "{}", c);
+    assert!(c.contains("\"PD0080|1|19|<|B\"") && c.contains("|==|C\""), "{}", c);
+    assert_eq!(run(source, "cmp_r7_file_scope_run"), "1\n2\n3\n");
+
+    let deep = |depth: usize| {
+        let mut e = "1 < 2".to_string();
+        for _ in 0..depth {
+            e = format!("({}) == true", e);
+        }
+        format!("const K: bool = {};\nfn main() {{ if K {{ print_int(1); }} }}\n", e)
+    };
+    let size = |depth: usize| emitted_c(&deep(depth), "cmp_r7_file_scope_depth").2.len();
+    let (sixteen, seventeen) = (size(16), size(17));
+    assert!(seventeen - sixteen < 1024, "one more level cost {} bytes", seventeen - sixteen);
+    assert_eq!(run(&deep(17), "cmp_r7_file_scope_depth_run"), "1\n");
+}

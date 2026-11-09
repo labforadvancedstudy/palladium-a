@@ -755,11 +755,21 @@ pub fn comparison_refusal(stderr: &str) -> Option<String> {
     } else {
         format!("line {}, column {}, in `{}`", line, column, func)
     };
+    // The construct the check stands for (`codegen`'s `checked_comparison`
+    // callers): a comparison operator, or a lowering that compares.
+    let what = match op {
+        "pattern" => "a literal pattern".to_string(),
+        "range" => "a range pattern".to_string(),
+        "tag" => "an enum pattern".to_string(),
+        "for" => "a `for` loop's bound".to_string(),
+        "as" => "`as bool`".to_string(),
+        operator => format!("`{}`", operator),
+    };
     Some(format!(
-        "`{}` is not defined on an operand C does not compare by value ({}): the C compiler found a pointer, an array or a struct there, so C would \
+        "{} is not defined on an operand C does not compare by value ({}): the C compiler found a pointer, an array or a struct there, so C would \
          compare addresses or refuse. Compare a String with `string_eq`, an array element by \
          element, a struct field by field",
-        op, at
+        what, at
     ))
 }
 
@@ -1465,12 +1475,11 @@ build_output/B3.c:263:12: warning: returning 'const char *' from a function with
     /// compiles and links, with nothing to say.
     #[test]
     fn a_comparison_the_c_compiler_refuses_is_reported_as_pd0080() {
-        use crate::ast::BinOp;
         let generator = crate::codegen::CodeGenerator::new("judge").unwrap();
         let span = crate::errors::Span::new(0, 0, 7, 9);
         let dir = tempfile::TempDir::new().unwrap();
         let c = dir.path().join("judge.c");
-        let check = generator.c_scalar_check("s", "t", BinOp::Eq, span);
+        let check = generator.c_scalar_check("s", "t", "==", span);
         std::fs::write(
             &c,
             format!(
@@ -1487,7 +1496,7 @@ build_output/B3.c:263:12: warning: returning 'const char *' from a function with
         let text = err.to_string();
         assert!(text.contains("`==`") && text.contains("line 7, column 9"), "{}", text);
 
-        let check = generator.c_scalar_check("a", "b", BinOp::Lt, span);
+        let check = generator.c_scalar_check("a", "b", "<", span);
         std::fs::write(
             &c,
             format!(

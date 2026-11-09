@@ -1,0 +1,25 @@
+// NEGATIVE TEST — a String RANGE pattern in a generic body: PD0080 where the
+// pattern is lowered, judged by the C compiler (#89/#92 review round 7).
+//
+// A generic body's refusals other than PD0080 are not raised, so the type
+// checker's own refusal of a String range pattern never fires here, and code
+// generation lowered `"a"..="z"` to `_match_expr >= "a" && _match_expr <= "z"`
+// over two `const char*` — an address comparison: main 903ba02 printed 0 for
+// the run-time "m" below. Every comparison code generation writes is now
+// emitted through the one judged door, a pattern's too, so the C compiler's
+// check refuses it, and the link reports PD0080 at the `match`.
+fn main() {
+    let m = string_concat("", "m");
+    if between(m) {
+        print_int(1);
+    } else {
+        print_int(0);
+    }
+}
+
+fn between<T>(a: T) -> bool {
+    match a {
+        "a"..="z" => true,
+        _ => false,
+    }
+}
