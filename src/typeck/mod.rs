@@ -2921,7 +2921,7 @@ impl TypeChecker {
                     if crate::ast::local_definition_shadows_import(program, &func.name) {
                         continue;
                     }
-                    self.check_function(func)?;
+                    self.check_function(func).map_err(|e| in_import(e, module_name, func))?;
                 }
             }
         }
@@ -7714,84 +7714,383 @@ impl TypeChecker {
     /// the walk for any function with type parameters, and instantiation
     /// substitutes the signature only. So `fn same<T>(a: T, c: T) -> bool
     /// { a == c }` reached gcc at a struct (`invalid operands`) and, at two
-    /// equal Strings, compiled and answered 0. This checks each instantiated
-    /// body at the types it was instantiated with — on a CLONE of the checker,
+    /// equal Strings, compiled and answered 0. Each instantiated body is walked
+    /// here at the types it was instantiated with, on a CLONE of the checker,
     /// so nothing the walk records (instantiations, struct literals, scopes)
-    /// reaches code generation — and keeps that walk's verdict for this rule
-    /// ONLY. Any other refusal it meets is dropped: main never checked these
-    /// bodies, and a refusal under another rule here would refuse a program
-    /// main ran. A walk that stops on such a refusal before it reaches a
-    /// comparison leaves that comparison as main left it.
+    /// reaches code generation, and only this rule's verdict is kept.
+    ///
+    /// THE WHOLE BODY IS INSTANTIATED, not only the signature
+    /// (`substitute_type_params_in_block`): with `let x: T = a; x == y` the
+    /// locals stayed type parameters, which compare, while code generation
+    /// emitted `void* x = a;` and C compared two addresses (review round 1).
+    /// And THE WALK DOES NOT STOP AT ANOTHER RULE'S REFUSAL (`probe_block`):
+    /// main never checked these bodies, so a body may hold what the checker
+    /// refuses and code generation emits anyway — `let n: bool = 1;`, an
+    /// `if false { return 1; }` in a `-> bool` — and the first such refusal
+    /// used to end the walk before the comparison after it. Another rule's
+    /// refusal is never raised here: a refusal under it would refuse a program
+    /// main ran.
+    ///
+    /// A WORKLIST, because a body's call to another generic is instantiated on
+    /// the probe at this instantiation's types (`forward<T>` calling
+    /// `same<T>`), and that body is checked in turn. Type arguments are names
+    /// (an array, a tuple or a generic one is refused at the call), so the set
+    /// of instantiations is finite and the list ends.
     ///
     /// Run once every body has been walked, because only then is every call
     /// site — and so every instantiation — known: a generic defined after its
     /// caller is instantiated before it is declared to anyone. Over
-    /// `get_instantiations`, which is what code generation monomorphises — the
-    /// bodies checked here are exactly the bodies emitted — in its name order,
-    /// so which instantiation a diagnostic names is a function of the program
-    /// and not of the hash seed.
+    /// `get_instantiations`, which is what code generation monomorphises, in
+    /// its name order, so which instantiation a diagnostic names is a function
+    /// of the program and not of the hash seed.
     fn refuse_instantiated_comparisons(&self) -> Result<()> {
-        'instantiations: for (name, type_args, generic) in self.get_instantiations() {
-            let subst: HashMap<String, String> = generic
-                .type_params
-                .iter()
-                .cloned()
-                .zip(type_args.iter().cloned())
-                .collect();
-            let mut params = Vec::new();
-            for (name, ty) in &generic.params {
-                let Ok(ty) = self.substitute_type(ty, &subst) else {
-                    continue 'instantiations;
-                };
-                // Mutable: the signature here carries no `mut`, and a write to
-                // a parameter is not this rule's business.
-                params.push(Param {
-                    name: name.clone(),
-                    ty,
-                    mutable: true,
-                });
+        let mut work = self.get_instantiations();
+        let mut seen: HashSet<(String, Vec<String>)> =
+            work.iter().map(|(name, args, _)| (name.clone(), args.clone())).collect();
+        let mut next = 0;
+        while next < work.len() {
+            let (name, type_args, generic) = work[next].clone();
+            next += 1;
+            let mut probe = self.clone();
+            if let Some(refusal) = probe.comparison_in_instantiation(&generic, &type_args) {
+                let at: Vec<String> = generic
+                    .type_params
+                    .iter()
+                    .zip(&type_args)
+                    .map(|(param, arg)| format!("{} = {}", spelled(param), spelled(arg)))
+                    .collect();
+                return Err(CompileError::Generic(format!(
+                    "in `{}`, instantiated with {}: {}",
+                    spelled(&name),
+                    at.join(", "),
+                    refusal
+                ))
+                .with_code(DiagnosticCode::ComparisonOperandIsIntFloatBoolOrChar));
             }
-            let return_type = match &generic.return_type {
-                Some(ty) => match self.substitute_type(ty, &subst) {
-                    Ok(ty) => Some(ty),
-                    Err(_) => continue,
-                },
-                None => None,
-            };
-            let instantiated = Function {
-                visibility: Visibility::Private,
-                is_async: false,
-                name: name.clone(),
-                lifetime_params: Vec::new(),
-                type_params: Vec::new(),
-                const_params: Vec::new(),
-                params,
-                return_type,
-                body: generic.body.clone(),
-                span: generic.span,
-                effects: None,
-            };
-            let Err(refusal) = self.clone().check_function(&instantiated) else {
-                continue;
-            };
-            if refusal.code() != Some(DiagnosticCode::ComparisonOperandIsIntFloatBoolOrChar) {
-                continue;
+            for (name, args, generic) in probe.get_instantiations() {
+                if seen.insert((name.clone(), args.clone())) {
+                    work.push((name, args, generic));
+                }
             }
-            let at: Vec<String> = generic
-                .type_params
-                .iter()
-                .zip(&type_args)
-                .map(|(param, arg)| format!("{} = {}", spelled(param), spelled(arg)))
-                .collect();
-            return Err(CompileError::Generic(format!(
-                "in `{}`, instantiated with {}: {}",
-                spelled(&name),
-                at.join(", "),
-                refusal
-            ))
-            .with_code(DiagnosticCode::ComparisonOperandIsIntFloatBoolOrChar));
         }
         Ok(())
+    }
+
+    /// The first PD0079 refusal in `generic`'s body instantiated at
+    /// `type_args`, walked on `self` — a probe, never the checker itself.
+    fn comparison_in_instantiation(
+        &mut self,
+        generic: &GenericFunction,
+        type_args: &[String],
+    ) -> Option<CompileError> {
+        let subst: HashMap<String, String> = generic
+            .type_params
+            .iter()
+            .cloned()
+            .zip(type_args.iter().cloned())
+            .collect();
+        let mut args = HashMap::new();
+        for param in &generic.type_params {
+            let arg = self.substitute_type(&Type::TypeParam(param.clone()), &subst).ok()?;
+            args.insert(param.clone(), arg);
+        }
+        self.symbols.enter_scope();
+        for (name, ty) in &generic.params {
+            let ty = self.substitute_type(ty, &subst).ok()?;
+            let ty = self.written_type(&ty);
+            // Mutable: the signature here carries no `mut`, and a write to a
+            // parameter is not this rule's business.
+            let _ = self.symbols.define(name.clone(), ty, true);
+        }
+        self.current_function_return = Some(match &generic.return_type {
+            Some(ty) => {
+                let ty = self.substitute_type(ty, &subst).ok()?;
+                self.ast_type_to_checker_type(&ty)
+            }
+            None => CheckerType::Unit,
+        });
+        let mut body = generic.body.clone();
+        crate::ast::substitute_type_params_in_block(&mut body, &args);
+        self.probe_block(&body).err()
+    }
+
+    fn is_comparison_refusal(refusal: &CompileError) -> bool {
+        refusal.code() == Some(DiagnosticCode::ComparisonOperandIsIntFloatBoolOrChar)
+    }
+
+    /// Where a walk is: the state a check that fails part-way can leave
+    /// half-entered (a scope, a loop, an `unsafe` block).
+    fn probe_position(&self) -> (SymbolTable, usize, Vec<BreakTarget>, usize) {
+        (
+            self.symbols.clone(),
+            self.loop_depth,
+            self.break_targets.clone(),
+            self.unsafe_depth,
+        )
+    }
+
+    fn probe_restore(&mut self, at: (SymbolTable, usize, Vec<BreakTarget>, usize)) {
+        (self.symbols, self.loop_depth, self.break_targets, self.unsafe_depth) = at;
+    }
+
+    /// `check_statement` over `stmts`, except that a statement refused under
+    /// ANOTHER rule is not the end of the walk: its parts are walked instead
+    /// (`probe_statement`), so every comparison in the block is checked. Only
+    /// PD0079 comes back as an error.
+    fn probe_block(&mut self, stmts: &[Stmt]) -> Result<()> {
+        for stmt in stmts {
+            let at = self.probe_position();
+            match self.check_statement(stmt) {
+                Ok(()) => {}
+                Err(refusal) if Self::is_comparison_refusal(&refusal) => return Err(refusal),
+                Err(_) => {
+                    self.probe_restore(at);
+                    self.probe_statement(stmt)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The parts of a statement whose check failed under another rule. A `let`
+    /// still binds its name — at the type it was written with, which is the
+    /// type code generation declares it at, or else its value's — so that the
+    /// statements after it can be checked.
+    fn probe_statement(&mut self, stmt: &Stmt) -> Result<()> {
+        match stmt {
+            Stmt::Expr(e) | Stmt::Return(Some(e)) | Stmt::Break { value: Some(e), .. } => {
+                self.probe_expr(e)
+            }
+            Stmt::Return(None) | Stmt::Break { value: None, .. } | Stmt::Continue { .. } => Ok(()),
+            Stmt::Let {
+                name,
+                ty,
+                value,
+                mutable,
+                ..
+            } => {
+                self.probe_expr(value)?;
+                let bound = match ty {
+                    Some(ty) => Some(self.written_type(ty)),
+                    None => self.probe_type_of(value),
+                };
+                if let Some(bound) = bound {
+                    let _ = self.symbols.define(name.clone(), bound, *mutable);
+                }
+                Ok(())
+            }
+            Stmt::Assign { target, value, .. } => {
+                match target {
+                    AssignTarget::Ident(_) => {}
+                    AssignTarget::Index { array, index } => {
+                        self.probe_expr(array)?;
+                        self.probe_expr(index)?;
+                    }
+                    AssignTarget::FieldAccess { object: e, .. } | AssignTarget::Deref { expr: e } => {
+                        self.probe_expr(e)?
+                    }
+                }
+                self.probe_expr(value)
+            }
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.probe_expr(condition)?;
+                self.probe_scoped(then_branch, None, |_| {})?;
+                match else_branch {
+                    Some(branch) => self.probe_scoped(branch, None, |_| {}),
+                    None => Ok(()),
+                }
+            }
+            Stmt::While {
+                condition, body, ..
+            } => {
+                self.probe_expr(condition)?;
+                self.probe_scoped(body, None, |_| {})
+            }
+            Stmt::Loop { body, .. } | Stmt::Unsafe { body, .. } => {
+                self.probe_scoped(body, None, |_| {})
+            }
+            Stmt::For {
+                var, iter, body, ..
+            } => {
+                self.probe_expr(iter)?;
+                let element = match self.probe_type_of(iter) {
+                    Some(CheckerType::Range) => Some(CheckerType::INT),
+                    Some(CheckerType::Array(element, _)) => Some(*element),
+                    _ => None,
+                };
+                self.probe_scoped(body, None, |probe| {
+                    if let Some(element) = element {
+                        let _ = probe.symbols.define(var.clone(), element, false);
+                    }
+                })
+            }
+            Stmt::Match { expr, arms, .. } => {
+                self.probe_expr(expr)?;
+                let scrutinee = self.probe_type_of(expr);
+                for arm in arms {
+                    self.probe_arm(&arm.pattern, arm.guard.as_ref(), &arm.body, None, &scrutinee)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// `check_expression`, except that an expression refused under another
+    /// rule has its parts walked instead (`probe_block`'s rule, one level
+    /// down). A comparison whose operand cannot be typed at all has no type to
+    /// refuse, and is left as main left it.
+    fn probe_expr(&mut self, e: &Expr) -> Result<()> {
+        let at = self.probe_position();
+        match self.check_expression(e) {
+            Ok(_) => return Ok(()),
+            Err(refusal) if Self::is_comparison_refusal(&refusal) => return Err(refusal),
+            Err(_) => self.probe_restore(at),
+        }
+        match e {
+            Expr::Binary { left, right, .. }
+            | Expr::Range {
+                start: left,
+                end: right,
+                ..
+            }
+            | Expr::Index {
+                array: left,
+                index: right,
+                ..
+            }
+            | Expr::ArrayRepeat {
+                value: left,
+                count: right,
+                ..
+            } => {
+                self.probe_expr(left)?;
+                self.probe_expr(right)
+            }
+            Expr::Call { func, args, .. } => {
+                self.probe_expr(func)?;
+                args.iter().try_for_each(|arg| self.probe_expr(arg))
+            }
+            Expr::ArrayLiteral { elements, .. } | Expr::Tuple { elements, .. } => {
+                elements.iter().try_for_each(|element| self.probe_expr(element))
+            }
+            Expr::StructLiteral { fields, .. }
+            | Expr::EnumConstructor {
+                data: Some(EnumConstructorData::Struct(fields)),
+                ..
+            } => fields.iter().try_for_each(|(_, value)| self.probe_expr(value)),
+            Expr::EnumConstructor {
+                data: Some(EnumConstructorData::Tuple(elements)),
+                ..
+            } => elements.iter().try_for_each(|element| self.probe_expr(element)),
+            Expr::Unary { operand: inner, .. }
+            | Expr::FieldAccess { object: inner, .. }
+            | Expr::Reference { expr: inner, .. }
+            | Expr::Deref { expr: inner, .. }
+            | Expr::Question { expr: inner, .. }
+            | Expr::Await { expr: inner, .. }
+            | Expr::Cast { expr: inner, .. }
+            | Expr::TupleIndex { expr: inner, .. } => self.probe_expr(inner),
+            Expr::If {
+                condition,
+                then_branch,
+                then_value,
+                else_branch,
+                else_value,
+                ..
+            } => {
+                self.probe_expr(condition)?;
+                self.probe_scoped(then_branch, then_value.as_deref(), |_| {})?;
+                self.probe_scoped(
+                    else_branch.as_deref().unwrap_or(&[]),
+                    else_value.as_deref(),
+                    |_| {},
+                )
+            }
+            Expr::Block { stmts, value, .. } => self.probe_scoped(stmts, value.as_deref(), |_| {}),
+            Expr::Loop { body, .. } => self.probe_scoped(body, None, |_| {}),
+            Expr::Match { expr, arms, .. } => {
+                self.probe_expr(expr)?;
+                let scrutinee = self.probe_type_of(expr);
+                for arm in arms {
+                    self.probe_arm(
+                        &arm.pattern,
+                        arm.guard.as_ref(),
+                        &arm.body,
+                        arm.value.as_ref(),
+                        &scrutinee,
+                    )?;
+                }
+                Ok(())
+            }
+            // Expanded before the checker runs.
+            Expr::MacroInvocation { .. } => Ok(()),
+            Expr::EnumConstructor { data: None, .. }
+            | Expr::Ident(_)
+            | Expr::String(_)
+            | Expr::Integer(_)
+            | Expr::Float(_)
+            | Expr::Char(_)
+            | Expr::Bool(_) => Ok(()),
+        }
+    }
+
+    /// `stmts`, then `value`, in a scope of their own whose names `bind` adds.
+    fn probe_scoped(
+        &mut self,
+        stmts: &[Stmt],
+        value: Option<&Expr>,
+        bind: impl FnOnce(&mut Self),
+    ) -> Result<()> {
+        let at = self.probe_position();
+        self.symbols.enter_scope();
+        bind(self);
+        let walked = self.probe_block(stmts).and_then(|()| match value {
+            Some(value) => self.probe_expr(value),
+            None => Ok(()),
+        });
+        self.probe_restore(at);
+        walked
+    }
+
+    /// One `match` arm: its pattern's names bound at the scrutinee's type
+    /// where that is known, then its guard, body and value.
+    fn probe_arm(
+        &mut self,
+        pattern: &Pattern,
+        guard: Option<&Expr>,
+        body: &[Stmt],
+        value: Option<&Expr>,
+        scrutinee: &Option<CheckerType>,
+    ) -> Result<()> {
+        let at = self.probe_position();
+        self.symbols.enter_scope();
+        if let Some(scrutinee) = scrutinee {
+            let _ = self.bind_pattern_variables(pattern, scrutinee);
+        }
+        let walked = match guard {
+            Some(guard) => self.probe_expr(guard),
+            None => Ok(()),
+        }
+        .and_then(|()| self.probe_block(body))
+        .and_then(|()| match value {
+            Some(value) => self.probe_expr(value),
+            None => Ok(()),
+        });
+        self.probe_restore(at);
+        walked
+    }
+
+    /// The type `e` checks at, or `None`, leaving the walk where it was.
+    fn probe_type_of(&mut self, e: &Expr) -> Option<CheckerType> {
+        let at = self.probe_position();
+        let ty = self.check_expression(e).ok();
+        self.probe_restore(at);
+        ty
     }
 
     /// `ty`, as the type it and `other` — which compares equal to it — have
@@ -9704,4 +10003,22 @@ mod tests {
         }
         assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
+}
+
+/// A PD0079 refusal raised in an imported module's public body, named by where
+/// it is (review round 1). That body is checked whether or not anything calls
+/// it, so the refusal can concern a file the importer never opened, and the
+/// operator and type alone did not say which. Every other refusal keeps its
+/// own message: the corpus pins those payloads.
+fn in_import(refusal: CompileError, module: &str, func: &Function) -> CompileError {
+    if refusal.code() != Some(DiagnosticCode::ComparisonOperandIsIntFloatBoolOrChar) {
+        return refusal;
+    }
+    CompileError::Generic(format!(
+        "in `{}::{}`, imported: {}",
+        spelled(module),
+        spelled(&func.name),
+        refusal
+    ))
+    .with_code(DiagnosticCode::ComparisonOperandIsIntFloatBoolOrChar)
 }

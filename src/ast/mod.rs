@@ -3131,3 +3131,57 @@ mod alias_expansion_tests {
         );
     }
 }
+
+/// The substitution visit (#89/#92, PD0079): each type parameter named in `.0`
+/// becomes its argument, at every depth — the fourth visit of the one walk, so
+/// it reaches every position the other three do.
+///
+/// The type checker checks a generic instantiation's body for comparisons on a
+/// type with none, and the signature alone is not the body: `let x: T = a;`
+/// left `x` a type parameter, which compares, while code generation emitted
+/// `void* x = a;` and C compared two addresses. A parameter is written
+/// `Custom` or `TypeParam` (as `Rename` treats them) and, through the parser's
+/// all-capitals rule, a const argument inside `<...>`; all three are replaced.
+struct Substitute<'a>(&'a Aliases);
+
+impl TypeVisit for Substitute<'_> {
+    fn visit(&mut self, ty: &mut Type, bound: &[String]) {
+        match ty {
+            Type::Custom(n) | Type::TypeParam(n) => {
+                if let Some(arg) = self.0.get(n.as_str()) {
+                    *ty = arg.clone();
+                }
+            }
+            Type::Array(elem, size) => {
+                self.visit(elem, bound);
+                if let ArraySize::Expr(e) = size {
+                    walk_expr(e, bound, self);
+                }
+            }
+            Type::Generic { args, .. } => {
+                for arg in args {
+                    match arg {
+                        GenericArg::Type(t) => self.visit(t, bound),
+                        GenericArg::Const(ConstValue::ConstParam(n)) => {
+                            if let Some(t) = self.0.get(n.as_str()) {
+                                *arg = GenericArg::Type(t.clone());
+                            }
+                        }
+                        GenericArg::Const(_) => {}
+                    }
+                }
+            }
+            Type::Reference { inner, .. } | Type::Future { output: inner } => {
+                self.visit(inner, bound)
+            }
+            Type::Tuple(types) => types.iter_mut().for_each(|t| self.visit(t, bound)),
+            _ => {}
+        }
+    }
+}
+
+/// Every type written in `stmts` with each type parameter in `args` replaced by
+/// its argument (`Substitute`).
+pub fn substitute_type_params_in_block(stmts: &mut [Stmt], args: &Aliases) {
+    walk_block(stmts, &[], &mut Substitute(args))
+}
