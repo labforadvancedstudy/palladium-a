@@ -607,6 +607,29 @@ fn a_shadowing_let_that_reads_the_outer_binding_prints_the_source_value() {
     );
 }
 
+/// Review round 7 (astra): the temporary a self-reading `let` is lowered
+/// through is named against every symbol the program EMITS, not only its
+/// source names. `enum __pd { shadow0 }` emits the constructor `__pd_shadow0`;
+/// d827a7e declared a local `long long __pd_shadow0` and the constructor call
+/// beside it reached gcc ("called object type 'long long' is not a function").
+/// Each row emits `__pd_shadow0` (or more) itself and lowers a `let` beside it.
+#[test]
+fn a_lowering_temporary_never_takes_a_name_the_program_emits() {
+    check(
+        &[
+            ("an enum constructor `__pd::shadow0` (astra r7)", "enum __pd { shadow0 }\nfn main() { let x = { let x = 5; x }; let e = __pd::shadow0; match e { __pd::shadow0 => { print_int(x); } } }\n", "RUN: 5\n"),
+            ("an enum constructor beside `let x = x + 1;`", "enum __pd { shadow0, shadow1 }\nfn main() { let x = 5; if true { let x = x + 1; let e = __pd::shadow0; match e { __pd::shadow0 => { print_int(x); } __pd::shadow1 => { print_int(0); } } } }\n", "RUN: 6\n"),
+            ("two constructors, two lowerings", "enum __pd { shadow0, shadow1 }\nfn main() { let x = 5; let y = 7; if true { let x = x + 1; let y = y * 2; let e = __pd::shadow1; match e { __pd::shadow0 => { print_int(0); } __pd::shadow1 => { print_int(x + y); } } } }\n", "RUN: 20\n"),
+            ("a function `__pd_shadow0`", "fn __pd_shadow0() -> i64 { return 7; }\nfn main() { let x = 5; if true { let x = x + __pd_shadow0(); print_int(x); } }\n", "RUN: 12\n"),
+            ("a struct `__pd_shadow0`", "struct __pd_shadow0 { a: i64 }\nfn main() { let x = 5; if true { let x = x + 1; let s = __pd_shadow0 { a: x }; print_int(s.a); } }\n", "RUN: 6\n"),
+            ("a const `__pd_shadow0`", "const __pd_shadow0: i64 = 30;\nfn main() { let x = 5; if true { let x = x + __pd_shadow0; print_int(x); } }\n", "RUN: 35\n"),
+            ("a local `__pd_shadow0`", "fn main() { let __pd_shadow0 = 100; let x = 5; if true { let x = x + __pd_shadow0; print_int(x); } }\n", "RUN: 105\n"),
+            ("a method of `struct __pd`", "struct __pd { k: i64 }\nimpl __pd { fn shadow0(&self) -> i64 { return self.k; } }\nfn main() { let p = __pd { k: 9 }; let x = 5; if true { let x = x + p.shadow0(); print_int(x); } }\n", "RUN: 14\n"),
+        ],
+        "let_shadow_hygiene",
+    );
+}
+
 /// What the local-reference rule leaves running: a reference bound once with
 /// `&mut` (even in a `mut` binding), a proven inner shadow beside a shared
 /// outer one, and reads through a shared local.

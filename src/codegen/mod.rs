@@ -341,6 +341,10 @@ type BindingScope = (
     std::collections::HashMap<String, LetKey>,
 );
 
+/// Brackets the number of a `fresh_shadow_name` placeholder until
+/// `name_shadow_temporaries` names it (issue #84, review round 7).
+const SHADOW_MARK: char = '\u{1}';
+
 /// One `let` binding of one function: its name and its statement's span
 /// (issue #84, review round 4). Not the node's address, because
 /// `generate_match_expression` generates a CLONE of each arm's statements; a
@@ -395,9 +399,6 @@ struct ReferenceFacts {
     lets: std::collections::HashMap<LetKey, LetFacts>,
     /// Keys more than one `let` of the body shares: never proven.
     ambiguous: std::collections::HashSet<LetKey>,
-    /// Every identifier the function binds or names, so a temporary the
-    /// lowering invents can be checked against them (`fresh_shadow_name`).
-    names: std::collections::HashSet<String>,
 }
 
 /// What a name resolves to while `ReferenceFacts::collect` walks a body.
@@ -450,13 +451,11 @@ impl ReferenceFacts {
                 (p.name.clone(), bound)
             })
             .collect();
-        let mut facts = ReferenceFacts::default();
-        facts.names.extend(func.params.iter().map(|p| p.name.clone()));
         let mut walk = ReferenceWalk {
             scopes: vec![params],
             functions,
             methods,
-            facts,
+            facts: ReferenceFacts::default(),
             initializing: Vec::new(),
         };
         walk.block(&func.body);
@@ -470,7 +469,6 @@ impl ReferenceWalk<'_> {
     }
 
     fn bind(&mut self, name: &str, bound: Bound) {
-        self.facts.names.insert(name.to_string());
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.to_string(), bound);
         }
@@ -514,7 +512,6 @@ impl ReferenceWalk<'_> {
     /// A name read or written while `let`s are being initialized: a `let` of the
     /// same name is initializing from itself in the emitted C.
     fn named(&mut self, name: &str) {
-        self.facts.names.insert(name.to_string());
         for (initializing, named) in self.initializing.iter_mut() {
             if initializing == name {
                 *named = true;
@@ -693,22 +690,11 @@ impl ReferenceWalk<'_> {
                 self.expr(left);
                 self.expr(right);
             }
-            Expr::StructLiteral { name, fields, .. } => {
-                self.facts.names.insert(name.clone());
-                fields.iter().for_each(|(_, v)| self.expr(v))
-            }
-            Expr::EnumConstructor {
-                enum_name, data, ..
-            } => match data {
-                None => {
-                    self.facts.names.insert(enum_name.clone());
-                }
-                Some(EnumConstructorData::Tuple(es)) => {
-                    self.facts.names.insert(enum_name.clone());
-                    es.iter().for_each(|e| self.expr(e))
-                }
+            Expr::StructLiteral { fields, .. } => fields.iter().for_each(|(_, v)| self.expr(v)),
+            Expr::EnumConstructor { data, .. } => match data {
+                None => {}
+                Some(EnumConstructorData::Tuple(es)) => es.iter().for_each(|e| self.expr(e)),
                 Some(EnumConstructorData::Struct(fields)) => {
-                    self.facts.names.insert(enum_name.clone());
                     fields.iter().for_each(|(_, v)| self.expr(v))
                 }
             },
@@ -2414,6 +2400,9 @@ impl CodeGenerator {
     pub fn compile(&mut self, program: &Program) -> Result<()> {
         let program = self.with_aliases_expanded(&c_ident::escape_reserved_names(program));
         let compiled = self.compile_escaped(&program);
+        if compiled.is_ok() {
+            self.output = Self::name_shadow_temporaries(std::mem::take(&mut self.output));
+        }
         self.alias_guard.take().map_or(compiled, Err)
     }
 
@@ -5834,20 +5823,61 @@ impl CodeGenerator {
     }
 
     /// A name no source program can collide with, for one hoisted value.
-    /// A temporary for a self-reading `let` (`LetFacts::reads_own_name`): not
-    /// any identifier the function binds or names, nor a function or a global,
-    /// so it cannot capture or be captured by a name of the program's.
+    /// A temporary for a self-reading `let` (`LetFacts::reads_own_name`), as a
+    /// PLACEHOLDER: `SHADOW_MARK`, its number, `SHADOW_MARK`. Its C name is
+    /// chosen by `name_shadow_temporaries` once the whole translation unit is
+    /// written, because only then is every symbol the program emits known —
+    /// functions, generic instantiations, methods, enum constructors and tags,
+    /// structs, globals, the runtime helpers it calls (review round 7: an
+    /// `enum __pd { shadow0 }` emits the constructor `__pd_shadow0`, which a
+    /// temporary checked against SOURCE names only shadowed).
     fn fresh_shadow_name(&mut self) -> String {
-        loop {
-            let candidate = format!("__pd_shadow{}", self.shadow_counter);
-            self.shadow_counter += 1;
-            if !self.reference_facts.names.contains(&candidate)
-                && !self.functions.contains_key(&candidate)
-                && !self.globals.contains_key(&candidate)
-            {
-                return candidate;
+        let n = self.shadow_counter;
+        self.shadow_counter += 1;
+        format!("{}{}{}", SHADOW_MARK, n, SHADOW_MARK)
+    }
+
+    /// Give every `fresh_shadow_name` placeholder in the finished C `text` a
+    /// name that is no identifier anywhere in that text — the emitted symbols
+    /// themselves, so nothing is re-derived from naming patterns; a word inside
+    /// a string literal or a comment only makes the choice more conservative.
+    /// Placeholders are named in order, `__pd_shadow0` upward, skipping taken
+    /// ones. `SHADOW_MARK` is a control character, which no emitted C contains.
+    fn name_shadow_temporaries(text: String) -> String {
+        if !text.contains(SHADOW_MARK) {
+            return text;
+        }
+        let mut taken = std::collections::HashSet::new();
+        let mut placeholders = Vec::new();
+        let mut word = String::new();
+        let mut in_mark = false;
+        for c in text.chars() {
+            if c == SHADOW_MARK {
+                if in_mark && !placeholders.contains(&word) {
+                    placeholders.push(word.clone());
+                }
+                in_mark = !in_mark;
+                word.clear();
+            } else if in_mark || c == '_' || c.is_ascii_alphanumeric() {
+                word.push(c);
+            } else {
+                taken.insert(std::mem::take(&mut word));
             }
         }
+        taken.insert(word);
+        let mut named = text;
+        let mut next = 0usize;
+        for number in placeholders {
+            let name = loop {
+                let candidate = format!("__pd_shadow{}", next);
+                next += 1;
+                if !taken.contains(&candidate) {
+                    break candidate;
+                }
+            };
+            named = named.replace(&format!("{}{}{}", SHADOW_MARK, number, SHADOW_MARK), &name);
+        }
+        named
     }
 
     fn fresh_hoist_name(&mut self) -> String {
@@ -8158,6 +8188,10 @@ impl CodeGenerator {
     /// read the C prelude this compiler actually emits, rather than a copy of it.
     #[allow(dead_code)] // used by the drift tests in crate::builtins
     pub(crate) fn generated_c(&self) -> &str {
+        debug_assert!(
+            !self.output.contains(SHADOW_MARK),
+            "an unnamed shadow temporary: `compile` names them when it succeeds"
+        );
         &self.output
     }
 
@@ -8175,6 +8209,16 @@ impl CodeGenerator {
             .and_then(|s| s.to_str())
             .unwrap_or(&self.module_name);
 
+        // The one way C leaves this generator for gcc. `compile` names every
+        // `fresh_shadow_name` placeholder when it succeeds; text that still holds
+        // one did not come from a successful `compile`, and is never written.
+        if self.output.contains(SHADOW_MARK) {
+            return Err(CompileError::CodegenError {
+                message: "internal: the C still holds an unnamed shadow temporary; write_output \
+                          runs only after a successful compile"
+                    .to_string(),
+            });
+        }
         let output_path = build_dir.join(format!("{}.c", base_name));
         let mut file = File::create(&output_path)?;
         file.write_all(self.output.as_bytes())?;
