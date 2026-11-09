@@ -448,6 +448,108 @@ fn a_place_reached_through_a_local_reference_needs_a_proven_writable_origin() {
     assert_eq!(got, want);
 }
 
+/// Review round 4 (astra): a reference can be re-pointed where no `r = ..`
+/// names it — through its own address (`let q = &mut r; *q = &u;`, or `&r`,
+/// since a write through a shared local alias is not checked: found f3), or by
+/// a call whose parameter receives its address (`mut r: R`). Each of these
+/// printed `11 97 83` on 6e1ef59: the immutable `u = (1, 2)` overwritten. A
+/// reference whose address is taken, or which is passed where its address is
+/// taken, is never proven. The last row ran on main too, writing `u` through a
+/// by-value `mut` parameter.
+#[test]
+fn a_reference_that_may_be_re_pointed_out_of_sight_is_never_proven() {
+    let set = "fn set(q: &mut (i64, i64)) { *q = (97, 83); }\n";
+    let head = "fn main() { let mut t = (11, 29); let u = (1, 2); let mut r = &mut t;";
+    let out = "print_int(t.0); print_int(u.0); print_int(u.1); }\n";
+    let rows: [(&str, String); 8] = [
+        ("`let q = &mut r; *q = &u;` in an inner block", format!("{set}{head} if true {{ let q = &mut r; *q = &u; }} set(*r); {out}")),
+        ("`let q = &r; *q = &u;` in an inner block", format!("{set}{head} if true {{ let q = &r; *q = &u; }} set(*r); {out}")),
+        ("`&mut r` in a value block", format!("{set}{head} let k = {{ let q = &mut r; *q = &u; 1 }}; set(*r); {out}")),
+        ("`&mut r` stored in an array", format!("{set}{head} if true {{ let a = [&mut r]; *a[0] = &u; }} set(*r); {out}")),
+        ("`&mut r` in a loop", format!("{set}{head} let mut i = 0; while i < 1 {{ let q = &mut r; *q = &u; i = i + 1; }} set(*r); {out}")),
+        ("passed to `mut r: R`, `type R = &(i64, i64)`", format!("type R = &(i64, i64);\nfn redirect(mut r: R, q: R) {{ r = q; }}\n{set}{head} redirect(r, &u); set(*r); {out}")),
+        ("passed to `mut r: R`, `type R = &mut (i64, i64)`", format!("type R = &mut (i64, i64);\nfn redirect(mut r: R, q: R) {{ r = q; }}\n{set}{head} redirect(r, &u); set(*r); {out}")),
+        ("into a `mut` by-value parameter (ran on main, writing the immutable `u`)", format!("fn m(mut x: (i64, i64)) {{ x = (97, 83); }}\n{head} if true {{ let q = &mut r; *q = &u; }} m(*r); {out}")),
+    ];
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    for (shape, program) in &rows {
+        let verdict = outcome(program, "ref_tuple_repoint");
+        let refused_here = verdict.starts_with("REFUSED: ")
+            && verdict.contains("that parameter writes the tuple it is given");
+        got.push(format!(
+            "{}: {}",
+            shape,
+            if refused_here { "REFUSED by name" } else { &verdict }
+        ));
+        want.push(format!("{}: REFUSED by name", shape));
+    }
+    assert_eq!(got, want);
+}
+
+/// Review round 4 (astra): a binding of a reference-to-tuple PARAMETER's name.
+/// Code generation reads that name as the parameter in the whole body (found
+/// f6), so `let mut p = &u; set(*p);` inside `fn f(p: &mut (..))` was judged
+/// as the writable parameter and wrote the immutable `u` (`97 83`); a value or
+/// a pattern binding of the name reached gcc. Refused by name, at the binding.
+/// main refused every one of these programs (the parameter itself).
+#[test]
+fn a_binding_that_shadows_a_tuple_reference_parameter_is_refused_by_name() {
+    let set = "fn set(q: &mut (i64, i64)) { *q = (97, 83); }\n";
+    let rows: [(&str, String); 5] = [
+        ("`let mut p = &u; set(*p)` under `p: &mut (..)`", format!("{set}fn f(p: &mut (i64, i64)) {{ let u = (1, 2); if true {{ let mut p = &u; set(*p); }} print_int(u.0); }}\nfn main() {{ let mut t = (11, 29); f(&mut t); print_int(t.0); }}\n")),
+        ("`let p = &u; *p = v` under `p: &mut (..)`", "fn f(p: &mut (i64, i64)) { let u = (1, 2); if true { let p = &u; *p = (97, 83); } print_int(u.0); }\nfn main() { let mut t = (11, 29); f(&mut t); print_int(t.0); }\n".to_string()),
+        ("a `for` variable", "fn f(p: &mut (i64, i64)) { for p in [1, 2] { print_int(p); } }\nfn main() { let mut t = (11, 29); f(&mut t); print_int(t.0); }\n".to_string()),
+        ("a `match` binding", "fn f(p: &(i64, i64)) { match (1, 2) { (p, q) => { print_int(p); } } }\nfn main() { let t = (11, 29); f(&t); print_int(t.0); }\n".to_string()),
+        ("a `let mut` value under `p: &(..)`", format!("{set}fn f(p: &(i64, i64)) {{ if true {{ let mut p = (1, 2); set(&mut p); print_int(p.0); }} }}\nfn main() {{ let t = (11, 29); f(&t); print_int(t.0); }}\n")),
+    ];
+    let mut got = Vec::new();
+    let mut want = Vec::new();
+    for (shape, program) in &rows {
+        let verdict = outcome(program, "ref_tuple_shadow");
+        let refused_here = verdict.starts_with("REFUSED: ")
+            && verdict.contains("is a reference-to-tuple parameter of this function");
+        got.push(format!(
+            "{}: {}",
+            shape,
+            if refused_here { "REFUSED by name" } else { &verdict }
+        ));
+        want.push(format!("{}: REFUSED by name", shape));
+    }
+    assert_eq!(got, want);
+}
+
+/// Review round 4 (astra, fable): what the proof keeps, judged by BINDING, not
+/// by name. A same-named binding in another scope is another binding (its `r =
+/// 4` re-points nothing); a reference re-pointed only ever at `&mut` of a
+/// writable place — directly, in a branch, in a loop, or as the arms of an
+/// `if` initializer — stays proven. The first two rows (and fable's d11, d13,
+/// d15) ran on main and were refused by 6e1ef59.
+#[test]
+fn a_reference_re_pointed_only_at_writable_places_stays_proven() {
+    let m = "fn m(mut x: (i64, i64)) { x = (97, 83); }\n";
+    let set = "fn set(q: &mut (i64, i64)) { *q = (97, 83); }\n";
+    let two = "let mut t = (11, 29); let mut u = (1, 2);";
+    let rows: Vec<(&str, String, &str)> = vec![
+        ("an inner `let mut r = 3; r = 4;` beside a by-value `mut` (main: 4 97 83)", format!("{m}fn main() {{ let mut t = (11, 29); let mut r = &mut t; if true {{ let mut r = 3; r = 4; print_int(r); }} m(*r); print_int(t.0); print_int(t.1); }}\n"), "RUN: 4\n97\n83\n"),
+        ("`r = &mut u` beside a by-value `mut` (main: 11 97 83)", format!("{m}fn main() {{ {two} let mut r = &mut t; r = &mut u; m(*r); print_int(t.0); print_int(u.0); print_int(u.1); }}\n"), "RUN: 11\n97\n83\n"),
+        ("used, re-pointed at `&mut u`, used (fable d11; main: 9783 9783)", format!("{m}fn main() {{ {two} let mut r = &mut t; m(*r); r = &mut u; m(*r); print_int(t.0 * 100 + t.1); print_int(u.0 * 100 + u.1); }}\n"), "RUN: 9783\n9783\n"),
+        ("an `if` initializer of two `&mut` (fable d13; main: 9783)", format!("{m}fn main() {{ {two} let mut r = if t.0 > 5 {{ &mut t }} else {{ &mut u }}; m(*r); print_int(t.0 * 100 + t.1); }}\n"), "RUN: 9783\n"),
+        ("re-pointed in a branch not taken (fable d15; main: 9783 102)", format!("{m}fn main() {{ {two} let mut r = &mut t; if t.0 > 50 {{ r = &mut u; }} m(*r); print_int(t.0 * 100 + t.1); print_int(u.0 * 100 + u.1); }}\n"), "RUN: 9783\n102\n"),
+        ("an inner `let mut r = 3; r = 4;` beside `&mut (..)`", format!("{set}fn main() {{ let mut t = (11, 29); let mut r = &mut t; if true {{ let mut r = 3; r = 4; print_int(r); }} set(*r); print_int(t.0); print_int(t.1); }}\n"), "RUN: 4\n97\n83\n"),
+        ("an inner shared `r`, re-pointed, beside the proven outer one", format!("{set}fn main() {{ let mut t = (11, 29); let u = (1, 2); let mut r = &mut t; if true {{ let mut r = &u; r = &u; print_int(9); }} set(*r); print_int(t.0); print_int(u.0); }}\n"), "RUN: 9\n97\n1\n"),
+        ("`r = &mut u` beside `&mut (..)`", format!("{set}fn main() {{ {two} let mut r = &mut t; r = &mut u; set(*r); print_int(t.0); print_int(u.0); print_int(u.1); }}\n"), "RUN: 11\n97\n83\n"),
+        ("re-pointed at `&mut u` in a loop", format!("{set}fn main() {{ {two} let mut r = &mut t; let mut i = 0; while i < 2 {{ r = &mut u; i = i + 1; }} set(*r); print_int(t.0); print_int(u.0); }}\n"), "RUN: 11\n97\n"),
+        ("an `if` initializer of two `&mut` beside `&mut (..)`", format!("{set}fn main() {{ {two} let mut r = if t.0 > 5 {{ &mut t }} else {{ &mut u }}; set(*r); print_int(t.0); print_int(u.0); }}\n"), "RUN: 97\n1\n"),
+        ("a block initializer `{ &mut t }`", format!("{set}fn main() {{ let mut t = (11, 29); let mut r = {{ &mut t }}; set(*r); print_int(t.0); print_int(t.1); }}\n"), "RUN: 97\n83\n"),
+    ];
+    let table: Vec<(&str, &str, &str)> = rows
+        .iter()
+        .map(|(shape, program, out)| (*shape, program.as_str(), *out))
+        .collect();
+    check(&table, "ref_tuple_proven");
+}
+
 /// What the local-reference rule leaves running: a reference bound once with
 /// `&mut` (even in a `mut` binding), a proven inner shadow beside a shared
 /// outer one, and reads through a shared local.

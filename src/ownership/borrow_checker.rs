@@ -247,7 +247,7 @@ impl BorrowChecker {
     /// and it was true.
     ///
     /// It stopped being true on 2026-08-23. The emission walk now asks
-    /// `crate::ast::local_type_shadows_import` (`src/codegen/mod.rs:2226-2254`)
+    /// `crate::ast::local_type_shadows_import` (`src/codegen/mod.rs:3192-3220`)
     /// and skips the imported definition, because the same window in the TYPE
     /// CHECKER was producing `Type mismatch: expected Color, found Color` for an
     /// ordinary program — a local `struct Color` over an imported `pub enum
@@ -296,7 +296,7 @@ impl BorrowChecker {
                         // function bodies, one item kind across.
                         //
                         // Its reason was that codegen emits only NON-generic
-                        // imported structs (`src/codegen/mod.rs:2230-2235`), so a
+                        // imported structs (`src/codegen/mod.rs:3196-3201`), so a
                         // generic `P<T>` would be "a layout for a type this
                         // compilation never produces". Structs have a
                         // monomorphization path too
@@ -429,8 +429,8 @@ impl BorrowChecker {
         //
         // ONLY `Item::Function` IS WALKED, and an imported `impl` method is not a
         // gap in that. Codegen's imported walk matches `Item::Struct` and
-        // `Item::Enum` (`src/codegen/mod.rs:2226-2254`) and, separately,
-        // `Item::Function` (`src/codegen/mod.rs:2386-2387`) — there is no `Item::Impl`
+        // `Item::Enum` (`src/codegen/mod.rs:3192-3220`) and, separately,
+        // `Item::Function` (`src/codegen/mod.rs:3352-3353`) — there is no `Item::Impl`
         // arm anywhere in it. So an imported impl method is not merely uncallable:
         // IT DOES NOT EXIST IN THE OUTPUT. Measured — a module exporting
         // `pub struct P { a: i64 }` with `impl P { fn get(self) -> i64 { … } }`
@@ -472,7 +472,7 @@ impl BorrowChecker {
                     // AND WAS A FAIL-OPEN. Its stated reason was that a skipped body
                     // "produces no C, because the codegen guard is the same
                     // predicate". That is true of the DIRECT imported-emission path
-                    // (`src/codegen/mod.rs:2387-2390`, public and non-generic) and
+                    // (`src/codegen/mod.rs:3353-3356`, public and non-generic) and
                     // false of MONOMORPHIZATION, which is a different path and emits
                     // `name__T` from the same template. Measured on the guard:
                     //

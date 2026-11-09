@@ -165,4 +165,28 @@ fn main() {
     retitle(&mut r);
     print_int((r.0).0 * 10 + (r.0).1);
     print(r.1);
+
+    // A local reference is judged by its BINDING (review round 4): re-pointed
+    // only at `&mut` of a `mut` tuple, or bound to one through both arms of an
+    // `if`, it is still lent to `&mut (..)`; the inner `rr` is another binding,
+    // and its `rr = rr + 1` re-points nothing.
+    let mut ta = (11, 29);
+    let mut tb = (1, 2);
+    if true {
+        let mut rr = &mut ta;
+        if true {
+            let mut rr = 3;
+            rr = rr + 1;
+            print_int(rr);
+        }
+        swap(*rr);
+        rr = &mut tb;
+        swap(*rr);
+    }
+    print_int(ta.0 * 100 + ta.1);
+    print_int(tb.0 * 10 + tb.1);
+    let mut ri = if ta.0 > 50 { &mut ta } else { &mut tb };
+    swap(*ri);
+    print_int(ta.0 * 100 + ta.1);
+    print_int(tb.0 * 10 + tb.1);
 }
