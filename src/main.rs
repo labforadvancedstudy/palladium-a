@@ -3,7 +3,7 @@
 
 use clap::Parser;
 use palladium::errors::reporter::emit_primary_header;
-use palladium::errors::DiagnosticLevel;
+use palladium::errors::{DiagnosticCode, DiagnosticLevel};
 use palladium::{driver::Driver, linker::OptLevel, package::PackageManager, runtime_paths};
 use std::path::Path;
 use std::process;
@@ -377,7 +377,11 @@ fn handle_bootstrap_command(command: BootstrapCommands) -> Result<(), String> {
 fn report_link(e: palladium::linker::LinkError) -> ! {
     // Through the single choke point, bare: a link failure is gcc's verdict, not
     // a language rule this compiler enforces, so it has no PD code to carry.
-    emit_primary_header(DiagnosticLevel::Error, None, &e.to_string());
+    // ...except PD0080, which the C compiler judges for this compiler (a
+    // comparison's static check) and which is a language rule refused by name.
+    let code = matches!(e, palladium::linker::LinkError::Refused(_))
+        .then_some(DiagnosticCode::ComparisonOperandIsIntFloatBoolOrChar);
+    emit_primary_header(DiagnosticLevel::Error, code, &e.to_string());
     process::exit(e.exit_code());
 }
 
@@ -400,11 +404,10 @@ fn report_run(o: palladium::driver::RunOutcome) -> ! {
         // arm used to print it a second time in `Display`'s wording — the same
         // duplicate `main`'s handler produced, one command along.
         RunOutcome::Compile(_) => {}
-        other => emit_primary_header(
-            DiagnosticLevel::Error,
-            None,
-            &other.into_compile_error().to_string(),
-        ),
+        other => {
+            let e = other.into_compile_error();
+            emit_primary_header(DiagnosticLevel::Error, e.code(), &e.to_string())
+        }
     }
     process::exit(code);
 }

@@ -474,6 +474,8 @@ impl RunOutcome {
     pub fn into_compile_error(self) -> CompileError {
         match self {
             RunOutcome::Compile(e) => e,
+            RunOutcome::Link(e @ LinkError::Refused(_)) => CompileError::Generic(e.to_string())
+                .with_code(crate::errors::DiagnosticCode::ComparisonOperandIsIntFloatBoolOrChar),
             RunOutcome::Link(e) => CompileError::Generic(e.to_string()),
             RunOutcome::Child { code, signal } => CompileError::Generic(match (code, signal) {
                 (Some(c), _) => format!("program exited with code {}", c),

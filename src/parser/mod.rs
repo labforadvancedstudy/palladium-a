@@ -3602,19 +3602,19 @@ impl Parser {
             match token {
                 Token::EqEq | Token::Ne => {
                     let left_span = Self::expr_span(&left);
-                    let op = match self.advance()?.0 {
+                    let (token, at) = self.advance()?;
+                    let op = match token {
                         Token::EqEq => BinOp::Eq,
                         Token::Ne => BinOp::Ne,
                         _ => unreachable!(),
                     };
                     let right = self.parse_comparison()?;
                     let right_span = Self::expr_span(&right);
-                    let span = Span::new(
-                        left_span.start,
-                        right_span.end,
-                        left_span.line,
-                        left_span.column,
-                    );
+                    // A COMPARISON IS PLACED AT ITS OPERATOR (#89/#92): its
+                    // refusal, PD0080, names the operator, and a name or a
+                    // literal on the left has no position to inherit, so the
+                    // left operand's line and column used to say `0`.
+                    let span = Span::new(left_span.start, right_span.end, at.line, at.column);
                     left = Expr::Binary {
                         left: Box::new(left),
                         op,
@@ -3637,7 +3637,8 @@ impl Parser {
             match token {
                 Token::Lt | Token::Gt | Token::Le | Token::Ge => {
                     let left_span = Self::expr_span(&left);
-                    let op = match self.advance()?.0 {
+                    let (token, at) = self.advance()?;
+                    let op = match token {
                         Token::Lt => BinOp::Lt,
                         Token::Gt => BinOp::Gt,
                         Token::Le => BinOp::Le,
@@ -3646,12 +3647,11 @@ impl Parser {
                     };
                     let right = self.parse_bitor()?;
                     let right_span = Self::expr_span(&right);
-                    let span = Span::new(
-                        left_span.start,
-                        right_span.end,
-                        left_span.line,
-                        left_span.column,
-                    );
+                    // Placed at its operator, for the reason `parse_equality`
+                    // gives: PD0080 names the operator's line and column, and
+                    // `a < b` has no other position to give it — neither name
+                    // has one in the tree.
+                    let span = Span::new(left_span.start, right_span.end, at.line, at.column);
                     left = Expr::Binary {
                         left: Box::new(left),
                         op,

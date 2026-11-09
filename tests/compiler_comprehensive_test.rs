@@ -286,8 +286,8 @@ fn test_compound_assignment_operators() {
     // THE PARENTHESES ARE THE EMITTER'S, NOT THE DESUGARING'S. This test was
     // written before the feature existed and expected `x = x + 1;`; code
     // generation wraps EVERY binary expression in parentheses and always has
-    // (it is why `-Wparentheses-equality` is the most common diagnostic this
-    // compiler produces — see `NON_FATAL_DIAGNOSTIC_TAGS` in src/linker.rs), so
+    // (it is why `-Wparentheses-equality` was the most common diagnostic this
+    // compiler produced — see `NON_FATAL_DIAGNOSTIC_TAGS` in src/linker.rs), so
     // the real output is `x = (x + 1);`. The claim under test is unchanged:
     // `t op= v` lowers to `t = t op v`, with THAT operator.
     //
@@ -382,13 +382,13 @@ fn test_control_flow() {
     ];
 
     for (source, patterns) in test_cases {
-        compile_and_verify(source, &patterns);
+        compile_and_verify_comparisons(source, &patterns);
     }
 }
 
 #[test]
 fn test_else_if_chain() {
-    compile_and_verify(
+    compile_and_verify_comparisons(
         "fn main() {
             let a = 1;
             let b = 2;
@@ -669,7 +669,7 @@ fn test_operator_precedence() {
     ];
 
     for (source, patterns) in test_cases {
-        compile_and_verify(source, &patterns);
+        compile_and_verify_comparisons(source, &patterns);
     }
 }
 
@@ -749,4 +749,75 @@ fn test_struct_with_methods() {
         "#,
         &["struct Rectangle", "area", "rect.area()"],
     );
+}
+
+/// EVERY COMPARISON IS EMITTED INSIDE PD0080'S CHECK (#89/#92): `a > b` is
+/// `(sizeof(struct { _Static_assert(...); char __pd_; }) && (a > b))`, a static
+/// test the C compiler evaluates so that a comparison of two addresses is
+/// refused by name — the check itself is pinned in
+/// `tests/m2_comparison_operands.rs`. The tests that use this are about the
+/// STRUCTURE around a comparison (precedence, the `if` / `else if` chain, the
+/// `while` test), so this counts the checks — exactly one per comparison
+/// operator written in the source (each written with spaces round it, as a
+/// token of its own) — and then reads the C with each check taken back out,
+/// which is the C these patterns were written against. A range `for`'s bound
+/// test is not a Palladium comparison and carries none.
+fn compile_and_verify_comparisons(source: &str, expected_patterns: &[&str]) {
+    let written = source
+        .split_whitespace()
+        .filter(|t| ["==", "!=", "<", ">", "<=", ">="].contains(t))
+        .count();
+    let c = compile_source(source)
+        .unwrap_or_else(|e| panic!("Failed to compile:\n{}\nError: {}", source, e));
+    assert_eq!(
+        c.matches(COMPARISON_CHECK).count(),
+        written,
+        "not one check per comparison for source:\n{}\nGenerated:\n{}",
+        source,
+        c
+    );
+    let bare = without_comparison_checks(&c);
+    for pattern in expected_patterns {
+        assert!(
+            bare.contains(pattern),
+            "Output missing '{}' for source:\n{}\nGenerated (checks taken out):\n{}",
+            pattern,
+            source,
+            bare
+        );
+    }
+}
+
+/// Where a comparison's check opens: the `(` of `(check && (comparison))`.
+const COMPARISON_CHECK: &str = "(sizeof(struct { _Static_assert(";
+
+/// `(check && (a > b))` back to `(a > b)`, everywhere. The check ends at
+/// `char __pd_; }) && `; the comparison runs from there to the parenthesis that
+/// closes the check's opening one.
+fn without_comparison_checks(c: &str) -> String {
+    const CHECK_END: &str = "char __pd_; }) && ";
+    let mut out = String::new();
+    let mut rest = c;
+    while let Some(at) = rest.find(COMPARISON_CHECK) {
+        out.push_str(&rest[..at]);
+        let checked = &rest[at..];
+        let from = checked.find(CHECK_END).expect("a check with no end") + CHECK_END.len();
+        let mut depth = 0usize;
+        let close = checked
+            .char_indices()
+            .find(|&(_, ch)| {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => return false,
+                }
+                depth == 0
+            })
+            .map(|(i, _)| i)
+            .expect("a check whose parenthesis never closes");
+        out.push_str(&without_comparison_checks(&checked[from..close]));
+        rest = &checked[close + 1..];
+    }
+    out.push_str(rest);
+    out
 }

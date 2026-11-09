@@ -655,8 +655,11 @@ pub enum DiagnosticCode {
     /// generated, refuses one whose EMITTED carrier is not a by-value scalar
     /// or has no nameable C type (`refuse_a_comparison_without_one`,
     /// `src/codegen/mod.rs`): a hoisted value form is judged by the type its
-    /// temporary was declared with, not by a reconstruction, so no front-end
-    /// path can let one through (#89, #92).
+    /// temporary was declared with, not by a reconstruction. And the C compiler
+    /// is the JUDGE (review round 5): every comparison is emitted with a static
+    /// check on `__builtin_classify_type` of both operands, whose failure the
+    /// link reports as this code (`crate::linker::comparison_refusal`), so no
+    /// path at all can compile an address comparison (#89, #92).
     ComparisonOperandIsIntFloatBoolOrChar,
 }
 

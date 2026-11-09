@@ -290,7 +290,7 @@ def citing_sources():
     under src/ and tests/, none of them ever pinned.
 
     A pin proves a cited range has not MOVED. That is worth more in source than in prose,
-    not less: a comment citing `src/codegen/mod.rs:2837` is read by whoever is editing the
+    not less: a comment citing `src/codegen/mod.rs:2863` is read by whoever is editing the
     file next to it, and inserting twenty lines above the target silently repoints it at
     something unrelated. Editing source is how citations move; docs/ is where they were
     being checked.
@@ -2150,7 +2150,7 @@ def check_index(receipts=None):
 # naming files that do not exist here), 8 have a blank edge, and exactly one of those searches
 # was ambiguous for this reason: src/codegen/mod.rs:4-10, matched both at 4-10 and at 3-9
 # across the blank line at 3, is now the single hit 4-9. The other blank-edged pin with two
-# matches is NOT of this kind and still fails: src/codegen/mod.rs:2796-2799 also matches
+# matches is NOT of this kind and still fails: src/codegen/mod.rs:2822-2825 also matches
 # 2952-2955, because the two blocks differ only in the indentation inside a string literal and
 # `norm()` collapses that. Two distinct trimmed spans, two real copies, AMBIGUOUS as before.
 #

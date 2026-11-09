@@ -245,9 +245,15 @@ pub const NON_FATAL_DIAGNOSTIC_TAGS: &[(&str, &str)] = &[
     ),
     (
         "-Wparentheses-equality",
-        "324 occurrences, the most common diagnostic this compiler produces. \
-         codegen parenthesises every binary operand, so an `==` comparison is \
-         emitted as `if ((a == b))` and gcc suspects a mistyped assignment. \
+        "324 occurrences when it was the most common diagnostic this compiler \
+         produced: codegen parenthesises every binary operand, so an `==` \
+         comparison was emitted as `if ((a == b))` and gcc suspects a mistyped \
+         assignment. Since #89/#92 a comparison written in the source is emitted \
+         inside PD0080's check, `if ((check && (a == b)))`, which it does not \
+         fire on: measured over every .pd in the tree, 179 in 30 files on main \
+         903ba02, 3 in 1 now, all three the tuple-pattern lowering's own \
+         `if ((_match_expr.f0 == 0LL))` (tests/06_tuple_patterns.pd), which is \
+         why the tag is still listed. \
          Purely a spelling of the generated C: the value computed is the one \
          intended, and no program behaves differently. It is noise from an \
          emitter that does not track precedence, not a defect in what it means.",
@@ -693,6 +699,70 @@ pub const EXIT_TOOLCHAIN: i32 = 5;
 /// of is worse than no code at all.
 pub const EXIT_GCC_UNEXPLAINED: i32 = 6;
 
+/// The exit code of a language rule refused by name at the link stage: the
+/// code every front-end refusal exits with, because it is one (PD0080).
+pub const EXIT_REFUSED: i32 = 1;
+
+/// The tag code generation writes into a comparison's static check, and the
+/// one this module reads back (`codegen`'s `c_scalar_check`): `PD0080|line|
+/// column|operator|function`. ONE literal, so the two cannot drift.
+pub const COMPARISON_CHECK_MARKER: &str = "PD0080";
+
+/// PD0080 raised by the C compiler (#89/#92, review round 5): the static
+/// check code generation emits beside every comparison failed, so an operand's
+/// C type is not one C compares by value. `None` when `stderr` holds no such
+/// failure.
+///
+/// ONLY THE CHECK'S OWN DIAGNOSTIC COUNTS, AND ONLY ALONE (review round 6).
+/// The C compiler echoes the source line under every error, and a line that
+/// holds a comparison holds its tag, so finding the tag ANYWHERE in `stderr`
+/// named PD0080 for C that failed for another reason. Measured over 1155
+/// programs: 12 — a call to a generic that was never emitted (`id`
+/// undeclared), a block inside an array literal emitted as malformed C, a
+/// parameter redeclared by a shadowing `let` — every one ill-typed C that
+/// main reports as `gcc compilation failed`, and in the last three the check
+/// failed too, as a CASCADE (the redeclared name keeps its first, pointer,
+/// type). So the tag is read only from an error line that is a static
+/// assertion's (`static assertion failed`: clang 21's wording, measured, and
+/// GCC's documented one; `static_assert failed`: clang's before 16), and only when EVERY
+/// error line is one: any other error is C this compiler got wrong, and the
+/// link reports it as it always has.
+pub fn comparison_refusal(stderr: &str) -> Option<String> {
+    let tag = format!("{}|", COMPARISON_CHECK_MARKER);
+    let errors: Vec<&str> = stderr
+        .lines()
+        .filter(|l| !l.starts_with(char::is_whitespace))
+        .filter(|l| l.contains(": error: ") || l.contains(": fatal error: "))
+        .collect();
+    let the_check = |l: &&str| {
+        (l.contains("static assertion failed") || l.contains("static_assert failed"))
+            && l.contains(&tag)
+    };
+    if errors.is_empty() || !errors.iter().all(the_check) {
+        return None;
+    }
+    let at = errors[0].find(&tag)? + tag.len();
+    let fields: Vec<&str> = errors[0][at..]
+        .split(|c: char| c == '"' || c.is_whitespace())
+        .next()?
+        .splitn(4, '|')
+        .collect();
+    let [line, column, op, func] = fields[..] else {
+        return None;
+    };
+    let at = if line == "0" {
+        format!("in `{}`", func)
+    } else {
+        format!("line {}, column {}, in `{}`", line, column, func)
+    };
+    Some(format!(
+        "`{}` is not defined on an operand C does not compare by value ({}): the C compiler found a pointer, an array or a struct there, so C would \
+         compare addresses or refuse. Compare a String with `string_eq`, an array element by \
+         element, a struct field by field",
+        op, at
+    ))
+}
+
 // Why these numbers. `1` is pdc's existing "something went wrong" and every
 // front-end refusal already uses it — reusing it would put the new distinction
 // back inside the old one. `2` is spoken for twice over: clap exits 2 on a
@@ -727,6 +797,11 @@ pub enum LinkError {
     /// gcc exited 0 and diagnosed C that pdc generated. An internal compiler
     /// error: no Palladium program asks for ill-typed C.
     IllTypedC(String),
+    /// gcc refused a COMPARISON through the static check code generation puts
+    /// beside it (PD0080, `comparison_refusal`). Not a sixth cause of a failed
+    /// link: a language rule, refused by name, which the C compiler is the one
+    /// party able to judge exactly (#89/#92 review round 5).
+    Refused(String),
 }
 
 impl LinkError {
@@ -745,6 +820,7 @@ impl LinkError {
             LinkError::GccRejected(_) => EXIT_BACKEND_REJECT,
             LinkError::GccUnexplained(_) => EXIT_GCC_UNEXPLAINED,
             LinkError::IllTypedC(_) => EXIT_BACKEND_ILL_TYPED,
+            LinkError::Refused(_) => EXIT_REFUSED,
         }
     }
 }
@@ -756,7 +832,8 @@ impl std::fmt::Display for LinkError {
             | LinkError::GccAbnormal(m)
             | LinkError::GccRejected(m)
             | LinkError::GccUnexplained(m)
-            | LinkError::IllTypedC(m) => {
+            | LinkError::IllTypedC(m)
+            | LinkError::Refused(m) => {
                 write!(f, "{}", m)
             }
         }
@@ -1025,6 +1102,9 @@ pub fn link(
     // will not compile". Everything else exits nonzero too and means something
     // else entirely, so it gets a code that accuses nobody.
     if !gcc_output.status.success() {
+        if let Some(refusal) = comparison_refusal(stderr) {
+            return Err(LinkError::Refused(refusal));
+        }
         if stderr_rejects(stderr, c_file) {
             // Byte-identical to the message pdc printed before this change.
             return Err(LinkError::GccRejected(format!(
@@ -1375,5 +1455,81 @@ build_output/B3.c:263:12: warning: returning 'const char *' from a function with
         // the one-line detail it reports. A message it cannot see is a blank
         // column in the gate output.
         assert!(msg.contains("error"), "{}", msg);
+    }
+
+    /// PD0080'S JUDGE, end to end (#89/#92, review round 5): the check code
+    /// generation emits beside a comparison, around two `const char*`, fails
+    /// in the real C compiler, and the link reports PD0080 — the named refusal,
+    /// with its line and column and a front-end refusal's exit code — and not a
+    /// raw `gcc compilation failed`. The same check around two `long long`s
+    /// compiles and links, with nothing to say.
+    #[test]
+    fn a_comparison_the_c_compiler_refuses_is_reported_as_pd0080() {
+        use crate::ast::BinOp;
+        let generator = crate::codegen::CodeGenerator::new("judge").unwrap();
+        let span = crate::errors::Span::new(0, 0, 7, 9);
+        let dir = tempfile::TempDir::new().unwrap();
+        let c = dir.path().join("judge.c");
+        let check = generator.c_scalar_check("s", "t", BinOp::Eq, span);
+        std::fs::write(
+            &c,
+            format!(
+                "int main(void) {{ const char* s = \"x\"; const char* t = \"y\"; \
+                 return ({} && (s == t)); }}\n",
+                check
+            ),
+        )
+        .unwrap();
+        let err = link(&c, &dir.path().join("judge"), OptLevel::Default)
+            .expect_err("a comparison of two addresses must not link");
+        assert!(matches!(err, LinkError::Refused(_)), "{:?}", err);
+        assert_eq!(err.exit_code(), EXIT_REFUSED);
+        let text = err.to_string();
+        assert!(text.contains("`==`") && text.contains("line 7, column 9"), "{}", text);
+
+        let check = generator.c_scalar_check("a", "b", BinOp::Lt, span);
+        std::fs::write(
+            &c,
+            format!(
+                "int main(void) {{ long long a = 1; long long b = 2; \
+                 return !({} && (a < b)); }}\n",
+                check
+            ),
+        )
+        .unwrap();
+        let notes = link(&c, &dir.path().join("judge"), OptLevel::Default)
+            .expect("two integers compare");
+        assert!(notes.is_empty(), "{:?}", notes);
+    }
+
+    /// THE TAG ALONE IS NOT THE CHECK (#89/#92, review round 6). Clang 21's
+    /// own stderr, captured from C this compiler emitted: under an unrelated
+    /// error the compiler ECHOES the source line, which holds the tag; and a
+    /// check fails as a CASCADE of an earlier error (a redeclared name keeps
+    /// its first, pointer, type). Neither is PD0080 — both are C this compiler
+    /// got wrong, which main reported as `gcc compilation failed` — and the
+    /// check failing alone still is.
+    #[test]
+    fn only_the_checks_own_failure_alone_is_pd0080() {
+        let echoed = "g.c:311:78: error: call to undeclared function 'id'; ISO C99 and later do not \
+                      support implicit function declarations [-Wimplicit-function-declaration]\n  \
+                      311 |     return (sizeof(struct { _Static_assert((0x11E >> __builtin_classify_type(\
+                      id(__pd_val0))) & (0x11E >> __builtin_classify_type(b)) & 1, \
+                      \"PD0080|1|71|==|same__i64\"); char __pd_; }) && (id(__pd_val0) == b));\n      \
+                      |    ^\n1 warning and 1 error generated.\n";
+        assert_eq!(comparison_refusal(echoed), None, "the echoed source line is not the check");
+        let cascade = "s.c:307:15: error: redefinition of 'a' with a different type: 'long long' vs \
+                       'const char *'\ns.c:308:15: error: redefinition of 'c' with a different type: \
+                       'long long' vs 'const char *'\ns.c:309:44: error: static assertion failed due \
+                       to requirement '(286 >> __builtin_classify_type(a)) & (286 >> \
+                       __builtin_classify_type(c)) & 1': PD0080|2|58|==|same__String\n1 warning and \
+                       3 errors generated.\n";
+        assert_eq!(comparison_refusal(cascade), None, "a check failing after another error is a cascade");
+        let alone = "sa.c:2:42: error: static assertion failed due to requirement '(286 >> \
+                     __builtin_classify_type(s)) & (286 >> __builtin_classify_type(t)) & 1': \
+                     PD0080|4|13|<|main\n    2 |   return (sizeof(struct { _Static_assert(... \
+                     \"PD0080|4|13|<|main\"); char __pd_; }) && (s < t)); }\n1 error generated.\n";
+        let text = comparison_refusal(alone).expect("the check failing alone is PD0080");
+        assert!(text.contains("`<`") && text.contains("line 4, column 13, in `main`"), "{}", text);
     }
 }

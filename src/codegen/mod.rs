@@ -733,8 +733,34 @@ impl CodeGenerator {
                         // question as "both are".
                         let left_type = self.infer_expr_type(left);
                         let right_type = self.infer_expr_type(right);
-                        if left_type == "const char*" && right_type == "const char*" {
+                        // C's OWN RULES FOR AN ADDRESS (#89/#92, review round 5).
+                        // The type checker refuses a String or an array in
+                        // arithmetic, but a generic body it never checked reaches
+                        // here, and `(x + 0) == (y + 0)` over two `const char*`
+                        // was typed `long long` — so the comparison backstop let
+                        // two addresses through. A pointer plus or minus an
+                        // integer is that pointer; two pointers subtracted are a
+                        // distance (`ptrdiff_t`, an integer); `+` on two Strings
+                        // is concatenation, the only String arithmetic emitted.
+                        let address = |t: &str| t.contains('*') || t.contains('[');
+                        let decayed = |t: &str| match t.find('[') {
+                            Some(i) => format!("{}*", t[..i].trim_end()),
+                            None => t.to_string(),
+                        };
+                        if matches!(op, BinOp::Add)
+                            && left_type == "const char*"
+                            && right_type == "const char*"
+                        {
                             Some("const char*".to_string())
+                        } else if matches!(op, BinOp::Add | BinOp::Sub)
+                            && (address(&left_type) || address(&right_type))
+                        {
+                            match (address(&left_type), address(&right_type), op) {
+                                (true, true, BinOp::Sub) => Some("long long".to_string()),
+                                (true, false, _) => Some(decayed(&left_type)),
+                                (false, true, BinOp::Add) => Some(decayed(&right_type)),
+                                _ => None,
+                            }
                         } else if left_type == "double" || right_type == "double" {
                             Some("double".to_string())
                         } else if left_type == "float" || right_type == "float" {
@@ -6304,7 +6330,9 @@ impl CodeGenerator {
                         BinOp::Le => " <= ",
                         _ => " >= ",
                     };
-                    self.output.push_str(&format!("({}{}{})", lhs, c_op, rhs));
+                    let check = self.c_scalar_check(&lhs, &rhs, *op, *span);
+                    self.output
+                        .push_str(&format!("({} && ({}{}{}))", check, lhs, c_op, rhs));
                 } else {
                     // Regular binary operation
                     self.output.push('(');
@@ -7676,7 +7704,7 @@ mod tests {
         // Check generated code contains expected elements
         assert!(codegen.output.contains("int main(int argc, char** argv)"));
         // A comparison yields a bool, which is `int` in C - not the operand type.
-        assert!(codegen.output.contains("int result = (a < b);"));
+        assert!(codegen.output.contains("int result = (sizeof(struct {") && codegen.output.contains("&& (a < b));"));
         assert!(codegen.output.contains("return result;"));
     }
 
@@ -7832,7 +7860,7 @@ mod tests {
         "#,
         )
         .unwrap();
-        assert!(c.contains("int c = (a < b);"), "{}", c);
+        assert!(c.contains("int c = (sizeof(struct {") && c.contains("&& (a < b));"), "{}", c);
         assert!(c.contains("int d = "), "{}", c);
     }
 
@@ -8869,6 +8897,37 @@ impl CodeGenerator {
         Ok(())
     }
 
+    /// THE C COMPILER AS PD0080'S JUDGE (review round 5).
+    ///
+    /// Every reconstruction of an operand's C type has leaked in some review
+    /// round, so every Palladium comparison is emitted with a check the C
+    /// compiler itself evaluates: a `_Static_assert` that each operand's
+    /// `__builtin_classify_type` is an integer (1), a character (2), an enum
+    /// (3), a boolean (4) or a real (8) — the bit mask `0x11E` — inside a
+    /// `sizeof`, so it costs nothing at run time and `&&` keeps the result the
+    /// comparison's own `int`. `__builtin_classify_type` does not evaluate its
+    /// argument, so each operand still runs exactly once. MEASURED on this
+    /// toolchain (Apple clang behind `gcc`): every scalar carrier compiles
+    /// without a single warning, `-Wall -Wextra` included, and a pointer, an
+    /// array or a struct fails with the message below, which `crate::linker`
+    /// turns back into PD0080 at the recorded line and column (the operator's)
+    /// — never a raw C error — when it is the only error (a check failing
+    /// beside another error is that error's cascade: `comparison_refusal`).
+    /// A pointer distance (`p - q`) is a `ptrdiff_t` and passes: a number.
+    pub(crate) fn c_scalar_check(&self, lhs: &str, rhs: &str, op: BinOp, span: Span) -> String {
+        format!(
+            "sizeof(struct {{ _Static_assert((0x11E >> __builtin_classify_type({})) \
+             & (0x11E >> __builtin_classify_type({})) & 1, \"{}|{}|{}|{}|{}\"); char __pd_; }})",
+            lhs,
+            rhs,
+            crate::linker::COMPARISON_CHECK_MARKER,
+            span.line,
+            span.column,
+            op,
+            spelled_c_fn(&self.current_fn_name)
+        )
+    }
+
     /// Note the carrier a value form was declared with, while a comparison's
     /// operands are being generated (`comparison_carriers`).
     fn record_carrier(&mut self, expr: &Expr, c_type: &str) {
@@ -9040,4 +9099,12 @@ fn pattern_names(pattern: &Pattern, out: &mut Vec<String>) {
         },
         Pattern::Wildcard | Pattern::Literal(_) | Pattern::Range { .. } => {}
     }
+}
+
+/// A function's name as the comparison check records it: only the characters
+/// a C string literal can hold without escaping, so the marker always parses.
+fn spelled_c_fn(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == ':' { c } else { '_' })
+        .collect()
 }

@@ -923,3 +923,243 @@ fn a_break_in_a_nested_statement_loop_is_not_the_outer_loops_value() {
         .expect_err("d5166e8 refused this program too");
     assert_ne!(e.code().map(|c| c.to_string()), Some("PD0080".to_string()), "{}", e);
 }
+
+// ---------------------------------------------------------------------------
+// Review round 5: arithmetic on an address, and the C compiler as the judge.
+// ---------------------------------------------------------------------------
+
+/// astra's witness, verbatim. `x` and `y` are `const char*` temporaries (the
+/// `match` arms disagree), and `x + 0` was typed `long long` by code
+/// generation, so `(x + 0) == (y + 0)` compared two addresses: d5166e8 and
+/// be3efd0 printed `1` then `0` — `string_eq` right, `==` wrong.
+#[test]
+fn arithmetic_on_an_address_is_still_an_address() {
+    let text = refused(
+        "fn same<T>(a: T, b: T) -> bool {\n\
+             let x = match 1 { 1 => a, _ => 0 };\n\
+             let y = match 1 { 1 => b, _ => 0 };\n\
+             (x + 0) == (y + 0)\n\
+         }\n\
+         fn main() {\n\
+             let a = int_to_string(12);\n\
+             let b = \"12\";\n\
+             if string_eq(a, b) { print_int(1); } else { print_int(0); }\n\
+             if same(a, b) { print_int(1); } else { print_int(0); }\n\
+         }\n",
+        "cmp_r5_arithmetic_hole",
+    );
+    assert!(text.contains("`==` is not defined on `String`"), "{}", text);
+}
+
+/// The forms around a String operand, each at Strings (refused) and at `i64`
+/// (runs, and printed 1 on d5166e8): arithmetic in either order, a cast, a
+/// call, a field.
+#[test]
+fn every_form_around_a_string_operand_is_judged() {
+    let setup = "let x = match 1 { 1 => a, _ => 0 }; let y = match 1 { 1 => b, _ => 0 };";
+    for tail in [
+        "(x + 0) == (y + 0)",
+        "(0 + x) == (0 + y)",
+        "(x - 0) == (y - 0)",
+        "(x + 0) == y",
+        "pick(x) == pick(y)",
+        "(x as T) == y",
+    ] {
+        let body = format!("{} {}", setup, tail);
+        let program = generic_with(&body, AT_STRINGS).replace(
+            "fn pick(s: String) -> String { s }",
+            "fn pick<P>(s: P) -> P { s }",
+        );
+        let text = refused(&program, "cmp_r5_string_forms");
+        assert!(text.contains("PD0080") || text.contains("is not defined on"), "{}: {}", tail, text);
+    }
+    for tail in ["(x + 0) == (y + 0)", "(0 + x) == (0 + y)", "(x - 0) == (y - 0)"] {
+        let body = format!("{} {}", setup, tail);
+        assert_eq!(run(&generic_with(&body, AT_INTS), "cmp_r5_int_forms"), "1\n", "{}", tail);
+    }
+    let text = refused(
+        "struct S { v: String }\n\
+         fn main() { let s = S { v: int_to_string(12) }; let t = S { v: \"12\" }; \
+         if s.v == t.v { print_int(1); } else { print_int(0); } }",
+        "cmp_r5_string_field",
+    );
+    assert!(text.contains("`==` is not defined on `String`"), "{}", text);
+}
+
+/// Two addresses SUBTRACTED are a distance — an integer in C (`ptrdiff_t`) —
+/// and compare by value. These printed 1 on d5166e8 and must keep printing it;
+/// a reference plus an integer is still an address, and is refused.
+#[test]
+fn a_pointer_distance_is_a_number_and_a_pointer_sum_is_not() {
+    assert_eq!(
+        run(
+            "fn main() { let a = 12; let r = &a; \
+             if (r - r) == 0 { print_int(1); } else { print_int(0); } }",
+            "cmp_r5_distance",
+        ),
+        "1\n"
+    );
+    let text = refused(
+        "fn main() { let a = 12; let b = 12; let r = &a; let s = &b; \
+         if (r + 0) == (s + 0) { print_int(1); } else { print_int(0); } }",
+        "cmp_r5_pointer_sum",
+    );
+    assert!(text.contains("a pointer"), "{}", text);
+}
+
+/// Every comparison is emitted with the static check the C compiler judges
+/// (its refusal path is `linker::tests::a_comparison_the_c_compiler_refuses_
+/// is_reported_as_pd0080`), and a program that compares integers prints what
+/// it printed before.
+#[test]
+fn every_comparison_is_emitted_with_the_c_compilers_check() {
+    let name = unique_module_name("cmp_r5_emitted");
+    let dir = TempDir::new().unwrap();
+    let src = dir.path().join(format!("{}.pd", name));
+    fs::write(&src, "fn main() { let a = 1; let b = 2; if a < b { print_int(1); } }").unwrap();
+    let c_file = Driver::new().compile_file(&src).expect("compiles");
+    let c = fs::read_to_string(&c_file).unwrap();
+    assert!(
+        c.contains("_Static_assert((0x11E >> __builtin_classify_type(a)) & (0x11E >> __builtin_classify_type(b)) & 1")
+            && c.contains("&& (a < b))"),
+        "{}",
+        c
+    );
+    assert_eq!(
+        run("fn main() { let a = 1; let b = 2; if a < b { print_int(1); } }", "cmp_r5_emitted_run"),
+        "1\n"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Review round 6: the C compiler's refusal names the operator's own place.
+// ---------------------------------------------------------------------------
+
+/// The four left-operand shapes a comparison is written with, each on its own
+/// line, the operator at a column no operand starts at: a name, a
+/// parenthesised sum, a call, a name again under `==`. A name and a literal
+/// have no position in the tree, and the comparison took its line and column
+/// from its LEFT OPERAND, so be3efd0's check said `PD0080|0|0|<|main` for
+/// every one of the first, second and fourth, and the call's column for the
+/// third — never the operator's.
+const PLACED: &str = "fn f(x: i64) -> i64 { x }\n\
+fn main() {\n\
+    let a = 1;\n\
+    let b = 2;\n\
+    if a    <   b { print_int(1); }\n\
+    let c = (a + 1) >= b;\n\
+    if f(a) != 3 { print_int(3); }\n\
+    if b == a { print_int(2); }\n\
+}\n";
+
+/// `source` emitted as C by this compiler: the C file and its text. The
+/// four-space indentation `\n\` drops is put back on every statement inside
+/// `main`, which the columns the tests count include.
+fn emitted_c(source: &str, prefix: &str) -> (TempDir, std::path::PathBuf, String) {
+    let name = unique_module_name(prefix);
+    let dir = TempDir::new().unwrap();
+    let src = dir.path().join(format!("{}.pd", name));
+    let source = source
+        .lines()
+        .map(|l| if l.starts_with("let") || l.starts_with("if") { format!("    {}", l) } else { l.to_string() })
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&src, source).unwrap();
+    let c_file = Driver::new().compile_file(&src).expect("a legal program");
+    let c = fs::read_to_string(&c_file).unwrap();
+    (dir, c_file, c)
+}
+
+/// Line 5 `    if a    <   b`, column 13; line 6 `    let c = (a + 1) >= b;`,
+/// column 21; line 7 `    if f(a) != 3`, column 13; line 8 `    if b == a`,
+/// column 10 — 1-based, as every other diagnostic of this compiler counts.
+/// (`c == true` would not do for the last: the optimizer folds it to `c`.)
+#[test]
+fn the_c_compilers_check_names_the_operators_line_and_column() {
+    let (_dir, _c_file, c) = emitted_c(PLACED, "cmp_r6_placed");
+    for marker in [
+        "\"PD0080|5|13|<|main\"",
+        "\"PD0080|6|21|>=|main\"",
+        "\"PD0080|7|13|!=|main\"",
+        "\"PD0080|8|10|==|main\"",
+    ] {
+        assert!(c.contains(marker), "{} is not in the emitted C:\n{}", marker, c);
+    }
+    assert!(!c.contains("PD0080|0|"), "a comparison with no place:\n{}", c);
+}
+
+/// THE JUDGE'S REFUSAL, END TO END. No program measured so far reaches the C
+/// compiler's check with an address — the backstop refuses first — so this
+/// takes the C this compiler emitted for `a < b` over two integers and makes
+/// the two operands addresses, which is exactly what the check exists for (an
+/// operand whose carrier code generation got wrong). The real link must refuse
+/// it as PD0080 at the operator's source line and column, with a front-end
+/// refusal's exit code — not gcc's `compilation failed`, not an ICE — and the
+/// driver must carry it to the user under PD0080.
+#[test]
+fn a_comparison_only_the_c_compiler_can_judge_is_pd0080_at_the_operator() {
+    use palladium::driver::RunOutcome;
+    use palladium::linker::{link, LinkError, EXIT_REFUSED};
+    let (dir, c_file, c) = emitted_c(
+        "fn main() {\n\
+         let a = 1;\n\
+         let b = 2;\n\
+         if a    <   b { print_int(1); }\n\
+         }\n",
+        "cmp_r6_judged",
+    );
+    for decl in ["long long a = 1LL;", "long long b = 2LL;"] {
+        assert!(c.contains(decl), "{} is not in the emitted C:\n{}", decl, c);
+    }
+    fs::write(
+        &c_file,
+        c.replace("long long a = 1LL;", "const char* a = \"x\";")
+            .replace("long long b = 2LL;", "const char* b = \"y\";"),
+    )
+    .unwrap();
+    let err = link(&c_file, &dir.path().join("judged"), OptLevel::Default)
+        .expect_err("two addresses must not link");
+    assert!(matches!(err, LinkError::Refused(_)), "not the named refusal: {:?}", err);
+    assert_eq!(err.exit_code(), EXIT_REFUSED);
+    let text = err.to_string();
+    assert!(text.contains("`<`") && text.contains("line 4, column 13, in `main`"), "{}", text);
+    let e = RunOutcome::Link(err).into_compile_error();
+    assert_eq!(e.code().map(|c| c.to_string()), Some("PD0080".to_string()), "{}", e);
+    assert!(e.to_string().contains("line 4, column 13"), "{}", e);
+    assert!(!e.to_string().contains("gcc"), "{}", e);
+}
+
+/// AND THE JUDGE CLAIMS NOTHING ELSE. Two panel programs whose C this compiler
+/// gets wrong for reasons that are not this rule — a generic called from a
+/// generic is never emitted (`id` undeclared), and a `let` that shadows a
+/// parameter is emitted as a C redeclaration — both comparing INTEGERS. On
+/// main both are `gcc compilation failed`. Round 5 named both PD0080, because
+/// the tag was read anywhere in gcc's stderr: in the source line the compiler
+/// echoes under the first, and in a check that failed only as the
+/// redeclaration's cascade in the second. Both must stay the link failure
+/// they were, never a comparison refusal.
+#[test]
+fn a_gcc_failure_that_is_not_the_check_is_not_pd0080() {
+    use palladium::linker::{link, LinkError};
+    for (program, prefix) in [
+        (
+            "fn id<X>(x:X)->X{x} fn same<T>(a:T,b:T)->bool { id({let n:bool=1; a}) == b }\n\
+             fn main() { if same(12,12) {print_int(1);} else {print_int(0);} }\n",
+            "cmp_r6_echoed",
+        ),
+        (
+            "fn b(x: bool) { if x { print_int(1); } else { print_int(0); } }\n\
+             fn same<T>(a: T, c: T) -> bool { let a = 1; let c = 1; a == c }\n\
+             fn main() { let aa = int_to_string(12); let bb = \"12\"; b(same(aa, bb)); }\n",
+            "cmp_r6_cascade",
+        ),
+    ] {
+        let (dir, c_file, _c) = emitted_c(program, prefix);
+        let err = link(&c_file, &dir.path().join("x"), OptLevel::Default)
+            .expect_err("main's gcc refused this C too");
+        assert!(matches!(err, LinkError::GccRejected(_)), "{}: {:?}", prefix, err);
+        // gcc's own stderr rides along, echoed source line, tag and all; the
+        // refusal's words must not.
+        assert!(!err.to_string().contains("does not compare by value"), "{}: {}", prefix, err);
+    }
+}
