@@ -2405,8 +2405,8 @@ impl TypeVisit for Captures<'_> {
     }
 }
 
-/// Every name `ty` spells — a type, a type parameter, or a parameter the
-/// parser read as a const argument (`Box2<T>` parses `T` that way).
+/// Every name `ty` spells — a type, a type parameter, or a const parameter
+/// written as an argument (`Arr<N>` under `const N`).
 fn names_in(ty: &Type, out: &mut Vec<String>) {
     match ty {
         Type::Custom(n) | Type::TypeParam(n) => out.push(n.clone()),

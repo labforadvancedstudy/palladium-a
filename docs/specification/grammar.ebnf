@@ -194,8 +194,8 @@ generic_param  = "'" identifier                 (* lifetime *)
                | "const" identifier ':' type ;  (* const, fn/struct/enum only *)
 
 # Trait bounds (`<T: Display>`) are a parse error: only bare names are accepted.
-# Inside `<...>` an all-uppercase name is reclassified as a CONST argument, so
-# `Foo<T>` does not mean what it appears to.
+# Inside `<...>` a name is a CONST argument exactly when it names a const
+# parameter of the enclosing fn/struct/enum, and a type argument otherwise.
 
 # =============================================================================
 # Types

@@ -53,6 +53,10 @@ pub struct Parser {
     current: usize,
     /// Type parameters currently in scope (for parsing generic functions)
     type_params_in_scope: Vec<String>,
+    /// Const parameters of the `fn`, `struct` or `enum` being parsed — the
+    /// only three lists that can declare one. A name inside `Name<…>` is a
+    /// const argument exactly when it is one of these (#93, #91).
+    const_params_in_scope: Vec<String>,
     /// Cache for current token to avoid repeated bounds checking
     current_token_cache: Option<(Token, Span)>,
 }
@@ -208,24 +212,24 @@ fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
 /// 4,000-line file: it is five functions and one call site, and nothing else in
 /// this file participates.
 ///
-///   `src/parser/mod.rs:78-136`    `BlockTail` — the shape of the block's final
+///   `src/parser/mod.rs:82-140`    `BlockTail` — the shape of the block's final
 ///                                statement as the parser SAW it, plus
 ///                                `writes_a_value()`, which decides whether a
 ///                                refusal is owed at all
-///   `src/parser/mod.rs:155-203`  `returns_on_every_path` — the decision. The
+///   `src/parser/mod.rs:159-207`  `returns_on_every_path` — the decision. The
 ///                                NOTE inside it used to record one declared
 ///                                residual (a `match` with no final `else`);
 ///                                N6-11's trap discharged it
-///   `src/parser/mod.rs:278-280`  `already_terminates` — `any`, not "the last
+///   `src/parser/mod.rs:282-284`  `already_terminates` — `any`, not "the last
 ///                                statement", because anything after an
 ///                                unconditional terminator is unreachable
-///   `src/parser/mod.rs:283-311`  `stmt_terminates` — the four cases, each
+///   `src/parser/mod.rs:287-315`  `stmt_terminates` — the four cases, each
 ///                                paired with its counterpart in
 ///                                scripts/check-c-returns.py by the table above
-///   `src/parser/mod.rs:339-371`  `contains_escaping_break` +
+///   `src/parser/mod.rs:343-375`  `contains_escaping_break` +
 ///                                `stmt_contains_escaping_break` — reachable
 ///                                breaks only, mirroring `contains_break`
-///   `src/parser/mod.rs:1216-1240`  the only caller: the refusal and the lowering
+///   `src/parser/mod.rs:1222-1246`  the only caller: the refusal and the lowering
 ///
 /// The agreement between this side and the C-side reader is not asserted by
 /// this comment — it is executed by `assert_net_a` in tests/d3b_tail_if.rs,
@@ -506,6 +510,7 @@ impl Parser {
             tokens,
             current: 0,
             type_params_in_scope: Vec::new(),
+            const_params_in_scope: Vec::new(),
             current_token_cache,
         }
     }
@@ -1091,6 +1096,7 @@ impl Parser {
 
         // Set type parameters in scope for parsing function signature and body
         self.type_params_in_scope = type_params.clone();
+        self.const_params_in_scope = const_params.iter().map(|(n, _)| n.clone()).collect();
 
         self.consume(Token::LeftParen, "Expected '('")?;
 
@@ -1321,8 +1327,9 @@ impl Parser {
 
         let end_span = self.consume(Token::RightBrace, "Expected '}'")?;
 
-        // Clear type parameters from scope
+        // Clear type and const parameters from scope
         self.type_params_in_scope.clear();
+        self.const_params_in_scope.clear();
 
         Ok(Function {
             visibility: crate::ast::Visibility::Private, // TODO: parse pub keyword
@@ -1361,6 +1368,11 @@ impl Parser {
 
         // Parse generic parameters (lifetimes, types, and consts) if present
         let (lifetime_params, type_params, const_params) = self.parse_generic_params()?;
+        // Its const parameters scope its fields (`struct S<const N: i64> { a: Arr<N> }`).
+        let outer_consts = std::mem::replace(
+            &mut self.const_params_in_scope,
+            const_params.iter().map(|(n, _)| n.clone()).collect(),
+        );
 
         self.consume(Token::LeftBrace, "Expected '{' after struct name")?;
 
@@ -1391,6 +1403,7 @@ impl Parser {
         }
 
         let end_span = self.consume(Token::RightBrace, "Expected '}' after struct fields")?;
+        self.const_params_in_scope = outer_consts;
 
         Ok(StructDef {
             visibility: crate::ast::Visibility::Private, // TODO: parse pub keyword
@@ -1425,6 +1438,11 @@ impl Parser {
 
         // Parse generic parameters (lifetimes, types, and consts) if present
         let (lifetime_params, type_params, const_params) = self.parse_generic_params()?;
+        // Its const parameters scope its payloads (`enum E<const N: i64> { X(Arr<N>) }`).
+        let outer_consts = std::mem::replace(
+            &mut self.const_params_in_scope,
+            const_params.iter().map(|(n, _)| n.clone()).collect(),
+        );
 
         self.consume(Token::LeftBrace, "Expected '{' after enum name")?;
 
@@ -1510,6 +1528,7 @@ impl Parser {
         }
 
         let end_span = self.consume(Token::RightBrace, "Expected '}' after enum variants")?;
+        self.const_params_in_scope = outer_consts;
 
         Ok(EnumDef {
             visibility: crate::ast::Visibility::Private,
@@ -3985,23 +4004,21 @@ impl Parser {
                                     self.advance()?; // consume the integer
                                     args.push(GenericArg::Const(ConstValue::Integer(n_val)));
                                 } else {
-                                    // Otherwise parse as type
-                                    let ty = self.parse_type()?;
-                                    // If it's an identifier, it could be a const param
-                                    match &ty {
+                                    // Otherwise a name: a const argument exactly when it
+                                    // RESOLVES to a const parameter in scope, a type
+                                    // otherwise. It used to be decided by its SPELLING
+                                    // (all capitals or `_`), so `Wrap<K>` was a const and
+                                    // `Arr<n>` under `const n` a type (#93, #91). A global
+                                    // `const` item is not in this scope and reads as a type.
+                                    match self.parse_type()? {
                                         Type::Custom(name)
-                                            if name
-                                                .chars()
-                                                .all(|c| c.is_uppercase() || c == '_') =>
+                                            if self.const_params_in_scope.contains(&name) =>
                                         {
-                                            // Assume uppercase identifiers are const params
                                             args.push(GenericArg::Const(ConstValue::ConstParam(
-                                                name.clone(),
+                                                name,
                                             )));
                                         }
-                                        _ => {
-                                            args.push(GenericArg::Type(ty));
-                                        }
+                                        ty => args.push(GenericArg::Type(ty)),
                                     }
                                 }
 

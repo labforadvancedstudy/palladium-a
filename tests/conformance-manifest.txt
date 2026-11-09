@@ -136,6 +136,7 @@ tests/regression/array_param_mut_write.pd	run	-	expected	-	-
 tests/regression/param_reused_after_call.pd	run	-	expected	-	-
 tests/regression/lifetimes_uninferred.pd	run	-	expected	-	-
 tests/regression/enum_in_composites.pd	run	-	expected	-	-
+tests/regression/generic_argument_kind.pd	run	-	expected	-	-
 tests/regression/projection_move_scope.pd	run	-	expected	-	-
 
 # tests/reject/ -- NEGATIVE TESTS. Each of these MUST be refused, and that is

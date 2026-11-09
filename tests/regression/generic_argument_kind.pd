@@ -1,0 +1,70 @@
+// Regression test: a generic ARGUMENT is a type or a const by what its name
+// resolves to, never by its spelling (#93, #91).
+//
+// Until #93 the parser read every name made of capitals and `_` inside
+// `Name<...>` as a const argument, and every other name as a type. So
+// `Wrap<K>` over `enum K` was a const (`expected Wrap<const K>, found
+// Wrap<K>`), and `Arr<n>` under `const n` a type. Now a name is a const
+// argument exactly when it is a const parameter of the `fn`, `struct` or
+// `enum` being parsed.
+//
+// What this file runs is every place where that reading FLIPS and the
+// program ran before the fix: it must still run, with the same output. A
+// capital type argument in a signature that is never instantiated (const ->
+// type); an enum's own const parameter, in capitals and in lowercase, in its
+// payload (lowercase: type -> const); a list of a type and a const
+// parameter; and unannotated literals of a generic struct at an all-capitals
+// enum and at an `i64`.
+//
+// NOT CLAIMED: the #93 program itself, an ANNOTATED `let w: Wrap<K> = ...`.
+// It now passes the type checker exactly as `Wrap<Kind>` does and, like it,
+// is refused by gcc, because a written generic type is emitted as `void*`
+// (N4-15, M3). tests/n4_generic_argument_kind.rs pins the front end's
+// verdict and its C, and the diagnostic text of #91.
+//
+// Every value printed is a distinct code, so a wrong variant is a wrong
+// number rather than a silent pass.
+
+enum K { A, B, C }
+enum KIND { LO, HI }
+
+struct Wrap<T> { v: T }
+struct Arr<const N: i64> { x: i64 }
+struct Low<const n: i64> { x: i64 }
+struct M<T, const N: i64> { v: T }
+
+// The enum's own const parameter, in capitals and in lowercase.
+enum Caps<const N: i64> { X(Arr<N>), Y }
+enum Lower<const n: i64> { X(Low<n>), Y }
+
+// Capital type arguments in signatures nothing instantiates.
+fn never_k(w: Wrap<K>) -> i64 { return 1; }
+fn never_kind(w: Wrap<KIND>, k: Wrap<K>) -> i64 { return 2; }
+
+// A type parameter and a const parameter in one list.
+fn pick<T, const N: u64>(x: T) -> T { return x; }
+fn five<const N: u64>() -> i64 { return 5; }
+
+fn kcode(k: K) -> i64 {
+    match k { K::A => { return 0; } K::B => { return 1; } K::C => { return 2; } }
+}
+
+fn main() {
+    print("Unannotated at an enum:");
+    let w = Wrap { v: K::C };
+    print_int(kcode(w.v));
+    let h = Wrap { v: KIND::HI };
+    match h.v { KIND::LO => { print_int(10); } KIND::HI => { print_int(11); } }
+
+    print("Const parameter in a payload:");
+    let c = Caps::Y;
+    match c { Caps::X(a) => { print_int(20); } Caps::Y => { print_int(21); } }
+    let l = Lower::Y;
+    match l { Lower::X(a) => { print_int(30); } Lower::Y => { print_int(31); } }
+
+    print("Type and const parameters:");
+    print_int(pick(40));
+    print_int(five());
+    let m = M { v: 42 };
+    print_int(m.v);
+}

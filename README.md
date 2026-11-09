@@ -283,7 +283,7 @@ When you compile, you'll see detailed progress:
 - `?` operator — emits C referencing a `struct Result` layout codegen never defines
 - `async` / `.await` — emits a call to a `poll` member that is never generated
 - Generic types in a struct field, and tuples in a struct field or an enum payload — refused by name
-- Generics — generic arguments that are all-uppercase are misparsed as const generics
+- Generics — a written generic type (`let b: Foo<i64>`) is emitted as `void*`, which gcc refuses
 - `for` over an array *parameter* — uses `sizeof` on a decayed pointer
 
 ### ❌ Not implemented

@@ -8449,7 +8449,7 @@ mod tests {
     ///
     /// Postfix spans cover the whole suffix, so `?` is reported over `(x)?` and
     /// `.await` over `(3).await` rather than over the operator alone
-    /// (`src/parser/mod.rs:4670-4678`, `src/parser/mod.rs:4433-4441`). That is not
+    /// (`src/parser/mod.rs:4687-4695`, `src/parser/mod.rs:4450-4458`). That is not
     /// what these diagnostics
     /// *should* point at — it is what they currently point at. Narrowing the
     /// span to the operator is a welcome change: it will fail exactly this
@@ -9279,31 +9279,31 @@ mod tests {
         assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
-    // AN ALL-CAPITALS TYPE ARGUMENT IS READ AS A CONST PARAMETER by the parser
-    // (`src/parser/mod.rs`, "Assume uppercase identifiers are const params"),
-    // and a const parameter printed exactly like the type of the same name. So
-    // `Box2<K>` over `enum K` was refused with
-    // `Type mismatch: expected Box2<K>, found Box2<K>` — one spelling on both
-    // sides, after the enum-kind repair as before it. The checker could read
-    // `K` as the type, but every program that would then be admitted (spelled
-    // `Kk`, where no misreading happens) already fails at gcc in code
-    // generation's generic struct literal, so this keeps the refusal and makes
-    // it say what was compared: a const parameter against a type.
+    // A CONST READING IS NAMED IN A MISMATCH, and only a const parameter is
+    // read as one. The parser read every all-capitals argument as a const
+    // (#93: `Box2<K>` over `enum K` was refused as `Box2<const K>`). Now `K`
+    // is a const only where it names a const parameter in scope — here `f`'s
+    // own `const K`, shadowing the enum. Without it `Box2<K>` is the enum's
+    // instantiation and passes, as `Box2<Kk>` did (gcc then refuses both
+    // alike: N4-15). tests/n4_generic_argument_kind.rs has the rest.
     #[test]
     fn a_const_parameter_reading_is_named_in_a_mismatch() {
-        let err = check(
-            "enum K { A, B }\n\
-             struct Box2<T> { v: T }\n\
-             fn f(b: Box2<K>) -> i64 { return 1; }\n\
-             fn main() { print_int(f(Box2 { v: K::B })); }",
-        )
-        .expect_err("`Box2<K>` is still refused")
-        .to_string();
+        let program = |params: &str| {
+            format!(
+                "enum K {{ A, B }}\nstruct Box2<T> {{ v: T }}\n\
+                 fn f{}(b: Box2<K>) -> i64 {{ return 1; }}\n\
+                 fn main() {{ print_int(f(Box2 {{ v: K::B }})); }}",
+                params
+            )
+        };
+        let err = check(&program("<const K: i64>")).expect_err("a const `K`");
+        let err = err.to_string();
         assert!(
             err.contains("expected Box2<const K>, found Box2<K>"),
-            "the mismatch does not say which side read `K` as a const parameter: {}",
+            "the mismatch does not say which side read `K` as a const: {}",
             err
         );
+        assert!(check(&program("")).is_ok(), "the enum `K` is a type here");
     }
 
     // A GENERIC FUNCTION'S TYPE ARGUMENT TRAVELS AS A STRING, and the string

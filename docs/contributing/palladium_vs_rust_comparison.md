@@ -106,7 +106,7 @@ Performance is the flattering half. This is the other half.
 | Memory safety | ownership + borrow checking, no GC | same, plus a type system that models references |
 | Reference types | `&T` parses, but the type checker has none — `&T` and `T` are indistinguishable to it | fully typed, with lifetimes |
 | Traits | parse and emit **no code**; no dispatch mechanism exists | complete |
-| Generics | partial monomorphisation; `Foo<T>` is misparsed as a const argument | complete |
+| Generics | partial monomorphisation; a written generic type (`let b: Foo<i64>`) is emitted as `void*` and refused by gcc (N4-15) | complete |
 | Closures | none | complete |
 | Method syntax `x.f()` | rejected — call `Type::f(x)` | complete |
 | `Option` / `Result` | not built in; `?` rejected as unimplemented | core to the language |

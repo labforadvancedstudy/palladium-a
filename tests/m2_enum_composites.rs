@@ -297,8 +297,8 @@ fn main() {
 /// `Box2_Kk` — the receipt that the enum argument survived to code generation
 /// is now that the program runs and the `match` reads the variant. gcc on main.
 ///
-/// Spelled `Kk`, not `K`: a type argument written in all capitals is parsed as
-/// a const parameter, which is a different refusal.
+/// Spelled `Kk`, because until #93 a type argument written in all capitals was
+/// parsed as a const parameter; `K` now takes this same path.
 #[test]
 fn a_generic_struct_instantiated_at_an_enum_names_the_enum() {
     let out = run(
