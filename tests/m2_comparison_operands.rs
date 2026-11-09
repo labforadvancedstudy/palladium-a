@@ -1317,3 +1317,50 @@ fn a_file_scope_comparison_is_judged_in_a_twin_and_runs() {
     assert!(seventeen - sixteen < 1024, "one more level cost {} bytes", seventeen - sixteen);
     assert_eq!(run(&deep(17), "cmp_r7_file_scope_depth_run"), "1\n");
 }
+
+// ---------------------------------------------------------------------------
+// Review round 8: a program may name anything code generation invents.
+// ---------------------------------------------------------------------------
+
+/// EVERY NAME CODE GENERATION INVENTS, DECLARED BY A PROGRAM. Round 7's
+/// comparison temporary `__pd_cl0` captured a program's own `let __pd_cl0`
+/// (astra: main printed 0, b442a21 printed 1), and its file-scope judge
+/// `__pd_judge_A` redefined a program's function. The class was older than
+/// round 7 — measured on main 2ca5eb5: a program's `_match_expr`, `_i`,
+/// `__pd_hi0`, `__pd_n0`, `__pd_val0` or enum tag constant `__C__R` was
+/// captured by the generated one and the program printed the wrong number
+/// (3, 1 3, 2 3, 1 3, 0, the wrong arm), and a program defining
+/// `__pd_print_int`, `__pd_P_m`, `__pd_r0`, `__pd_range` or `_match_expr` as a
+/// function did not compile. Every source name beginning with `_` is now
+/// emitted as `_u_…`, where nothing is generated (`c_ident::c_name`), so each
+/// of these prints what the program says.
+#[test]
+fn a_program_may_name_anything_code_generation_invents() {
+    let yes = "fn yes() -> bool { true }\n";
+    let cases: Vec<(String, &str)> = vec![
+        // round 7's own temporaries and judge (astra's four)
+        (format!("{}fn main() {{ let __pd_cl0 = false; if (yes() == yes()) == __pd_cl0 {{ print_int(1); }} else {{ print_int(0); }} }}", yes), "0\n"),
+        (format!("{}fn main() {{ let __pd_cl0 = true; if (__pd_cl0 == yes()) == yes() {{ print_int(1); }} else {{ print_int(0); }} }}", yes), "1\n"),
+        (format!("{}fn main() {{ let __pd_cr0 = false; if (yes() == yes()) == __pd_cr0 {{ print_int(1); }} else {{ print_int(0); }} }}", yes), "0\n"),
+        ("const A: bool = 1 < 2;\nfn __pd_judge_A() { print_int(9); }\nfn main() { __pd_judge_A(); if A { print_int(1); } }".to_string(), "9\n1\n"),
+        (format!("{}fn f(__pd_cl0: bool, __pd_cr0: bool) -> bool {{ (yes() == yes()) == __pd_cl0 }}\nfn main() {{ if f(false, true) {{ print_int(1); }} else {{ print_int(0); }} }}", yes), "0\n"),
+        ("static __pd_judge_B: i64 = 5;\nconst A: bool = 1 < 2;\nfn main() { if A { print_int(__pd_judge_B); } }".to_string(), "5\n"),
+        // the temporaries, subject and index main already emitted
+        ("fn main() { let __pd_val0 = 7; let c = true; if c { let y = if c { __pd_val0 } else { 0 }; print_int(y); } }".to_string(), "7\n"),
+        ("fn main() { let _match_expr = 5; let k = 3; match k { 3 => { print_int(_match_expr); } _ => { print_int(0); } } }".to_string(), "5\n"),
+        ("fn main() { let _i = 7; let xs = [1, 2]; for x in xs { print_int(_i + x); } }".to_string(), "8\n9\n"),
+        ("fn main() { let __pd_hi0 = 9; for i in 0..2 { print_int(__pd_hi0 + i); } }".to_string(), "9\n10\n"),
+        ("fn main() { let __pd_n0 = 5; let __pd_k0 = 6; let __pd_done0 = 7; let __pd_lo0 = 8; for i in 0..=1 { print_int(__pd_n0 + __pd_k0 + __pd_done0 + __pd_lo0 + i); } }".to_string(), "26\n27\n"),
+        ("fn main() { let __pd_r0 = 4; let r = 0..2; for i in r { print_int(__pd_r0 + i); } }".to_string(), "4\n5\n"),
+        // an enum tag constant, a runtime symbol, method mangling, typedefs, functions, fields
+        ("enum C { R, G }\nfn main() { let __C__R = 1; let c = C::G; match c { C::R => { print_int(1); } C::G => { print_int(2); } } print_int(__C__R); }".to_string(), "2\n1\n"),
+        ("fn __pd_print_int(x: i64) { print_int(x + 100); }\nfn main() { __pd_print_int(1); }".to_string(), "101\n"),
+        ("struct P { v: i64 }\nimpl P { fn m(self) -> i64 { self.v } }\nfn __pd_P_m(p: P) -> i64 { 99 }\nfn main() { let p = P { v: 1 }; print_int(p.m()); }".to_string(), "1\n"),
+        ("struct __pd_range { a: i64 }\nstruct __pd_tuple2 { b: i64 }\nfn main() { let x = __pd_range { a: 1 }; let y = __pd_tuple2 { b: 2 }; let t = (3, 4); print_int(x.a + y.b + t.0 + t.1); }".to_string(), "10\n"),
+        ("fn _match_expr() -> i64 { 1 }\nfn _i() -> i64 { 2 }\nfn __pd_argc() -> i64 { 4 }\nfn main() { let k = 1; match k { 1 => { print_int(_match_expr() + _i() + __pd_argc()); } _ => {} } }".to_string(), "7\n"),
+        ("struct S { _match_expr: i64, __pd_val0: i64, _i: i64 }\nfn main() { let s = S { _match_expr: 1, __pd_val0: 2, _i: 3 }; let k = 4; match k { 4 => { print_int(s._match_expr + s.__pd_val0 + s._i); } _ => { print_int(0); } } }".to_string(), "6\n"),
+    ];
+    for (program, expected) in &cases {
+        assert_eq!(run(program, "cmp_r8_names"), *expected, "{}", program);
+    }
+}

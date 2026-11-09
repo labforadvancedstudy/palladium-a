@@ -4728,8 +4728,8 @@ impl CodeGenerator {
     fn fresh_hoist_name(&mut self) -> String {
         let n = self.hoist_counter;
         self.hoist_counter += 1;
-        // `__pd` is reserved to this compiler and the digits make it unique;
-        // `c_ident::escape_reserved_names` never produces this shape.
+        // `__pd` is reserved to this compiler and the digits make it unique: a
+        // source name beginning with `_` is emitted as `_u_…` (`c_ident::c_name`).
         format!("__pd_val{}", n)
     }
 

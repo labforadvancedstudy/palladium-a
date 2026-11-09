@@ -805,10 +805,16 @@ fn main() {
         "__label",
         "__extension",
     ] {
+        // Not a keyword, so never a keyword's escape. A name beginning with `_`
+        // gains the `_u` hygiene prefix instead (#89/#92 review round 8,
+        // `c_ident::c_name`): every name code generation invents begins with
+        // `_`, so a program's own never may.
+        let spelled = if name.starts_with('_') { format!("_u{}", name) } else { name.to_string() };
         assert!(
-            c.contains(&format!("long long {}(long long x)", name)),
-            "`{}` is not a reserved word and must be spelled as written:\n{}",
+            c.contains(&format!("long long {}(long long x)", spelled)),
+            "`{}` is not a reserved word and must be spelled `{}`:\n{}",
             name,
+            spelled,
             c
         );
     }

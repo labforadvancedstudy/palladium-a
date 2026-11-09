@@ -360,7 +360,7 @@ pub fn escape_generic_function(
         escape_type(ty);
     }
     escape_block(&mut out.body);
-    (c_ident(name).into_owned(), out)
+    (c_name(name).into_owned(), out)
 }
 
 /// The same for a generic struct template. See `escape_generic_function`.
@@ -373,7 +373,7 @@ pub fn escape_generic_struct(
         escape_in_place(field);
         escape_type(ty);
     }
-    (c_ident(name).into_owned(), out)
+    (c_name(name).into_owned(), out)
 }
 
 /// Is `name` a reserved word, or already in the image of the escape?
@@ -822,8 +822,43 @@ fn escape_expr(expr: &mut Expr) {
 }
 
 fn escape_in_place(name: &mut String) {
-    if let Cow::Owned(escaped) = c_ident(name) {
+    if let Cow::Owned(escaped) = c_name(name) {
         *name = escaped;
+    }
+}
+
+/// The C spelling of an identifier a PROGRAM wrote: `c_ident`, then — if it
+/// begins with `_` — `_u` in front (#89/#92, review round 8).
+///
+/// THE NAMES CODE GENERATION INVENTS ALL BEGIN WITH `_`, AND NONE WITH `_u_`:
+/// temporaries (`__pd_val<n>`, `__pd_cl<n>`/`__pd_cr<n>`, `__pd_lo<n>`,
+/// `__pd_hi<n>`, `__pd_k<n>`, `__pd_n<n>`, `__pd_done<n>`, `__pd_r<n>`), the
+/// `match` subject `_match_expr` and its labels `_match_end<n>`, the array
+/// loop's `_i`, file-scope judges `__pd_judge_<item>`, enum tag constants
+/// `__<E>__<V>`, method and import mangling `__pd_<T>_<m>`, tuple structs
+/// `__pd_tuple<N>…`, `__pd_range`, and every runtime symbol (`__pd_print_int`,
+/// `__pd_argc`, …). A program could write any of them: measured on main
+/// 2ca5eb5, `let _match_expr = 5;` read inside a `match` printed the subject,
+/// `let _i = 7;` read inside an array `for` printed the index, a local named
+/// like an enum tag constant picked the wrong arm, and round 7's
+/// `let __pd_cl0 = false;` was captured by the comparison's own temporary. So
+/// every source identifier beginning with `_` moves to `_u_…`, where nothing
+/// is generated: the generated namespace is unreachable from source.
+///
+/// Injective, so two source names never meet: `c_ident` is injective and keeps
+/// a name's first character; names beginning with `_` then gain the same
+/// prefix (injective), and their images all begin with `_u_`, which no name
+/// that does not begin with `_` can. A bare `_` is left alone (it is not a name
+/// anything generated could be). Applied at every ingress — the program, each
+/// imported module, each generic template — through `escape_in_place`, so a
+/// declaration and every use of it agree; every diagnostic still names the
+/// identifier as written, because this runs after the last check.
+pub fn c_name(name: &str) -> Cow<'_, str> {
+    let keyword_safe = c_ident(name);
+    if keyword_safe.starts_with('_') && keyword_safe != "_" {
+        Cow::Owned(format!("_u{}", keyword_safe))
+    } else {
+        keyword_safe
     }
 }
 
@@ -1001,6 +1036,50 @@ mod tests {
                 "`{}` collides with an earlier variant",
                 n
             );
+        }
+    }
+
+    /// THE GENERATED NAMESPACE IS UNREACHABLE (review round 8). Every name a
+    /// program writes that begins with `_` lands on `_u_…`; nothing else does,
+    /// and nothing generated does (`c_name`'s doc lists what is generated).
+    #[test]
+    fn a_source_name_never_lands_where_code_generation_names_things() {
+        for (source, c) in [
+            ("__pd_cl0", "_u__pd_cl0"),
+            ("__pd_val0", "_u__pd_val0"),
+            ("__pd_judge_A", "_u__pd_judge_A"),
+            ("_match_expr", "_u_match_expr"),
+            ("_i", "_u_i"),
+            ("__C__R", "_u__C__R"),
+            ("__pd_print_int", "_u__pd_print_int"),
+            ("_Bool", "_u_Bool_"),
+            ("_u_x", "_u_u_x"),
+            ("x", "x"),
+            ("double", "double_"),
+            ("_", "_"),
+        ] {
+            assert_eq!(c_name(source), c, "{}", source);
+        }
+        for generated in ["__pd_cl0", "__pd_val0", "_match_expr", "_match_end0", "_i", "__C__R", "__pd_judge_A"] {
+            let image = c_name(generated);
+            assert!(image.starts_with("_u_"), "{} -> {}", generated, image);
+            assert_ne!(image, generated);
+        }
+    }
+
+    /// Injective over a corpus that crosses both rules and the keyword escape.
+    #[test]
+    fn c_name_is_injective() {
+        let names = [
+            "_", "__", "_a", "a", "u_a", "_u_a", "_u", "u", "__pd_x", "_pd_x", "pd_x", "double",
+            "double_", "_double", "_double_", "_Bool", "_Bool_", "Bool", "_u_Bool_", "__label__",
+            "__label", "_u__label",
+        ];
+        let mut seen = std::collections::HashMap::new();
+        for n in names {
+            if let Some(other) = seen.insert(c_name(n).into_owned(), n) {
+                panic!("`{}` and `{}` both spell `{}`", other, n, c_name(n));
+            }
         }
     }
 }
