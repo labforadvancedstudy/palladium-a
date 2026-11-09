@@ -2150,7 +2150,7 @@ mod tests {
 // code generation skips them everywhere already, and expanding one is
 // substitution, not lookup. A CYCLE (`type A = B; type B = A;`) stops at the
 // first alias already being expanded (and never past `ALIAS_EXPANSION_LIMIT`):
-// a USED one is refused by the type checker (PD0080), and `(P, P)` doubled per
+// one the compiler expands is refused (PD0080, `alias_cycles`), and `(P, P)` doubled per
 // level to 2^64 nodes here, so this pass must stop at a repeat, not a depth.
 
 /// How deep one alias may expand into another before the expansion stops and
@@ -3129,25 +3129,5 @@ mod alias_expansion_tests {
             "f's `let a: A`: {:?}",
             f.body[0]
         );
-    }
-}
-
-/// Every type position of `items` OUTSIDE type aliases' own bodies, with the
-/// type parameters bound where it is written: the walker alias expansion
-/// uses, so the alias-cycle refusal (PD0080, `src/typeck/alias_cycles.rs`)
-/// sees every position an expansion would. An alias's body is reached only
-/// through a use of the alias, which is what makes an unused cycle no use.
-pub fn for_each_type_outside_aliases<'a>(
-    items: impl IntoIterator<Item = &'a Item>,
-    mut f: impl FnMut(&Type, &[String]),
-) {
-    struct Each<'a>(&'a mut dyn FnMut(&Type, &[String]));
-    impl TypeVisit for Each<'_> {
-        fn visit(&mut self, ty: &mut Type, bound: &[String]) {
-            (self.0)(ty, bound)
-        }
-    }
-    for item in items.into_iter().filter(|i| !matches!(i, Item::TypeAlias(_))) {
-        walk_item(&mut item.clone(), &mut Each(&mut f));
     }
 }

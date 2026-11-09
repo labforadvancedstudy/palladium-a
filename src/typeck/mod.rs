@@ -1852,6 +1852,7 @@ impl TypeChecker {
                                 self.type_aliases
                                     .insert(qualified_name, type_alias.ty.clone());
                             }
+                            self.alias_guard.forget(); // a name may now mean another alias
                         }
                     }
                     crate::ast::Item::Macro(_) => {
@@ -2402,8 +2403,6 @@ impl TypeChecker {
             )));
         }
 
-        // PD0080 — AN ALIAS CYCLE IS REFUSED WHERE IT IS USED, before anything expands one.
-        alias_cycles::refuse_alias_cycle_uses(program, &self.imported_modules, &self.type_aliases, &self.generic_type_aliases, &self.alias_guard)?;
 
         // WHICH NAMES ARE ENUMS, BEFORE ANY TYPE IS CONVERTED.
         //
@@ -2700,6 +2699,7 @@ impl TypeChecker {
                         self.type_aliases
                             .insert(type_alias.name.clone(), type_alias.ty.clone());
                     }
+                    self.alias_guard.forget(); // a name may now mean another alias
                 }
                 Item::Impl(impl_block) => {
                     // Register impl block with trait resolver
@@ -2886,7 +2886,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:3178-3181`), and walking an imported
+        // return (`src/typeck/mod.rs:3167-3170`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -3030,7 +3030,7 @@ impl TypeChecker {
 
                 // First check if it's a type alias
                 if let Some(aliased_type) = self.type_aliases.get(name) {
-                    let resolved = self.alias_guard.expand(alias_cycles::Opening::Plain(name), || self.resolved_alias(name, aliased_type));
+                    let resolved = self.alias_guard.expand(alias_cycles::Opening::Plain(name), Some(self.alias_tables()), || self.resolved_alias(name, aliased_type));
                     return resolved.unwrap_or_else(|| CheckerType::named_struct(name.clone())); // PD0080
                 }
 
@@ -3077,24 +3077,13 @@ impl TypeChecker {
                         };
                     }
 
-                    // Create a substitution map for type parameters only
-                    let mut substitutions = std::collections::HashMap::new();
-                    let type_args: Vec<crate::ast::Type> = args
-                        .iter()
-                        .filter_map(|arg| match arg {
-                            GenericArg::Type(t) => Some(t.clone()),
-                            GenericArg::Const(_) => None, // TODO: handle const generics in aliases
-                        })
-                        .collect();
-
-                    for (param, arg) in generic_alias.type_params.iter().zip(type_args.iter()) {
-                        substitutions.insert(param.clone(), arg.clone());
-                    }
-
-                    // Substitute type parameters in the aliased type
-                    let substituted_type =
-                        self.substitute_type_params_map(&generic_alias.ty, &substitutions);
-                    return (self.alias_guard.expand(alias_cycles::Opening::Generic(name, type_args.len()), || self.ast_type_to_checker_type(&substituted_type))).unwrap_or_else(|| CheckerType::named_struct(name.clone()));
+                    // The TYPE arguments, zipped to the parameters, substituted: the three
+                    // steps the alias-cycle graph also takes (`alias_cycles`), one copy each.
+                    let type_args = alias_type_arguments(args);
+                    let substitutions = alias_substitution(&generic_alias.type_params, &type_args);
+                    let substituted_type = substitute_alias_params(&generic_alias.ty, &substitutions);
+                    let tables = self.alias_tables();
+                    return (self.alias_guard.expand(alias_cycles::Opening::Generic(name, type_args.len()), Some(tables), || self.ast_type_to_checker_type(&substituted_type))).unwrap_or_else(|| CheckerType::named_struct(name.clone()));
                 }
 
                 // Not a type alias, convert generic types normally
@@ -3871,57 +3860,6 @@ impl TypeChecker {
         }
     }
 
-    /// Substitute type parameters in a type using a substitution map
-    #[allow(clippy::only_used_in_recursion)]
-    fn substitute_type_params_map(
-        &self,
-        ty: &crate::ast::Type,
-        substitutions: &std::collections::HashMap<String, crate::ast::Type>,
-    ) -> crate::ast::Type {
-        match ty {
-            crate::ast::Type::TypeParam(name) | crate::ast::Type::Custom(name) => {
-                // Check if this is a type parameter that should be substituted
-                if let Some(replacement) = substitutions.get(name) {
-                    replacement.clone()
-                } else {
-                    ty.clone()
-                }
-            }
-            crate::ast::Type::Generic { name, args } => {
-                // Recursively substitute in generic type arguments
-                let new_args: Vec<GenericArg> = args
-                    .iter()
-                    .map(|arg| match arg {
-                        GenericArg::Type(t) => {
-                            GenericArg::Type(self.substitute_type_params_map(t, substitutions))
-                        }
-                        GenericArg::Const(c) => GenericArg::Const(c.clone()), // TODO: substitute const params
-                    })
-                    .collect();
-                crate::ast::Type::Generic {
-                    name: name.clone(),
-                    args: new_args,
-                }
-            }
-            crate::ast::Type::Array(elem_type, size) => crate::ast::Type::Array(
-                Box::new(self.substitute_type_params_map(elem_type, substitutions)),
-                size.clone(),
-            ),
-            crate::ast::Type::Reference {
-                lifetime,
-                inner,
-                mutable,
-            } => crate::ast::Type::Reference {
-                lifetime: lifetime.clone(),
-                inner: Box::new(self.substitute_type_params_map(inner, substitutions)),
-                mutable: *mutable,
-            },
-            // Other types don't contain type parameters
-            _ => ty.clone(),
-        }
-    }
-
-    /// Type check an expression and return its type
     fn check_expression(&mut self, expr: &Expr) -> Result<CheckerType> {
         match expr {
             Expr::String(_) => Ok(CheckerType::STRING),
@@ -8455,7 +8393,7 @@ mod tests {
     ///
     /// Postfix spans cover the whole suffix, so `?` is reported over `(x)?` and
     /// `.await` over `(3).await` rather than over the operator alone
-    /// (`src/parser/mod.rs:4687-4695`, `src/parser/mod.rs:4450-4458`). That is not
+    /// (`src/parser/mod.rs:4692-4700`, `src/parser/mod.rs:4455-4463`). That is not
     /// what these diagnostics
     /// *should* point at — it is what they currently point at. Narrowing the
     /// span to the operator is a welcome change: it will fail exactly this
@@ -9520,6 +9458,87 @@ impl TypeChecker {
         match self.alias_guard.take() {
             Some(cycle) => Err(cycle),
             None => result,
+        }
+    }
+}
+
+/// Substitute a generic alias's (or generic item's) parameters by name: the
+/// checker's one substitution, shared with the alias-cycle graph (`alias_cycles`)
+/// so that the two cannot disagree about where an argument lands.
+pub(crate) fn substitute_alias_params(
+    ty: &crate::ast::Type,
+    substitutions: &HashMap<String, crate::ast::Type>,
+) -> crate::ast::Type {
+    match ty {
+        crate::ast::Type::TypeParam(name) | crate::ast::Type::Custom(name) => {
+            // Check if this is a type parameter that should be substituted
+            if let Some(replacement) = substitutions.get(name) {
+                replacement.clone()
+            } else {
+                ty.clone()
+            }
+        }
+        crate::ast::Type::Generic { name, args } => {
+            // Recursively substitute in generic type arguments
+            let new_args: Vec<GenericArg> = args
+                .iter()
+                .map(|arg| match arg {
+                    GenericArg::Type(t) => {
+                        GenericArg::Type(substitute_alias_params(t, substitutions))
+                    }
+                    GenericArg::Const(c) => GenericArg::Const(c.clone()), // TODO: substitute const params
+                })
+                .collect();
+            crate::ast::Type::Generic {
+                name: name.clone(),
+                args: new_args,
+            }
+        }
+        crate::ast::Type::Array(elem_type, size) => crate::ast::Type::Array(
+            Box::new(substitute_alias_params(elem_type, substitutions)),
+            size.clone(),
+        ),
+        crate::ast::Type::Reference {
+            lifetime,
+            inner,
+            mutable,
+        } => crate::ast::Type::Reference {
+            lifetime: lifetime.clone(),
+            inner: Box::new(substitute_alias_params(inner, substitutions)),
+            mutable: *mutable,
+        },
+        // Other types don't contain type parameters
+        _ => ty.clone(),
+    }
+}
+
+/// A generic alias's TYPE arguments, in order: a const argument is filtered out
+/// (`G<1>` gives none), and the parameters are then zipped to what is left.
+pub(crate) fn alias_type_arguments(args: &[GenericArg]) -> Vec<crate::ast::Type> {
+    args.iter()
+        .filter_map(|arg| match arg {
+            GenericArg::Type(t) => Some(t.clone()),
+            GenericArg::Const(_) => None, // TODO: handle const generics in aliases
+        })
+        .collect()
+}
+
+/// The substitution a generic alias's expansion performs: parameter `k` is
+/// type argument `k`, a parameter without one is left as written (and resolves
+/// globally). Each parameter is named once (PD0081, the parser).
+pub(crate) fn alias_substitution(
+    params: &[String],
+    type_args: &[crate::ast::Type],
+) -> HashMap<String, crate::ast::Type> {
+    params.iter().cloned().zip(type_args.iter().cloned()).collect()
+}
+
+impl TypeChecker {
+    /// The alias tables as they are now: what the alias-cycle guard judges by.
+    fn alias_tables(&self) -> alias_cycles::AliasTables<'_> {
+        alias_cycles::AliasTables {
+            plain: &self.type_aliases,
+            generic: &self.generic_type_aliases,
         }
     }
 }

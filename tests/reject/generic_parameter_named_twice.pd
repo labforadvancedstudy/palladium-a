@@ -1,0 +1,19 @@
+// NEGATIVE TEST -- a generic parameter list names each parameter once.
+//
+// `type Pick<T, T> = T;` has no meaning the language defines: the type
+// checker substituted the LAST `T` (its substitution map is a `HashMap`, so a
+// second insert wins), the alias-cycle analysis read the first, and so
+// `Pick<String, G<X>>` was a cycle in one reading and finite in the other — on
+// main it overflowed the stack (#93 review round 4). Refused where it is
+// written, by name: PD0081, at every kind of parameter list, lifetimes and
+// const parameters included.
+type Pick<T, T> = T;
+type G<X> = Pick<String, G<X>>;
+
+fn f(x: G<i64>) -> i64 {
+    return 1;
+}
+
+fn main() {
+    print_int(7);
+}

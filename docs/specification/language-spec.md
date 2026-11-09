@@ -685,7 +685,7 @@ program = { import } { item } ;
 ```
 
 **Imports must all precede items** — the parser drains imports first
-(`src/parser/mod.rs:686-687`), so an `import` after a `fn` is a syntax error.
+(`src/parser/mod.rs:687-688`), so an `import` after a `fn` is a syntax error.
 
 ```ebnf
 import = "import" path [ "as" identifier ] ";"
@@ -693,12 +693,12 @@ import = "import" path [ "as" identifier ] ";"
        | "import" path "::" "{" identifier { "," identifier } "}" ";" ;
 ```
 
-Items (`src/parser/mod.rs:954`): `fn`, `struct`, `enum`, `trait`, `impl`, `type`, `macro`, `const`,
+Items (`src/parser/mod.rs:955`): `fn`, `struct`, `enum`, `trait`, `impl`, `type`, `macro`, `const`,
 `static`. **unimplemented: there is no top-level `mod` or `use` item** — so
 [N11](#n11-modules)'s file-based modules exist only as far as `import` reaches.
 
 **implemented — top-level `const` and `static`** (N3-09, N3-10), parsed by
-`src/parser/mod.rs:1992`, registered by `src/typeck/mod.rs:1901` and emitted by
+`src/parser/mod.rs:1997`, registered by `src/typeck/mod.rs:1902` and emitted by
 `src/codegen/mod.rs:3061`. Both take a MANDATORY type and a MANDATORY initialiser:
 
 ```ebnf
@@ -721,7 +721,7 @@ collide with a libc symbol the program never mentions.
 rather than left to the C compiler, whose `initializer element is not constant` names generated
 code. Types: `i32`, `i64`/`int`, `u32`, `u64`, `f32`, `f64`, `bool`. Initialisers: integer and float
 literals, `true`/`false`, and unary and binary operators over them
-(`src/parser/mod.rs:2087`) — so a call, another item's name, a string, an array, a struct literal,
+(`src/parser/mod.rs:2092`) — so a call, another item's name, a string, an array, a struct literal,
 an enum constructor, an `if` or a `match` is a compile error. A `String` item is refused for the
 type and not only for the initialiser: a Palladium `String` is a pointer into a runtime arena, so
 its value needs code that runs, and nothing runs before `main`.
@@ -755,7 +755,7 @@ self_param = [ "&" ] [ "mut" ] "self" ;
 **unimplemented**: default parameter values, pattern parameters, varargs, `where` clauses.
 
 **unimplemented — effect clauses.** `![io]` does not exist in the surface syntax.
-`Function.effects` is hardcoded `None` by the parser (`src/parser/mod.rs:1348`, corrected from
+`Function.effects` is hardcoded `None` by the parser (`src/parser/mod.rs:1349`, corrected from
 line 1325 of v0.2's `src/parser/mod.rs`, which is where the `Function` literal opens). Effects are *inferred* afterwards
 (`src/effects/mod.rs`) and only printed by the driver (`src/driver/mod.rs:176`, corrected
 from `src/driver/mod.rs:164-170`); they gate nothing. `crate::effects::` is referenced from exactly one place in
@@ -779,7 +779,7 @@ which was ~250 lines low):
 ### A4.3 Enums
 
 **implemented**: unit, tuple, and struct variants; construction and `match` both work.
-`pub` is honoured (`src/parser/mod.rs:1005-1009`, `src/ast/mod.rs:182`): a module's `enum` reaches a
+`pub` is honoured (`src/parser/mod.rs:1006-1010`, `src/ast/mod.rs:182`): a module's `enum` reaches a
 downstream program only if it said `pub`, and the refusal for one that did not is
 `Undefined enum type: <name>` before any C exists.
 
@@ -793,11 +793,11 @@ and `local_type_shadows_import` decides the rest.*
 
 ### A4.4 Traits
 
-**unimplemented.** Traits parse (`src/parser/mod.rs:1550`, corrected from line 736–960 of the pre-cleanup revision) and then
+**unimplemented.** Traits parse (`src/parser/mod.rs:1551`, corrected from line 736–960 of the pre-cleanup revision) and then
 emit nothing — codegen ignores `Item::Trait` (`src/codegen/mod.rs:2414-2417`, corrected from line 754–757 of the pre-cleanup revision). Trait method bodies are never typechecked (`src/typeck/mod.rs:2792-2793`, corrected
-from `src/typeck/mod.rs:3205-3205`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
+from `src/typeck/mod.rs:3194-3194`). Additionally, a trait method declared with a `self` receiver is a **parse error**,
 because trait methods use a separate parameter loop that does not handle `self`
-(`src/parser/mod.rs:1683-1684`, corrected from line 863–897 of the pre-cleanup revision).
+(`src/parser/mod.rs:1686-1687`, corrected from line 863–897 of the pre-cleanup revision).
 
 So `trait Display { fn fmt(&self) -> String; }` does not parse, and
 [N10](#n10-traits-and-generics) has no implementation at all.
@@ -821,7 +821,7 @@ checker and code generation all call that one function. Until
 `4690ef0` the return type was substituted in code generation alone, so `fn new(..) -> Self` worked
 while `fn area(self)` reached the C compiler as `struct Self self` — a type nothing declares.
 **unimplemented**: associated constants and associated types are rejected — an impl body may
-contain only `fn` (`src/parser/mod.rs:1863-1869`, corrected from line 1030 of the pre-cleanup revision).
+contain only `fn` (`src/parser/mod.rs:1867-1873`, corrected from line 1030 of the pre-cleanup revision).
 **implemented**: methods are called with `.` syntax — see [A6.4](#a64-method-calls).
 `Type::method(receiver, args)` also works, which it did not when this section recommended it.
 
@@ -838,7 +838,7 @@ rendering the tokens back to source text and re-lexing them (`src/macros/expande
 item and invocation position (N3-14).
 
 **No macro parameter had ever been substituted, in either spelling, until 2026-08-26.**
-`token_to_ast_token` (`src/parser/mod.rs:2258`) did not list `Token::Dollar`, so `$x` in a body was
+`token_to_ast_token` (`src/parser/mod.rs:2263`) did not list `Token::Dollar`, so `$x` in a body was
 stored as the identifier `Dollar` followed by `x`, and `substitute_template`
 (`src/macros/expander.rs:372`), which keys on `Token::Dollar`, could never fire. Measured:
 `macro double!(x) { $x * 2 }` failed with "Undefined variable or function: 'Dollar'". Completing
@@ -897,8 +897,8 @@ unrelated reason.
 
 | Syntax | Status | Note |
 |---|---|---|
-| `i64`, `int` | implemented | `int` is an alias for `i64` (`src/parser/mod.rs:3981`, corrected from line 2038 of the pre-cleanup revision) |
-| `i32`, `u32`, `u64` | implemented | primitive table at `src/parser/mod.rs:3980-3988` (corrected from line 2037–2043 of the pre-cleanup revision) |
+| `i64`, `int` | implemented | `int` is an alias for `i64` (`src/parser/mod.rs:3986`, corrected from line 2038 of the pre-cleanup revision) |
+| `i32`, `u32`, `u64` | implemented | primitive table at `src/parser/mod.rs:3985-3993` (corrected from line 2037–2043 of the pre-cleanup revision) |
 | `bool`, `String` | implemented | |
 | `()` | implemented | unit |
 | `[T; N]` | implemented | one dimension, `N` an integer literal. `N` as an identifier parses but is dropped (const generics, below), so such an array is uncallable and its `for` loop is a compile error |
@@ -918,7 +918,7 @@ unrelated reason.
 **partial — generic arguments**: inside `<…>`, a name is a *const generic argument* exactly
 when it is a const parameter of the `fn`, `struct` or `enum` being parsed — asked before the
 primitive table, so `Arr<i64>` under `const i64` is that const — and a type argument
-otherwise (`src/parser/mod.rs:4012-4022`). Until #93 this was decided by SPELLING — every name
+otherwise (`src/parser/mod.rs:4017-4027`). Until #93 this was decided by SPELLING — every name
 made of capitals and `_` was a const, so `Foo<T>` and `Wrap<K>` carried a const-generic
 argument and a lowercase const parameter a type one. A global `const` item written as an
 argument reads as a type. A written generic type is then emitted as `void*` (N4-15), so an
@@ -945,7 +945,7 @@ enum is compiled to. Use `match`.
 
 **unimplemented as built-ins.** There is no prelude, no declaration, no lexer or parser support.
 They are ordinary user enums if you declare them. The only special-casing left is the REFUSAL: `?` is
-rejected outright by the type checker (`src/typeck/mod.rs:5053-5053`) and again by code generation
+rejected outright by the type checker (`src/typeck/mod.rs:4991-4991`) and again by code generation
 (`src/codegen/mod.rs:6563-6567`). It used to typecheck against a `Generic{name:"Result"}` shape
 and then emit C for a `struct Result` layout nothing defines (see
 [A6.5](#a65-question-mark-async-and-await)).
@@ -955,21 +955,21 @@ and then emit C for a `struct Result` layout nothing defines (see
 ### A6.1 Statements
 
 `let`, assignment, `if`/`else`, `while`, `for … in`, `match`, `return`, `break`, `continue`,
-`unsafe { }`, expression statements (`src/parser/mod.rs:2467`).
+`unsafe { }`, expression statements (`src/parser/mod.rs:2472`).
 
 - implemented: `let [mut] x [: T] = e;` — **the initializer is mandatory**
-  (`src/parser/mod.rs:2605`, corrected from line 1411 of the pre-cleanup revision); the binding must be a plain identifier
+  (`src/parser/mod.rs:2610`, corrected from line 1411 of the pre-cleanup revision); the binding must be a plain identifier
   (no patterns).
 - implemented: assignment targets — identifier, index, field, deref.
 - **implemented: `else if`** (N5-06). After `else` the parser looks for `if` and recurses
-  (`src/parser/mod.rs:2406-2408`), so a chain is nesting and there is no `ElseIf` node. The branch tail
+  (`src/parser/mod.rs:2411-2413`), so a chain is nesting and there is no `ElseIf` node. The branch tail
   travels with it, which is what keeps a tail-position chain returning. *(This bullet read
   "unimplemented — after `else` the parser requires `{`" until `66dab38`.)*
 - **implemented: `loop`** (N5-07), a keyword since `src/lexer/token.rs:250`, parsed at
-  `src/parser/mod.rs:3015` and emitted as C `while (1)` (`src/codegen/mod.rs:4372`). Its `break`
+  `src/parser/mod.rs:3020` and emitted as C `while (1)` (`src/codegen/mod.rs:4372`). Its `break`
   may carry a value. *(It read "not a keyword. Use `while true`" until `f729cda`.)*
 - **implemented: compound assignment** `+= -= *= /= %=` (N5-13), DESUGARED at
-  `src/parser/mod.rs:2512-2514` into `t = t op v` rather than emitted as C's own compound operator —
+  `src/parser/mod.rs:2517-2519` into `t = t op v` rather than emitted as C's own compound operator —
   Palladium's `+` on `String` is a runtime concatenation call, which C's `+=` cannot express. The
   residual that buys: the target is written twice, so it is evaluated twice, and `a[next()] += 1`
   calls `next()` twice.
@@ -1051,7 +1051,7 @@ implemented: literals, identifiers, struct literals, array literals `[a,b,c]` an
 indexing, field access, calls, enum construction, unary `- ! & *`, binary operators.
 
 - **implemented: `if`, `match`, blocks and `loop` are EXPRESSIONS** (N5-03/04/05/07). All four are
-  read at the primary level (`src/parser/mod.rs:4130-4142`) and each reuses the statement parser it
+  read at the primary level (`src/parser/mod.rs:4135-4147`) and each reuses the statement parser it
   already had, reinterpreting the statements-plus-tail it returns as statements-plus-value. C has
   no expression with a block in it, so they lower by HOISTING: a temporary, a statement-form
   computation that assigns it, and a use of the name. GNU statement-expressions would say it in one
@@ -1067,7 +1067,7 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
   `(p.0).1`, because `.0.1` lexes as one float literal (`[0-9]+\.[0-9]+`) and `p.0.10` and `p.0.1`
   both round-trip to 0.1, so the second index cannot be recovered without guessing.
 - **implemented: `as` casts** (N5-15), parsed between multiplication and unary
-  (`src/parser/mod.rs:3819-3820`) so `10 / 4.0 as i64` is `10 / (4.0 as i64)`, and chainable. THE LEGAL
+  (`src/parser/mod.rs:3824-3825`) so `10 / 4.0 as i64` is `10 / (4.0 as i64)`, and chainable. THE LEGAL
   SET IS NARROW BECAUSE THIS DOCUMENT DOES NOT SAY WHAT IT IS: N5 names `as` casts and the grammar
   gives the form, neither says which conversions are meant, so conversions among the numeric
   primitives and `bool` are implemented and every other cast is refused by name. A cast to `bool`
@@ -1080,19 +1080,19 @@ indexing, field access, calls, enum construction, unary `- ! & *`, binary operat
   *(This bullet read "partial — codegen error 'Range expressions can only be used in for loops'"
   until `ef74eba`.)*
 - partial: empty array literal `[]` — typeck cannot infer the element type
-  (`src/typeck/mod.rs:6327-6331`, corrected from line 1874 of the pre-cleanup revision and again on 2026-08-25, when it had come to rest on a closing brace).
+  (`src/typeck/mod.rs:6265-6269`, corrected from line 1874 of the pre-cleanup revision and again on 2026-08-25, when it had come to rest on a closing brace).
 
 **FIXED — the precedence bug**: `parse_multiplication` parsed its RIGHT operand with
 `parse_postfix` rather than `parse_unary`, so the left side descended through the unary level and
 the right side could not, and `a * -b` did not parse. It now parses both sides through the cast
-level, which is `parse_unary` plus the `as` suffix (`src/parser/mod.rs:3907-3907`). Every other level of
+level, which is `parse_unary` plus the `as` suffix (`src/parser/mod.rs:3912-3912`). Every other level of
 the ladder was already symmetric, which is why this was the only expression that failed.
 [N5](#n5-statements-and-expressions) requires `a * -b`; `ef74eba` delivered it.
 
 ### A6.4 Method calls
 
 **implemented** (N5-17, `4690ef0`). `x.f(a)` parses as a call whose callee is a field access, and
-both the type checker (`src/typeck/mod.rs:4047`) and code generation (`src/codegen/mod.rs:6001-6004`)
+both the type checker (`src/typeck/mod.rs:3985`) and code generation (`src/codegen/mod.rs:6001-6004`)
 REWRITE it into the path call it means — `TypeOfX::f(x, a)` — rather than checking and emitting it
 as a second kind of call. The receiver becomes the first argument and is evaluated exactly once,
 and its position among the arguments is the one the source wrote: being the first argument, it is
@@ -1183,8 +1183,8 @@ infers only the parameters a variant mentions, so `Result::Err(e)` yields `Resul
 syntactic trap is worth stating: a `match` arm that is a block must not be followed by a comma,
 and propagation needs block arms because `return` is not an expression.
 
-The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:5053-5053`, `.await` at
-`src/typeck/mod.rs:5061-5061`) and again by code generation (`?` at `src/codegen/mod.rs:6563-6567`,
+The refusal is raised by the type checker (`?` at `src/typeck/mod.rs:4991-4991`, `.await` at
+`src/typeck/mod.rs:4999-4999`) and again by code generation (`?` at `src/codegen/mod.rs:6563-6567`,
 `.await` at `src/codegen/mod.rs:6575-6579`), which is callable on its own.
 
 What they used to do:
@@ -1364,7 +1364,7 @@ struct patterns, `ref`/`mut` bindings, `..` rest.
 **Exhaustiveness holds for every scrutinee type** (N6-10). An enum must cover its variants; a
 `bool` is covered by `true` and `false` together; every other type needs an arm that matches every
 value — `_`, a binding, `name @ <irrefutable>`, an `a | b` with an irrefutable alternative, or a
-tuple of irrefutables (`src/typeck/exhaustiveness.rs:114`, `src/typeck/mod.rs:5409`). NO INTERVAL
+tuple of irrefutables (`src/typeck/exhaustiveness.rs:114`, `src/typeck/mod.rs:5347`). NO INTERVAL
 ARITHMETIC IS PROMISED: `0..=59` beside `60..=<i64 max>` beside `<i64 min>..=-1` covers every
 integer and is still refused, and the diagnostic says why rather than leaving the reader to infer
 it. A guarded arm counts toward nothing — whether it is taken is not decidable from the pattern.
@@ -1505,7 +1505,7 @@ v0.2 sentence is retracted; the surviving borrow-checker defect is
 **[N9](#n9-references-and-lifetimes) is unimplemented in full.** `ref` is not a keyword; the
 implemented spelling is Rust's `&`/`&mut` **with** `'a` parameter lists — the exact annotation
 burden the definition removes. `fn f<'a>(x: &'a String) -> &'a String { return x; }` compiles.
-`Function.lifetime_params` is parsed (`src/parser/mod.rs:1338`) and read nowhere outside test and
+`Function.lifetime_params` is parsed (`src/parser/mod.rs:1339`) and read nowhere outside test and
 LSP fixtures. There is no region inference: `grep -rn 'region\|Region' src/ --include='*.rs'`
 returns nothing.
 
@@ -1746,11 +1746,11 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-xfail-six`
 (2026-08-31):
 
-**verified 91 · untranscribed 0 · vacuous 6 · xfail 6 · reject 124 · skip 2 · failures 0**, over 229
+**verified 91 · untranscribed 0 · vacuous 6 · xfail 6 · reject 125 · skip 2 · failures 0**, over 230
 fixtures. (WT-01 unit W1c added two `run` fixtures, `tests/04_self_field_reads.pd` and
 `tests/04_self_type_positions.pd`: `Self` now means the impl's type in the borrow checker and in a
 method body too. Then `fix/projection-move-scope` added one `run` fixture, `tests/regression/projection_move_scope.pd`:
-a move out of a field that used to outlive its function, measured on the merged tree 2026-10-07. Then WT-01 unit W2a added one `run` fixture, `tests/regression/enum_in_composites.pd`: a user `enum` inside an array, a tuple, a reference, a method signature and a generic instantiation, each refused before with one type named on both sides. Then issue #85 added one `run` fixture, `tests/04_macro_in_method_body.pd`: a macro invocation in a method body, which the expander never walked; and its review round one `reject` fixture, `tests/reject/macro_expansion_does_not_parse.pd`: an expansion that does not parse is refused by name (PD0079), in a body main never expanded as in a free function. Then the #93/#91 unit added one `run` fixture, `tests/regression/generic_argument_kind.pd`: the programs that ran where a generic argument's reading flips from its spelling to what it resolves to; its review round 1 added one `reject` fixture, `tests/reject/alias_cycle_through_generic_argument.pd`: an alias cycle a program uses is refused by name (PD0080). The su2 round of `feat/m2-xfail-six` added five: `tests/04_self_place.pd`, the first
+a move out of a field that used to outlive its function, measured on the merged tree 2026-10-07. Then WT-01 unit W2a added one `run` fixture, `tests/regression/enum_in_composites.pd`: a user `enum` inside an array, a tuple, a reference, a method signature and a generic instantiation, each refused before with one type named on both sides. Then issue #85 added one `run` fixture, `tests/04_macro_in_method_body.pd`: a macro invocation in a method body, which the expander never walked; and its review round one `reject` fixture, `tests/reject/macro_expansion_does_not_parse.pd`: an expansion that does not parse is refused by name (PD0079), in a body main never expanded as in a free function. Then the #93/#91 unit added one `run` fixture, `tests/regression/generic_argument_kind.pd`: the programs that ran where a generic argument's reading flips from its spelling to what it resolves to; its review round 1 added one `reject` fixture, `tests/reject/alias_cycle_through_generic_argument.pd`: an alias cycle a program uses is refused by name (PD0080); its review round 4 added one more, `tests/reject/generic_parameter_named_twice.pd`: a generic parameter list naming one parameter twice is refused where it is written (PD0081). The su2 round of `feat/m2-xfail-six` added five: `tests/04_self_place.pd`, the first
 fixture in which a method taking a reference receiver links at all, and four `reject`s for the
 writes through a receiver the type checker refuses — through `&self`, through a by-value
 `self`, `self` as an assignment target and `*self` as a place. Its review round added

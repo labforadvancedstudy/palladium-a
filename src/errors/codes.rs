@@ -628,12 +628,20 @@ pub enum DiagnosticCode {
 
     /// PD0080 — a type alias a program uses must name a type: its expansion
     /// may not reach an alias cycle (`type A = Id<A>;`, `type A = B; type B =
-    /// A;`). One rule, two sites in `src/typeck/alias_cycles.rs`: the pre-check
-    /// `refuse_alias_cycle_uses` (what the checker is certain to expand) and the
-    /// `ExpansionGuard` every recursive alias expansion runs under (typeck and
-    /// codegen). The alias and the cycle are the parameter. An alias the checker
-    /// never expands is not refused (main compiles one).
+    /// A;`). One site, the `ExpansionGuard` (`src/typeck/alias_cycles.rs`)
+    /// every recursive alias expansion runs under (typeck and codegen): an
+    /// alias is judged only where it is opened, by a graph built from the
+    /// checker's own tables and substitution. The alias and the cycle are the
+    /// parameter. An alias the compiler never opens is not judged (main
+    /// compiles one).
     TypeAliasExpansionReachesNoCycle,
+
+    /// PD0081 — a generic parameter list names each parameter once, lifetimes,
+    /// type and const parameters together. One helper in the parser,
+    /// `refuse_a_parameter_named_twice`, called at the end of all five generic
+    /// parameter lists (fn/struct/enum, trait, trait method, impl, type alias);
+    /// the name is the parameter (#93 review round 4).
+    GenericParameterIsNamedOnce,
 }
 
 impl DiagnosticCode {
@@ -716,6 +724,7 @@ impl DiagnosticCode {
         DiagnosticCode::UnterminatedBlockComment,
         DiagnosticCode::MacroExpansionParsesWhereItIsInvoked,
         DiagnosticCode::TypeAliasExpansionReachesNoCycle,
+        DiagnosticCode::GenericParameterIsNamedOnce,
     ];
 
     /// The numbers that are RETIRED and must never be allocated again, with the
@@ -827,6 +836,7 @@ impl DiagnosticCode {
             DiagnosticCode::UnterminatedBlockComment => 78,
             DiagnosticCode::MacroExpansionParsesWhereItIsInvoked => 79,
             DiagnosticCode::TypeAliasExpansionReachesNoCycle => 80,
+            DiagnosticCode::GenericParameterIsNamedOnce => 81,
         }
     }
 
@@ -975,6 +985,7 @@ impl DiagnosticCode {
             DiagnosticCode::TypeAliasExpansionReachesNoCycle => {
                 "type_alias_expansion_reaches_no_cycle"
             }
+            DiagnosticCode::GenericParameterIsNamedOnce => "generic_parameter_is_named_once",
         }
     }
 }
@@ -1002,7 +1013,7 @@ mod tests {
     fn every_code_is_in_all() {
         assert_eq!(
             DiagnosticCode::ALL.len(),
-            73,
+            74,
             "a code was added to the enum without being added to ALL (or this \
              literal was not updated with the new count)"
         );

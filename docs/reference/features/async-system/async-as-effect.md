@@ -268,12 +268,12 @@ citations in `language-spec.md` before this change were taken from the pre-clean
 `function` production carries an optional `async` (`docs/specification/grammar.ebnf:145`), `.await`
 is a postfix operator (`docs/specification/grammar.ebnf:352`), and the keyword list names both
 (`docs/specification/grammar.ebnf:90`). The parser sets `Function.is_async` from that keyword
-(`src/parser/mod.rs:982`, `src/parser/mod.rs:991`). The implementation therefore offers exactly the two things this
+(`src/parser/mod.rs:983`, `src/parser/mod.rs:992`). The implementation therefore offers exactly the two things this
 document says the language does not have: an `async` marker and an await operator.
 
 **2. Effects are inferred, but the result is print-only — it gates nothing.**
 The parser hardcodes `Function.effects` to `None`, commented "Effects will be inferred during
-analysis" (`src/parser/mod.rs:1348`). An effect analyser exists (`src/effects/mod.rs`, 479 lines;
+analysis" (`src/parser/mod.rs:1349`). An effect analyser exists (`src/effects/mod.rs`, 479 lines;
 `Effect` enum at `src/effects/mod.rs:16-29`, `analyze_function` at `src/effects/mod.rs:151`) and it does union effects across
 statements and calls (`src/effects/mod.rs:298`). But `crate::effects::` is referenced from exactly one place in
 the compiler — `src/driver/mod.rs:172` — and all the driver does with the result is `println!` it
@@ -302,8 +302,8 @@ no `-> async T` return form. `with`, `effect` and `ref` are not keywords at all
 **7. `.await` is refused, and the lowering that used to be here is deleted.**
 Codegen for an await expression returns `await_unimplemented` at the construct's own span
 (`src/codegen/mod.rs:6575-6579`), and the type checker refuses it before that
-(`src/typeck/mod.rs:5061-5061`). `?` is the same shape: refused in codegen
-(`src/codegen/mod.rs:6563-6567`) and in the type checker (`src/typeck/mod.rs:5053-5053`).
+(`src/typeck/mod.rs:4999-4999`). `?` is the same shape: refused in codegen
+(`src/codegen/mod.rs:6563-6567`) and in the type checker (`src/typeck/mod.rs:4991-4991`).
 
 *Historical, and the reason those refusals exist — this paragraph described it in the present
 tense until D5 was fixed.* Codegen used to emit `while (!<tmp>.poll(&<tmp>)) { }` and then read

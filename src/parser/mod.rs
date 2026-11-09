@@ -229,7 +229,7 @@ fn returns_on_every_path(stmts: &[Stmt], tail: &BlockTail) -> bool {
 ///   `src/parser/mod.rs:343-375`  `contains_escaping_break` +
 ///                                `stmt_contains_escaping_break` — reachable
 ///                                breaks only, mirroring `contains_break`
-///   `src/parser/mod.rs:1222-1246`  the only caller: the refusal and the lowering
+///   `src/parser/mod.rs:1223-1247`  the only caller: the refusal and the lowering
 ///
 /// The agreement between this side and the C-side reader is not asserted by
 /// this comment — it is executed by `assert_net_a` in tests/d3b_tail_if.rs,
@@ -580,6 +580,7 @@ impl Parser {
             // PD0032. A generic parameter list holds bare names; the `:` of a trait
             // bound ends the list, and the `>` position is where that is said. The
             // four other declaration positions carry the same code — one rule.
+            self.refuse_a_parameter_named_twice(&lifetime_params, &type_params, &const_params.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>())?; // PD0081
             self.consume_coded(
                 Token::Gt,
                 "Expected '>' after generic parameters",
@@ -1605,6 +1606,7 @@ impl Parser {
             }
 
             // PD0032, the trait position.
+            self.refuse_a_parameter_named_twice(&lifetime_params, &type_params, &[])?; // PD0081
             self.consume_coded(
                 Token::Gt,
                 "Expected '>' after generic parameters",
@@ -1673,6 +1675,7 @@ impl Parser {
                 }
 
                 // PD0032, the trait-method position.
+                self.refuse_a_parameter_named_twice(&method_lifetime_params, &method_type_params, &[])?; // PD0081
                 self.consume_coded(
                     Token::Gt,
                     "Expected '>' after generic parameters",
@@ -1836,6 +1839,7 @@ impl Parser {
             }
 
             // PD0032, the impl position.
+            self.refuse_a_parameter_named_twice(&lifetime_params, &type_params, &[])?; // PD0081
             self.consume_coded(
                 Token::Gt,
                 "Expected '>' after generic parameters",
@@ -1949,6 +1953,7 @@ impl Parser {
             }
 
             // PD0032, the type-alias position.
+            self.refuse_a_parameter_named_twice(&lifetime_params, &type_params, &[])?; // PD0081
             self.consume_coded(
                 Token::Gt,
                 "Expected '>' after generic parameters",
@@ -4860,6 +4865,34 @@ impl Parser {
     /// closure avoids by taking the code as a parameter (PD0008 vs PD0074).
     /// Positions that have not been judged keep calling `consume` and stay
     /// uncoded, which is D1's honest state rather than a fallback.
+    /// PD0081 — a generic parameter list names each parameter once: lifetimes,
+    /// type parameters and const parameters together (`<T, const T: i64>` too).
+    /// What a second binder of one name means is defined nowhere — the checker
+    /// substituted the LAST (a `HashMap` insert), the alias-cycle analysis read
+    /// the first (#93 review round 4) — so it is refused where it is written.
+    fn refuse_a_parameter_named_twice(
+        &self,
+        lifetimes: &[String],
+        types: &[String],
+        consts: &[String],
+    ) -> Result<()> {
+        let names: Vec<&String> = lifetimes.iter().chain(types).chain(consts).collect();
+        for (i, name) in names.iter().enumerate() {
+            if names[..i].contains(name) {
+                return Err(CompileError::SyntaxError {
+                    message: format!(
+                        "the generic parameter `{}` is named twice in one parameter list: \
+                         each parameter of a list has its own name (rename one of them)",
+                        name
+                    ),
+                    span: self.current_span(),
+                }
+                .with_code(DiagnosticCode::GenericParameterIsNamedOnce));
+            }
+        }
+        Ok(())
+    }
+
     fn consume_coded(
         &mut self,
         expected: Token,

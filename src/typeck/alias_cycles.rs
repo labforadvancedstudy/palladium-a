@@ -1,72 +1,60 @@
-//! PD0080 — a type alias the checker expands must name a type: its expansion
+//! PD0080 — a type alias the compiler expands must name a type: its expansion
 //! may not reach an alias cycle.
 //!
-//! THE DEFECT (#93 review rounds 1-3, and #79). `type Id<T> = T; type A =
+//! THE DEFECT (#93 review rounds 1-4, and #79). `type Id<T> = T; type A =
 //! Id<A>;` overflowed the stack once a capital type argument was read as a
 //! type: the checker expands `A` to `Id<A>`, substitutes, meets `A` again, and
 //! recurses until the process aborts. Main refused that program only because
 //! it read the capital `A` as a const and dropped it; `type Aa = Id<Aa>`
 //! overflowed main's stack too, and `type A = B; type B = A;` (#79) hung it.
 //!
-//! WHAT A CYCLE IS. An expansion of an alias reaches a cycle exactly when its
-//! route through alias BODIES — the alias graph below, whose edges are the
-//! expansions the checker performs — reaches a cycle. If it does, the same
-//! syntactic route is open again from every alias on it, so the expansion
-//! never ends. If it does not, every alias opened is either on an acyclic
-//! route through bodies (bounded) or a subterm of a written argument (finite),
-//! so the expansion ends — however deep: `Id<Id<…<i64>…>>` 4000 deep, or a
-//! chain of 4000 distinct aliases through `Id`, runs on main, and is not a
-//! cycle. A repeated alias NAME on the open path is no criterion for a generic
-//! alias (`Id` is reopened by every level of `Id<Id<i64>>`, with a smaller
-//! argument each time), and there is NO depth limit (review round 3).
+//! WHERE IT IS JUDGED: ONLY WHERE AN ALIAS IS OPENED. `ExpansionGuard` sits in
+//! every expansion that resolves an alias by recursion — the two arms of the
+//! checker's `ast_type_to_checker_type` that open one, and code generation's
+//! `type_to_c` and tuple registration. Nothing models WHICH positions the
+//! compiler expands: an alias is judged exactly when one of those opens it,
+//! so a struct or enum the checker skips (one with a lifetime or a type
+//! parameter), an uninstantiated generic, a trait's method, an import nobody
+//! checks, and an alias nothing uses are never judged, as main never expanded
+//! them (review round 4 — a separate pre-check that modelled the positions
+//! drifted from the checker twice). `check` and `compile` report a trip as
+//! PD0080, ahead of anything the stopped expansion's placeholder caused.
 //!
-//! TWO LAYERS, one judgement.
+//! WHAT A CYCLE IS. In the checker, an opened alias's expansion never ends
+//! exactly when its route through alias BODIES — the graph below — reaches a
+//! cycle: then the same syntactic route is open again from every alias on it.
+//! If it does not, every alias opened is either on an acyclic route through
+//! bodies (bounded) or a subterm of a written argument (finite), so the
+//! expansion ends — however deep: `Id<Id<…<i64>…>>` 4000 deep, or a chain of
+//! 4000 distinct aliases through `Id`, runs on main and is no cycle. A repeated
+//! NAME is no criterion for a generic alias (`Id` is reopened by every level of
+//! `Id<Id<i64>>`, with a smaller argument each time), and there is NO depth
+//! limit (review round 3). An alias with no type parameter opened again inside
+//! its own expansion is a cycle by itself — it has no argument, so its name is
+//! its whole state — which is all code generation needs (it resolves only
+//! those) and a backstop in the checker.
 //!
-//!   * THE PRE-CHECK (`refuse_alias_cycle_uses`) refuses, before checking
-//!     starts, every use the checker is certain to expand whose alias reaches
-//!     a cycle in the graph, naming the alias used and the cycle: the
-//!     deterministic first report.
-//!
-//!   * THE GUARD (`ExpansionGuard`) sits in every expansion that resolves an
-//!     alias by recursion — the two arms of `ast_type_to_checker_type` that
-//!     open one, and code generation's `type_to_c` and tuple registration — so
-//!     an expansion the pre-check does not see (an instantiated generic's
-//!     signature, imported or local; a type parameter a filtered const
-//!     argument left unsubstituted) is judged where it is met. The pre-check
-//!     ARMS it with the same graph: an alias whose route through bodies
-//!     reaches a cycle is refused the moment the checker opens it (memoized,
-//!     so each alias is searched once). Independently, an alias with no type
-//!     parameter opened again inside its own expansion is a cycle by itself —
-//!     it has no argument, so its name is its whole state — which is all code
-//!     generation needs (it resolves only those) and a backstop in the
-//!     checker. `check` (and code generation's `compile`) reports a trip as
-//!     PD0080, ahead of anything the stopped expansion's placeholder caused.
-//!
-//! WHAT IS A USE — only what the checker converts whether or not anything is
-//! instantiated, measured on main: a non-generic function's signature and
-//! body, a non-generic struct's fields and enum's payloads, an `impl` with no
-//! type parameter (its non-generic methods), a global, and the imported
-//! functions `check` type-checks. NOT a trait's methods (never converted), and
-//! NOT a generic item (converted only when instantiated, which the guard
-//! sees): main compiled and ran every one of those with a cyclic alias in it.
-//! An alias nothing uses is not refused either: main ran those too.
-//!
-//! THE EDGES ARE THE EXPANSIONS THE CHECKER PERFORMS, no more. A bare name is
-//! looked up among the aliases with no type parameter and `Name<…>` among the
-//! generic ones. A generic alias's TYPE arguments are zipped to its parameters
-//! with the const arguments filtered out, as the checker does: a parameter
-//! left without one is NOT substituted, and the name in the body then resolves
-//! globally (`type T = G<1>; type G<T> = T;` reaches `T`). An argument is
-//! expanded only if its parameter is LIVE — read somewhere the expansion
-//! reaches (`type Pick<T, U> = T; type Aa = Pick<i64, Aa>;` never expands its
-//! `Aa`, and main ran it). With the wrong number of arguments the checker
-//! expands every argument and not the alias. Every other position — a generic
-//! struct's argument, an array's element, a tuple's, a reference's referent —
-//! is expanded.
+//! THE GRAPH IS THE CHECKER'S OWN EXPANSION, NOT A MODEL OF IT. It is built
+//! from the checker's alias tables as they are when the alias is opened, and
+//! an edge is exactly what `ast_type_to_checker_type` expands next: a bare name
+//! in the table of aliases with no type parameter (the `Custom` arm), a
+//! `Name<…>` in the generic table with as many arguments as it has parameters,
+//! whose body is substituted by the checker's own three steps
+//! (`alias_type_arguments`, `alias_substitution`, `substitute_alias_params`),
+//! and the type arguments of any other `Name<…>` (a generic struct, or an
+//! alias given the wrong number). An array, a tuple, a reference or a future
+//! is converted without expanding an alias in it, so it has no edge. WHICH
+//! argument an expansion reads is found by substituting numbered markers and
+//! seeing which survive where the walk goes — a const argument filtered out, a
+//! parameter left unsubstituted (then resolved globally: `type T = G<1>; type
+//! G<T> = T;` reaches `T`), an argument the body never reads (`type Pick<T, U>
+//! = T; type Aa = Pick<i64, Aa>;` never expands its `Aa`, and main ran it).
+//! A parameter list naming one parameter twice is refused by the parser
+//! (PD0081), so a substitution is a function of the arguments.
 
-use super::GenericTypeAlias;
-use crate::ast::{GenericArg, Item, Program, Type};
-use crate::errors::{CompileError, DiagnosticCode, Result};
+use super::{alias_substitution, alias_type_arguments, substitute_alias_params, GenericTypeAlias};
+use crate::ast::Type;
+use crate::errors::{CompileError, DiagnosticCode};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
@@ -81,6 +69,13 @@ fn refusal(used: &str, cycle: &[String]) -> CompileError {
         cycle.join(" -> ")
     ))
     .with_code(DiagnosticCode::TypeAliasExpansionReachesNoCycle)
+}
+
+/// The checker's alias tables, as `ast_type_to_checker_type` reads them.
+#[derive(Clone, Copy)]
+pub(crate) struct AliasTables<'a> {
+    pub plain: &'a HashMap<String, Type>,
+    pub generic: &'a HashMap<String, GenericTypeAlias>,
 }
 
 /// The alias an expansion opens: one with no type parameter by name, or a
@@ -106,20 +101,168 @@ impl Opening<'_> {
     }
 }
 
-/// The alias graph the guard judges by, and what it has already shown.
-struct Graph {
-    aliases: Aliases,
-    live: HashSet<(String, usize)>,
-    /// Nodes whose route through bodies is known to reach no cycle.
-    acyclic: HashSet<Node>,
+/// An alias as the checker opens it: by a bare name, or as `Name<…>` with
+/// this many of its parameters given a type argument.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Node {
+    Plain(String),
+    Generic(String, usize),
 }
 
-/// The checker's alias expansion, guarded (see the module comment).
+impl Node {
+    fn name(&self) -> &str {
+        match self {
+            Node::Plain(n) | Node::Generic(n, _) => n,
+        }
+    }
+}
+
+/// A numbered stand-in for the `k`th type argument: no identifier can spell it.
+fn marker(k: usize) -> Type {
+    Type::Custom(format!("\u{1}{}", k))
+}
+
+fn marker_index(name: &str) -> Option<usize> {
+    name.strip_prefix('\u{1}').and_then(|k| k.parse().ok())
+}
+
+/// The graph over `tables`, with what has been worked out about it.
+struct Graph<'a> {
+    tables: AliasTables<'a>,
+    /// For a generic alias opened with `given` type arguments: which of them
+    /// its expansion goes on to expand. A fixpoint (`live`).
+    live: HashMap<(String, usize), HashSet<usize>>,
+}
+
+impl<'a> Graph<'a> {
+    fn new(tables: AliasTables<'a>) -> Self {
+        let mut graph = Graph {
+            tables,
+            live: HashMap::new(),
+        };
+        graph.live = graph.live_fixpoint();
+        graph
+    }
+
+    /// The generic alias `name`'s body with its first `given` parameters
+    /// substituted by markers — the checker's substitution, step for step.
+    fn substituted(&self, name: &str, given: usize) -> Type {
+        let alias = &self.tables.generic[name];
+        let markers: Vec<Type> = (0..given).map(marker).collect();
+        let args: Vec<crate::ast::GenericArg> =
+            markers.into_iter().map(crate::ast::GenericArg::Type).collect();
+        let substitutions = alias_substitution(&alias.type_params, &alias_type_arguments(&args));
+        substitute_alias_params(&alias.ty, &substitutions)
+    }
+
+    /// Walk `ty` as `ast_type_to_checker_type` expands it: `alias` for every
+    /// alias it opens, `arg` for every marker it reaches.
+    fn walk(&self, ty: &Type, alias: &mut dyn FnMut(Node), arg: &mut dyn FnMut(usize)) {
+        match ty {
+            Type::Custom(n) => {
+                if let Some(k) = marker_index(n) {
+                    arg(k);
+                } else if n != "Self" && self.tables.plain.contains_key(n) {
+                    alias(Node::Plain(n.clone()));
+                }
+            }
+            Type::Generic { name, args } => {
+                let types = alias_type_arguments(args);
+                match self.tables.generic.get(name) {
+                    Some(g) if args.len() == g.type_params.len() => {
+                        alias(Node::Generic(name.clone(), types.len()));
+                        if let Some(live) = self.live.get(&(name.clone(), types.len())) {
+                            for (k, t) in types.iter().enumerate() {
+                                if live.contains(&k) {
+                                    self.walk(t, alias, arg);
+                                }
+                            }
+                        }
+                    }
+                    _ => types.iter().for_each(|t| self.walk(t, alias, arg)),
+                }
+            }
+            // `ast_type_to_checker_type`'s last arm: converted, no alias opened.
+            _ => {}
+        }
+    }
+
+    /// Which type arguments each generic alias's expansion goes on to expand,
+    /// as a fixpoint: it reaches a marker through what is already known live.
+    fn live_fixpoint(&mut self) -> HashMap<(String, usize), HashSet<usize>> {
+        let mut nodes = Vec::new();
+        for (name, alias) in self.tables.generic {
+            for given in 0..=alias.type_params.len() {
+                nodes.push((name.clone(), given));
+            }
+        }
+        self.live = nodes.iter().map(|n| (n.clone(), HashSet::new())).collect();
+        loop {
+            let mut grew = false;
+            for (name, given) in &nodes {
+                let body = self.substituted(name, *given);
+                let mut reached = HashSet::new();
+                self.walk(&body, &mut |_| {}, &mut |k| {
+                    reached.insert(k);
+                });
+                let known = self.live.get_mut(&(name.clone(), *given)).unwrap();
+                let before = known.len();
+                known.extend(reached);
+                grew |= known.len() != before;
+            }
+            if !grew {
+                return std::mem::take(&mut self.live);
+            }
+        }
+    }
+
+    /// The aliases one expansion of `node` opens next.
+    fn edges(&self, node: &Node) -> Vec<Node> {
+        let body = match node {
+            Node::Plain(n) => self.tables.plain[n].clone(),
+            Node::Generic(n, given) => self.substituted(n, *given),
+        };
+        let mut next = Vec::new();
+        self.walk(&body, &mut |n| next.push(n), &mut |_| {});
+        next
+    }
+
+    /// The first cycle an expansion of `node` reaches, as alias names from its
+    /// first repeated alias back to itself. `acyclic` holds nodes shown to
+    /// reach none, so every node is searched once.
+    fn cycle_from(
+        &self,
+        node: &Node,
+        path: &mut Vec<Node>,
+        acyclic: &mut HashSet<Node>,
+    ) -> Option<Vec<String>> {
+        if let Some(i) = path.iter().position(|p| p == node) {
+            let mut cycle: Vec<String> = path[i..].iter().map(|n| n.name().to_string()).collect();
+            cycle.push(node.name().to_string());
+            return Some(cycle);
+        }
+        if acyclic.contains(node) {
+            return None;
+        }
+        path.push(node.clone());
+        for next in self.edges(node) {
+            if let Some(cycle) = self.cycle_from(&next, path, acyclic) {
+                return Some(cycle);
+            }
+        }
+        path.pop();
+        acyclic.insert(node.clone());
+        None
+    }
+}
+
+/// The compiler's alias expansion, guarded (see the module comment).
 #[derive(Default)]
 pub(crate) struct ExpansionGuard {
     /// The aliases with no type parameter currently open, outermost first.
     open_plain: RefCell<Vec<String>>,
-    graph: RefCell<Option<Graph>>,
+    /// Nodes shown to reach no cycle, and the table sizes that was shown over.
+    acyclic: RefCell<(HashSet<Node>, (usize, usize))>,
     tripped: RefCell<Option<CompileError>>,
 }
 
@@ -127,7 +270,6 @@ impl std::fmt::Debug for ExpansionGuard {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExpansionGuard")
             .field("open_plain", &self.open_plain)
-            .field("armed", &self.graph.borrow().is_some())
             .finish()
     }
 }
@@ -135,9 +277,16 @@ impl std::fmt::Debug for ExpansionGuard {
 impl ExpansionGuard {
     /// `expand()` with `opening` open, or `None` once the guard has tripped —
     /// on this call or an earlier one, so that a branching cycle unwinds at
-    /// once instead of being walked again from every branch.
-    pub(crate) fn expand<T>(&self, opening: Opening<'_>, expand: impl FnOnce() -> T) -> Option<T> {
-        if !self.enter(opening) {
+    /// once instead of being walked again from every branch. `tables` are the
+    /// checker's alias tables; code generation, which opens only aliases with
+    /// no type parameter, passes none.
+    pub(crate) fn expand<T>(
+        &self,
+        opening: Opening<'_>,
+        tables: Option<AliasTables<'_>>,
+        expand: impl FnOnce() -> T,
+    ) -> Option<T> {
+        if !self.enter(opening, tables) {
             return None;
         }
         let expanded = expand();
@@ -148,11 +297,11 @@ impl ExpansionGuard {
     /// Open `opening`, or `false` (nothing opened) once the guard has tripped.
     /// Every `true` is closed by one `leave` of the same opening — `expand`'s
     /// two halves, for a caller whose expansion needs `&mut` access.
-    pub(crate) fn enter(&self, opening: Opening<'_>) -> bool {
+    pub(crate) fn enter(&self, opening: Opening<'_>, tables: Option<AliasTables<'_>>) -> bool {
         if self.tripped.borrow().is_some() {
             return false;
         }
-        if let Some(cycle) = self.cycle_at(opening) {
+        if let Some(cycle) = self.cycle_at(opening, tables) {
             *self.tripped.borrow_mut() = Some(refusal(opening.name(), &cycle));
             return false;
         }
@@ -169,9 +318,9 @@ impl ExpansionGuard {
         }
     }
 
-    /// The cycle `opening` reaches: in the armed graph, or — for an alias with
-    /// no type parameter — by being open already.
-    fn cycle_at(&self, opening: Opening<'_>) -> Option<Vec<String>> {
+    /// The cycle `opening` reaches: by being open already (an alias with no
+    /// type parameter), or in the graph over `tables`.
+    fn cycle_at(&self, opening: Opening<'_>, tables: Option<AliasTables<'_>>) -> Option<Vec<String>> {
         if let Opening::Plain(name) = opening {
             let open = self.open_plain.borrow();
             if let Some(i) = open.iter().position(|n| n == name) {
@@ -180,23 +329,25 @@ impl ExpansionGuard {
                 return Some(cycle);
             }
         }
-        let mut graph = self.graph.borrow_mut();
-        let graph = graph.as_mut()?;
+        let tables = tables?;
         let node = opening.node();
-        if !graph.aliases.knows(&node) || graph.acyclic.contains(&node) {
+        let mut acyclic = self.acyclic.borrow_mut();
+        // The tables only grow (registration); a node shown acyclic over
+        // fewer aliases is shown again.
+        let sizes = (tables.plain.len(), tables.generic.len());
+        if acyclic.1 != sizes {
+            *acyclic = (HashSet::new(), sizes);
+        }
+        if acyclic.0.contains(&node) {
             return None;
         }
-        let Graph { aliases, live, acyclic } = graph;
-        aliases.cycle_from(&node, live, &mut Vec::new(), acyclic)
+        let graph = Graph::new(tables);
+        graph.cycle_from(&node, &mut Vec::new(), &mut acyclic.0)
     }
 
-    /// Judge every later opening by `graph` (the pre-check's).
-    fn arm(&self, aliases: Aliases, live: HashSet<(String, usize)>) {
-        *self.graph.borrow_mut() = Some(Graph {
-            aliases,
-            live,
-            acyclic: HashSet::new(),
-        });
+    /// Forget what was shown: the checker replaced an alias in its tables.
+    pub(crate) fn forget(&self) {
+        self.acyclic.borrow_mut().0.clear();
     }
 
     /// The refusal a trip recorded, if any; the guard is clear afterwards.
@@ -204,233 +355,4 @@ impl ExpansionGuard {
         self.open_plain.borrow_mut().clear();
         self.tripped.borrow_mut().take()
     }
-}
-
-/// An alias as the checker can reach it: by a bare name, or as `Name<…>`
-/// with this many of its parameters given a type argument.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum Node {
-    Plain(String),
-    Generic(String, usize),
-}
-
-impl Node {
-    fn name(&self) -> &str {
-        match self {
-            Node::Plain(n) | Node::Generic(n, _) => n,
-        }
-    }
-}
-
-/// The two tables the checker resolves an alias from, as they will be once
-/// its first pass has registered the program's own aliases over the imported
-/// ones (the order `check` registers them in).
-struct Aliases {
-    plain: HashMap<String, Type>,
-    generic: HashMap<String, (Vec<String>, Type)>,
-}
-
-impl Aliases {
-    fn of(
-        program: &Program,
-        plain: &HashMap<String, Type>,
-        generic: &HashMap<String, GenericTypeAlias>,
-    ) -> Self {
-        let mut aliases = Aliases {
-            plain: plain.clone(),
-            generic: generic
-                .iter()
-                .map(|(n, a)| (n.clone(), (a.type_params.clone(), a.ty.clone())))
-                .collect(),
-        };
-        for item in &program.items {
-            if let Item::TypeAlias(a) = item {
-                if !a.type_params.is_empty() || !a.lifetime_params.is_empty() {
-                    let entry = (a.type_params.clone(), a.ty.clone());
-                    aliases.generic.insert(a.name.clone(), entry);
-                } else {
-                    aliases.plain.insert(a.name.clone(), a.ty.clone());
-                }
-            }
-        }
-        aliases
-    }
-
-    /// Is `node` an alias these tables hold (with the arity its edges assume)?
-    fn knows(&self, node: &Node) -> bool {
-        match node {
-            Node::Plain(n) => self.plain.contains_key(n),
-            Node::Generic(n, _) => self.generic.contains_key(n),
-        }
-    }
-
-    /// Walk `ty` as the checker expands it, with `bound` the parameters in
-    /// scope: `alias` for every alias reached, `param` for every bound name.
-    fn walk(
-        &self,
-        ty: &Type,
-        bound: &[String],
-        live: &HashSet<(String, usize)>,
-        alias: &mut dyn FnMut(Node),
-        param: &mut dyn FnMut(&str),
-    ) {
-        match ty {
-            Type::Custom(n) | Type::TypeParam(n) if bound.contains(n) => param(n),
-            Type::Custom(n) if self.plain.contains_key(n) => alias(Node::Plain(n.clone())),
-            Type::Generic { name, args } => {
-                let types: Vec<&Type> = args
-                    .iter()
-                    .filter_map(|a| match a {
-                        GenericArg::Type(t) => Some(t),
-                        GenericArg::Const(_) => None,
-                    })
-                    .collect();
-                match self.generic.get(name) {
-                    Some((params, _)) if args.len() == params.len() => {
-                        alias(Node::Generic(name.clone(), types.len()));
-                        for (k, t) in types.into_iter().enumerate() {
-                            if live.contains(&(name.clone(), k)) {
-                                self.walk(t, bound, live, alias, param);
-                            }
-                        }
-                    }
-                    _ => types
-                        .into_iter()
-                        .for_each(|t| self.walk(t, bound, live, alias, param)),
-                }
-            }
-            Type::Array(inner, _)
-            | Type::Reference { inner, .. }
-            | Type::Future { output: inner } => self.walk(inner, bound, live, alias, param),
-            Type::Tuple(types) => types
-                .iter()
-                .for_each(|t| self.walk(t, bound, live, alias, param)),
-            _ => {}
-        }
-    }
-
-    /// Which generic aliases' parameters an expansion reads, as a fixpoint: a
-    /// parameter is live if its alias's body reads it outside a dead argument.
-    fn live_parameters(&self) -> HashSet<(String, usize)> {
-        let mut live = HashSet::new();
-        loop {
-            let mut found = Vec::new();
-            for (name, (params, body)) in &self.generic {
-                let mut read = Vec::new();
-                self.walk(body, params, &live, &mut |_| {}, &mut |p| read.push(p.to_string()));
-                for p in read {
-                    if let Some(k) = params.iter().position(|q| *q == p) {
-                        found.push((name.clone(), k));
-                    }
-                }
-            }
-            let before = live.len();
-            live.extend(found);
-            if live.len() == before {
-                return live;
-            }
-        }
-    }
-
-    /// The aliases one expansion of `node` reaches next, in source order. A
-    /// generic alias's parameters beyond the `given` ones are not substituted,
-    /// so its body reads those names as the checker does: globally.
-    fn edges(&self, node: &Node, live: &HashSet<(String, usize)>) -> Vec<Node> {
-        let (bound, body) = match node {
-            Node::Plain(n) => (Vec::new(), &self.plain[n]),
-            Node::Generic(n, given) => {
-                let (params, body) = &self.generic[n];
-                (params[..(*given).min(params.len())].to_vec(), body)
-            }
-        };
-        let mut next = Vec::new();
-        self.walk(body, &bound, live, &mut |n| next.push(n), &mut |_| {});
-        next
-    }
-
-    /// The first cycle an expansion of `node` reaches, as alias names from its
-    /// first repeated alias back to itself. `done` holds aliases already shown
-    /// to reach none, so every alias is searched once.
-    fn cycle_from(
-        &self,
-        node: &Node,
-        live: &HashSet<(String, usize)>,
-        path: &mut Vec<Node>,
-        done: &mut HashSet<Node>,
-    ) -> Option<Vec<String>> {
-        if let Some(i) = path.iter().position(|p| p == node) {
-            let mut cycle: Vec<String> = path[i..].iter().map(|n| n.name().to_string()).collect();
-            cycle.push(node.name().to_string());
-            return Some(cycle);
-        }
-        if done.contains(node) {
-            return None;
-        }
-        path.push(node.clone());
-        for next in self.edges(node, live) {
-            if let Some(cycle) = self.cycle_from(&next, live, path, done) {
-                return Some(cycle);
-            }
-        }
-        path.pop();
-        done.insert(node.clone());
-        None
-    }
-}
-
-/// The part of `item` the checker converts whether or not anything is
-/// instantiated (see the module comment), or `None`.
-fn converted_part(item: &Item) -> Option<Item> {
-    match item {
-        Item::Function(f) if f.type_params.is_empty() => Some(item.clone()),
-        Item::Struct(s) if s.type_params.is_empty() => Some(item.clone()),
-        Item::Enum(e) if e.type_params.is_empty() => Some(item.clone()),
-        Item::Global(_) => Some(item.clone()),
-        Item::Impl(b) if b.type_params.is_empty() => {
-            let mut b = b.clone();
-            b.methods.retain(|m| m.type_params.is_empty());
-            Some(Item::Impl(b))
-        }
-        _ => None,
-    }
-}
-
-/// Refuse the first use of an alias whose expansion reaches an alias cycle,
-/// naming the alias used and the cycle. Run before any pass of the checker
-/// expands an alias; `plain` and `generic` are the alias tables as the
-/// imported modules left them. A use is a type position the checker converts
-/// in `program`, or in an imported function `check` type-checks (public, not
-/// generic, not shadowed by a local definition).
-pub(super) fn refuse_alias_cycle_uses(
-    program: &Program,
-    modules: &HashMap<String, crate::resolver::ModuleInfo>,
-    plain: &HashMap<String, Type>,
-    generic: &HashMap<String, GenericTypeAlias>,
-    guard: &ExpansionGuard,
-) -> Result<()> {
-    let aliases = Aliases::of(program, plain, generic);
-    if aliases.plain.is_empty() && aliases.generic.is_empty() {
-        return Ok(());
-    }
-    let live = aliases.live_parameters();
-    let mut names: Vec<&String> = modules.keys().collect();
-    names.sort();
-    let imported = names.into_iter().flat_map(|m| &modules[m].ast.items).filter(|item| {
-        matches!(item, Item::Function(f) if matches!(f.visibility, crate::ast::Visibility::Public)
-            && f.type_params.is_empty()
-            && !crate::ast::local_definition_shadows_import(program, &f.name))
-    });
-    let converted: Vec<Item> = program.items.iter().filter_map(converted_part).collect();
-    let mut uses = Vec::new();
-    crate::ast::for_each_type_outside_aliases(converted.iter().chain(imported), |ty, bound| {
-        aliases.walk(ty, bound, &live, &mut |n| uses.push(n), &mut |_| {})
-    });
-    let mut done = HashSet::new();
-    for used in uses {
-        if let Some(cycle) = aliases.cycle_from(&used, &live, &mut Vec::new(), &mut done) {
-            return Err(refusal(used.name(), &cycle));
-        }
-    }
-    guard.arm(aliases, live);
-    Ok(())
 }

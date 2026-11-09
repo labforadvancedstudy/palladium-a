@@ -1340,14 +1340,14 @@ fn test_ambiguous_import_is_diagnosed_by_the_compiler_not_by_gcc() {
     );
 }
 
-/// A qualified call cannot be written. `src/parser/mod.rs:4562-4603` turns any
-/// `a::b(...)` into `Expr::EnumConstructor`, and `src/typeck/mod.rs:4819-4823`
+/// A qualified call cannot be written. `src/parser/mod.rs:4567-4608` turns any
+/// `a::b(...)` into `Expr::EnumConstructor`, and `src/typeck/mod.rs:4757-4761`
 /// then reports `Undefined enum type: lib2`. The same holds for an alias
 /// (`import lib2 as m;` → `Undefined enum type: m`), which makes `alias`
 /// unusable too. `register_imported_functions` registers `module::name` for
 /// parity with the type checker, but nothing can currently reach it.
 #[test]
-#[ignore = "XFAIL: a qualified call `lib2::helper()` is unreachable — src/parser/mod.rs:4562-4603 turns every `a::b(...)` into Expr::EnumConstructor and src/typeck/mod.rs:4819-4823 then reports \"Undefined enum type: lib2\"; the same makes `import lib2 as m;` unusable, since `m::helper()` reports \"Undefined enum type: m\" (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: a qualified call `lib2::helper()` is unreachable — src/parser/mod.rs:4567-4608 turns every `a::b(...)` into Expr::EnumConstructor and src/typeck/mod.rs:4757-4761 then reports \"Undefined enum type: lib2\"; the same makes `import lib2 as m;` unusable, since `m::helper()` reports \"Undefined enum type: m\" (owned by M4, cross-file module imports)"]
 fn test_a_qualified_call_reaches_the_imported_function() {
     let (compiled, output, stdout) = compile_and_run(
         &[("lib2.pd", "pub fn helper() -> i64 { return 5; }\n")],
@@ -1362,13 +1362,13 @@ fn test_a_qualified_call_reaches_the_imported_function() {
 }
 
 /// A nested module path cannot be written either, one level below the
-/// resolver. `src/parser/mod.rs:822-832`: after `::`, if the token after the
+/// resolver. `src/parser/mod.rs:823-833`: after `::`, if the token after the
 /// next one is `;`, `,` or `{`, the segment is consumed as an ITEM name. So
 /// `import util::math;` parses as `path=["util"], items=["math"]` and the
 /// resolver looks for `util.pd`. The last segment of a path can never be a
 /// module, which means a module tree deeper than one level is unexpressible.
 #[test]
-#[ignore = "XFAIL: nested module paths are unexpressible — src/parser/mod.rs:822-832 consumes the segment after `::` as an ITEM name whenever the following token is `;`/`,`/`{`, so `import util::math;` parses as path=[\"util\"] items=[\"math\"] and the resolver reports \"Module 'util' not found\" for the directory (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: nested module paths are unexpressible — src/parser/mod.rs:823-833 consumes the segment after `::` as an ITEM name whenever the following token is `;`/`,`/`{`, so `import util::math;` parses as path=[\"util\"] items=[\"math\"] and the resolver reports \"Module 'util' not found\" for the directory (owned by M4, cross-file module imports)"]
 fn test_a_module_in_a_subdirectory_can_be_imported() {
     let (compiled, output, stdout) = compile_and_run(
         &[(
@@ -1599,9 +1599,9 @@ fn test_the_whole_emitted_c_is_byte_stable() {
 /// Auditing codegen for what else could put the hash seed into the output
 /// turned up a second, independent source: monomorphized generic
 /// instantiations. `TypeChecker::get_instantiations` builds its `Vec` by
-/// iterating `self.instantiations.keys()` (`src/typeck/mod.rs:6581-6581`), which is a
+/// iterating `self.instantiations.keys()` (`src/typeck/mod.rs:6519-6519`), which is a
 /// `HashMap`, and `get_struct_instantiations` does the same
-/// (`src/typeck/mod.rs:6643-6643`). Codegen then emits in that Vec's order
+/// (`src/typeck/mod.rs:6581-6582`). Codegen then emits in that Vec's order
 /// (`src/codegen/mod.rs:2169-2169`, `src/codegen/mod.rs:2354-2354`).
 ///
 /// This program imports NOTHING, which is how the two sources were told apart:
@@ -1622,7 +1622,7 @@ fn test_the_whole_emitted_c_is_byte_stable() {
 /// `(name, type_args)`.
 ///
 /// NOT COVERED by any test: the sibling sort in `get_struct_instantiations`
-/// (`src/typeck/mod.rs:6643-6643`). Generic *structs* cannot be compiled at all right
+/// (`src/typeck/mod.rs:6581-6582`). Generic *structs* cannot be compiled at all right
 /// now — `struct Box<T> { v: T }` lowers to `void*` and gcc rejects
 /// "initializing 'void *' with an expression of incompatible type
 /// 'struct Box_alpha_i64'" — so there is no program whose output that ordering

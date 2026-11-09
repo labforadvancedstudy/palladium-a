@@ -677,3 +677,103 @@ fn a_genuine_cycle_through_generic_aliases_is_still_refused_by_name() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+// ---------------------------------------------------------------------------
+// Review round 4. The round-3 pre-check MODELLED which positions the checker
+// expands and how an argument binds a parameter, and the model drifted twice:
+// a struct or enum with a lifetime parameter is skipped by the checker and was
+// judged by the pre-check (`type A = A; struct S<'a> { v: A }` — main prints
+// 7, 20ed375 refused it), and `type Pick<T, T>` binds its LAST `T` in the
+// checker and the FIRST in the model. The pre-check is gone: an alias is
+// judged only where the checker or code generation opens it, by a graph built
+// from the checker's own tables and its own substitution. And a parameter
+// list naming one parameter twice is refused where it is written (PD0081).
+// ---------------------------------------------------------------------------
+
+/// PD0081 at every kind of generic parameter list, lifetimes, type and const
+/// parameters alike, in an imported module too — and astra's three programs
+/// whose duplicate binder decided whether a cycle was reached (two of them
+/// overflowed main's stack and 20ed375's) are refused by the binder, before
+/// any alias is expanded. Each ran or crashed on main.
+#[test]
+fn a_generic_parameter_list_naming_a_parameter_twice_is_refused_by_name() {
+    let main7 = "fn main() { print_int(7); }\n";
+    let cases: Vec<(Vec<(&str, String)>, &str)> = vec![
+        (vec![("main.pd", format!("fn f<T, T>(x: T) -> i64 {{ return 1; }}\n{}", main7))], "`T`"),
+        (vec![("main.pd", format!("fn f<T, const T: i64>(x: T) -> i64 {{ return 2; }}\n{}", main7))], "`T`"),
+        (vec![("main.pd", format!("struct S<T, T> {{ v: T }}\n{}", main7))], "`T`"),
+        (vec![("main.pd", format!("enum E<T, T> {{ A(T), B }}\n{}", main7))], "`T`"),
+        (vec![("main.pd", format!("type Pick<T, T> = T;\n{}", main7))], "`T`"),
+        (vec![("main.pd", format!("struct W<T> {{ v: T }}\nimpl<T, T> W<T> {{ fn m(x: i64) -> i64 {{ return 1; }} }}\n{}", main7))], "`T`"),
+        (vec![("main.pd", format!("trait Tr<T, T> {{ fn m(x: i64) -> i64; }}\n{}", main7))], "`T`"),
+        (vec![("main.pd", format!("trait Tr {{ fn m<T, T>(x: T) -> i64; }}\n{}", main7))], "`T`"),
+        (vec![("main.pd", format!("fn f<'a, 'a>(x: i64) -> i64 {{ return 1; }}\n{}", main7))], "`'a`"),
+        (vec![("main.pd", format!("fn f<const N: i64, const N: i64>() -> i64 {{ return 1; }}\n{}", main7))], "`N`"),
+        (vec![("lib.pd", "pub fn g<T, T>(x: T) -> i64 { return 1; }\npub fn one() -> i64 { return 1; }\n".to_string()), ("main.pd", format!("import lib;\n{}", main7))], "`T`"),
+        // astra's three: finite on main, a cycle on main, a cycle through an instantiation.
+        (vec![("main.pd", "type Pick<T,T> = T; type A = Pick<A,String>; fn main(){let x:A = \"hello\"; print(x);}\n".to_string())], "`T`"),
+        (vec![("main.pd", "type Pick<T,T> = T; type G<X> = Pick<String,G<X> >; fn f(x:G<i64>)->i64{return 1;} fn main(){print_int(7);}\n".to_string())], "`T`"),
+        (vec![("main.pd", "type Pick<T,T> = T; type G<X> = Pick<String,G<X> >; fn f<U>(x:U)->G<U>{return x;} fn main(){f(1);}\n".to_string())], "`T`"),
+    ];
+    let mut wrong = Vec::new();
+    for (i, (files, name)) in cases.iter().enumerate() {
+        let files: Vec<(&str, &str)> = files.iter().map(|(n, s)| (*n, s.as_str())).collect();
+        let (verdict, text) = pdc_verdict_files(&files);
+        if !(verdict == "exit 1" && text.contains("error[PD0081]") && text.contains(name) && !text.contains("PD0080")) {
+            wrong.push(format!("case {}: {}: {}", i, verdict, text.lines().filter(|l| l.contains("error") || l.contains("fatal")).collect::<Vec<_>>().join(" | ")));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    // Distinct names are not refused: a lifetime and a type of one letter, and
+    // a method's own parameter of its impl's name (another list).
+    for (source, want) in [
+        ("fn f<'a, a>(x: a) -> i64 { return 4; }\nfn main() { print_int(f(1)); }\n", "4\n"),
+        ("struct W<T> { v: T }\nimpl<T> W<T> { fn m<T>(x: T) -> i64 { return 1; } }\nfn main() { print_int(7); }\n", "7\n"),
+        ("fn f<'a, T, const N: i64>(x: T) -> i64 { return 3; }\nfn main() { print_int(f(1)); }\n", "3\n"),
+    ] {
+        let (verdict, out) = pdc_compile_and_run(source);
+        assert_eq!((verdict.as_str(), out.as_str()), ("exit 0", want), "{}", source);
+    }
+}
+
+/// The checker skips a struct or an enum with a lifetime parameter (it is
+/// registered as generic and converted only when instantiated), so a cyclic
+/// alias in its field or payload is never expanded and the program runs, as on
+/// main. And a cycle the checker's expansion never follows — through a tuple
+/// alias's element, behind a reference — is not judged (fable r05, r08). Each
+/// printed 7 on main and was refused on 20ed375.
+#[test]
+fn an_alias_the_checker_never_opens_is_never_judged() {
+    let cases = [
+        "type A=A; struct S<'a> { v:A } fn main(){print_int(7);}\n",
+        "type A=A; enum S<'a> { V(A), Z } fn main(){print_int(7);}\n",
+        "type Pair<T> = (T, i64);\ntype Q<T> = Pair<T>;\ntype Aa = Q<Aa>;\nfn f(a: Aa) -> i64 { return 1; }\nfn main() { print_int(7); }\n",
+        "type Id<T> = T;\ntype Aa = &Id<Aa>;\nfn f(a: Aa) -> i64 { return 1; }\nfn main() { print_int(7); }\n",
+    ];
+    for source in cases {
+        let (verdict, out) = pdc_compile_and_run(source);
+        assert_eq!((verdict.as_str(), out.as_str()), ("exit 0", "7\n"), "{}", source);
+    }
+}
+
+/// Where the checker DOES open the alias it is judged, whatever the item: a
+/// struct with only a const parameter (non-generic to the checker), a function
+/// with only a lifetime parameter, an impl's generic method, a generic impl's
+/// method. Main hung or overflowed its stack on each.
+#[test]
+fn an_alias_the_checker_opens_is_judged_in_every_kind_of_item() {
+    let cases = [
+        "type A = A;\nstruct S<const N: i64> { v: A }\nfn main() { print_int(7); }\n",
+        "type A = A;\nfn f<'a>(x: A) -> i64 { return 1; }\nfn main() { print_int(7); }\n",
+        "type A = A;\nstruct S { n: i64 }\nimpl S { fn m<T>(x: A) -> i64 { return 1; } }\nfn main() { print_int(7); }\n",
+        "type A = A;\nstruct W<T> { v: T }\nimpl<T> W<T> { fn m(x: A) -> i64 { return 1; } }\nfn main() { print_int(7); }\n",
+    ];
+    let mut wrong = Vec::new();
+    for (i, source) in cases.iter().enumerate() {
+        let (verdict, text) = pdc_verdict(source);
+        if !(verdict == "exit 1" && text.contains("error[PD0080]") && text.contains("`A -> A`")) {
+            wrong.push(format!("case {}: {}: {}", i, verdict, text.lines().filter(|l| l.contains("error") || l.contains("fatal")).collect::<Vec<_>>().join(" | ")));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

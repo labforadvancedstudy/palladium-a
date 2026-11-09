@@ -1237,7 +1237,7 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:4989`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:4927`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
     /// (`src/ownership/borrow_checker.rs:641-643`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
@@ -2495,7 +2495,7 @@ impl CodeGenerator {
                 // First check if it's a type alias
                 if let Some(aliased_type) = self.type_aliases.get(name) {
                     // Resolve the aliased type, under the PD0080 guard (`alias_cycles`)
-                    (self.alias_guard.expand(crate::typeck::alias_cycles::Opening::Plain(name), || self.type_to_c(aliased_type))).unwrap_or_else(|| "void*".to_string())
+                    (self.alias_guard.expand(crate::typeck::alias_cycles::Opening::Plain(name), None, || self.type_to_c(aliased_type))).unwrap_or_else(|| "void*".to_string())
                 } else {
                     // Otherwise it's a struct or enum name
                     // In C, structs need the "struct" prefix
@@ -7336,7 +7336,7 @@ impl CodeGenerator {
     fn register_tuple_type_behind(&mut self, ty: &Type) -> Result<()> {
         if let Type::Custom(name) = ty {
             if let Some(body) = self.type_aliases.get(name).cloned() {
-                if !self.alias_guard.enter(crate::typeck::alias_cycles::Opening::Plain(name)) {
+                if !self.alias_guard.enter(crate::typeck::alias_cycles::Opening::Plain(name), None) {
                     return Ok(()); // the guard tripped: `compile` reports PD0080
                 }
                 let registered = self.register_tuple_type(&body);
