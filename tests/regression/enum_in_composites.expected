@@ -66,8 +66,6 @@ Reference alias:
 One alias, one type:
 -4294967298
 -10
--4
--4
 
 Generic struct, alias argument:
 -4294967298
@@ -76,8 +74,6 @@ Generic struct, alias argument:
 
 Generic struct literal, its own instantiation:
 4294967297
--8
 
 Generic struct literal, its own node:
 4294967297
--8

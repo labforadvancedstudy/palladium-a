@@ -4,13 +4,14 @@
 // there had no record of its own, and code generation matched it against every
 // instantiation any other literal had recorded. `unused` below records
 // `G<i64, z>` (its value is typed by the name of `type z = u32`), and the
-// body's `G { tag: t, p: v }` was built as a `G_i64_z`: `~gg.p` printed
-// 4294967288, where the same literal written in `main` prints -8 (the record is
-// `G<i64, i64>`; the checker keeps no integer width). An `if` meeting two body
-// literals put 4294967297 into that `unsigned int` field and printed 1, and
-// without the decoy the body's instantiation was recorded by nobody and gcc met
-// `incomplete type 'struct G'`. The body is walked now, once, in its own type
-// parameters, and each instantiation of it builds its literal's own record.
+// body's `G { tag: t, p: v }` with `v: i64` was built as that `G_i64_z`: its
+// `unsigned int p` held the i64 7 and `~gg.p` printed 4294967288 where `~7` of
+// an i64 is -8. Without such a literal, the body's instantiation was recorded
+// by nobody and gcc met `incomplete type 'struct G'`. The body is walked now,
+// once, in its own type parameters, and each instantiation of it builds the
+// literal its record names — where the record holds its values exactly. One
+// it does not hold exactly (a `u32` recorded as `i64`) is refused by name:
+// tests/reject/generic_literal_not_held_exactly.pd.
 type z = u32;
 
 struct S {
@@ -33,17 +34,26 @@ struct Box<T> {
 }
 
 fn build<T>(t: T) -> i64 {
-    let v: u32 = 7;
+    let v: i64 = 7;
     let gg = G { tag: t, p: v };
     return ~gg.p;
 }
 
-fn pick<T>(t: T) -> i64 {
-    let v: u32 = 7;
+// Two body literals an `if` joins: one instantiation, one C struct.
+fn meet<T>(t: T) -> i64 {
+    let v: i64 = 7;
     let w: i64 = 4294967297;
     let c = false;
     let r = if c { G { tag: t, p: v } } else { G { tag: t, p: w } };
     return r.p;
+}
+
+// A value typed by the alias's name is of `G<T, z>`, whose `p` is a `u32`.
+fn named<T>(t: T) -> i64 {
+    let s = S { n: 0 };
+    let v = s.get();
+    let gg = G { tag: t, p: v };
+    return ~gg.p;
 }
 
 // `Box<T>` at each instantiation of `boxed`, and at nothing else.
@@ -55,19 +65,9 @@ fn boxed<T>(x: T) -> T {
 fn main() {
     let s = S { n: 0 };
     let unused = G { tag: 1, p: s.get() };
-
-    // The body's literal, beside the decoy.
     print_int(build(1));
-
-    // Two body literals met by an `if`.
-    print_int(pick(1));
-
-    // The same literal written here.
-    let v: u32 = 7;
-    let gg = G { tag: 1, p: v };
-    print_int(~gg.p);
-
-    // A body literal of its own type parameter, at two instantiations.
+    print_int(meet(1));
+    print_int(named(1));
     print_int(boxed(4));
     print(boxed("w"));
 }

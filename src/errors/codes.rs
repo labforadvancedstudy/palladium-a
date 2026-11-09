@@ -642,6 +642,18 @@ pub enum DiagnosticCode {
     /// parameter lists (fn/struct/enum, trait, trait method, impl, type alias);
     /// the name is the parameter (#93 review round 4).
     GenericParameterIsNamedOnce,
+
+    /// PD0082 — a generic call or a generic struct literal is emitted only as an
+    /// instantiation that holds its values EXACTLY: each argument's or field
+    /// value's C type the C type of its parameter or field there (#86, #87).
+    /// The type checker records every integer as `i64` and a reference as its
+    /// referent, and a parameter's or field's type decides what `~`, `>>`, `/`
+    /// and a comparison do with the value, so a `u32` held by a `long long` is
+    /// `~`ed as an i64. Sites, all in `src/codegen/mod.rs`: `instantiation_called`
+    /// (a call whose record or candidates hold no exact match, or whose value's
+    /// C type is not known exactly) and the struct literal emitter
+    /// (`instantiation_matched`, `unrecorded_literal_refused`).
+    GenericUseHeldExactly,
 }
 
 impl DiagnosticCode {
@@ -725,6 +737,7 @@ impl DiagnosticCode {
         DiagnosticCode::MacroExpansionParsesWhereItIsInvoked,
         DiagnosticCode::TypeAliasExpansionReachesNoCycle,
         DiagnosticCode::GenericParameterIsNamedOnce,
+        DiagnosticCode::GenericUseHeldExactly,
     ];
 
     /// The numbers that are RETIRED and must never be allocated again, with the
@@ -837,6 +850,7 @@ impl DiagnosticCode {
             DiagnosticCode::MacroExpansionParsesWhereItIsInvoked => 79,
             DiagnosticCode::TypeAliasExpansionReachesNoCycle => 80,
             DiagnosticCode::GenericParameterIsNamedOnce => 81,
+            DiagnosticCode::GenericUseHeldExactly => 82,
         }
     }
 
@@ -986,6 +1000,7 @@ impl DiagnosticCode {
                 "type_alias_expansion_reaches_no_cycle"
             }
             DiagnosticCode::GenericParameterIsNamedOnce => "generic_parameter_is_named_once",
+            DiagnosticCode::GenericUseHeldExactly => "generic_use_held_exactly",
         }
     }
 }
@@ -1013,7 +1028,7 @@ mod tests {
     fn every_code_is_in_all() {
         assert_eq!(
             DiagnosticCode::ALL.len(),
-            74,
+            75,
             "a code was added to the enum without being added to ALL (or this \
              literal was not updated with the new count)"
         );

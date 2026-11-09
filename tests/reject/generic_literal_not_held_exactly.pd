@@ -1,0 +1,39 @@
+// #87: a generic struct literal is emitted only as an instantiation that holds
+// its values EXACTLY (PD0082), in a generic function's body as anywhere.
+//
+// The type checker never walked a generic body, so this literal had no record
+// and main built it as whichever instantiation held its values: beside the
+// unread `G<i64, z>` (`z = u32`, by the alias's name) that was `G_i64_z`, and
+// without it gcc refused `incomplete type 'struct G'`. The body is walked now
+// and the literal is recorded `G<i64, i64>` (the checker keeps no width, #82),
+// whose `long long p` would read `~gg.p` as -8 where `~7` of a `u32` is
+// 4294967288. Neither the record nor another literal's instantiation decides a
+// literal its record does not hold exactly; it is refused by name.
+type z = u32;
+
+struct S {
+    n: i64,
+}
+
+impl S {
+    fn get(&self) -> z {
+        return 7;
+    }
+}
+
+struct G<X, Y> {
+    tag: X,
+    p: Y,
+}
+
+fn build<T>(t: T) -> i64 {
+    let v: u32 = 7;
+    let gg = G { tag: t, p: v };
+    return ~gg.p;
+}
+
+fn main() {
+    let s = S { n: 0 };
+    let unused = G { tag: 1, p: s.get() };
+    print_int(build(1));
+}

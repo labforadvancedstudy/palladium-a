@@ -20,7 +20,7 @@ never load `stdlib/`" would have been false. What is true is narrower, and every
 
 | Question | Evidence | Answer |
 |---|---|---|
-| Does anything in the compiler reference `stdlib/`? | `grep -rn stdlib src/` → 0 hits (the only match anywhere is `#include <stdlib.h>` at `src/codegen/mod.rs:438`) | No |
+| Does anything in the compiler reference `stdlib/`? | `grep -rn stdlib src/` → 0 hits (the only match anywhere is `#include <stdlib.h>` at `src/codegen/mod.rs:446`) | No |
 | Is `stdlib/` on any **default** search path? | `src/resolver/mod.rs:37-38` searches `.` and `examples`; `:44` adds `<exe_dir>/std`, which no install creates; `:52` adds `$PALLADIUM_PATH`. `stdlib/` is on none of them by default | No |
 | Is the resolver reachable at all? | **Yes** — via the `import` keyword (`src/parser/mod.rs:176`), *not* `use`. Measured: `import mymod;` prints `Resolved 1 modules`. Resolution runs only when a program has imports (`src/driver/mod.rs:89`) | Yes |
 | Can a user put `stdlib/` on the path? | **Yes** — `$PALLADIUM_PATH` is user-configurable | Yes |

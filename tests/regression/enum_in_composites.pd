@@ -390,8 +390,11 @@ fn main() {
     print("\nOne alias, one type:");
     print_int(rnot(rt));
     print_int(rnot(rif));
-    print_int(lnot(lw));
-    print_int(lnot(la));
+    // `lnot(lw)` and `lnot(la)` printed -4 here, where `~3` of a `u32` is
+    // 4294967292: an annotated `Wn` binding is recorded `lnot<i64>`, whose
+    // `long long` parameter `~`s it as an i64 (#82). Since #86 review round 2
+    // such a call is refused by name (tests/m2_enum_composites.rs,
+    // tests/m4_generic_call_sites.rs).
 
     // A generic struct's type argument is the alias its value is carried by.
     let tr = Tagged { tag: 1, p: ra };
@@ -406,27 +409,23 @@ fn main() {
     print_int(wnot(tn1));
 
     // A literal is of its own instantiation: the unread `Own<i64, wz>` does not
-    // take the `u32` that is not typed by the alias's name.
+    // take a literal of another. This section also built a literal of a `u32`
+    // NOT typed by the alias's name, recorded `Own<i64, i64>`, and printed
+    // `~og.p` as -8 where `~7` of a `u32` is 4294967288 (#82); since #86 review
+    // round 2 such a literal is refused by name (tests/m2_enum_composites.rs).
     let unread = Own { tag: 1, p: seat.wz() };
-    let ow: u32 = 7;
     let owide = 4294967297;
     let oc = false;
-    let own = if oc { Own { tag: 2, p: ow } } else { Own { tag: 3, p: owide } };
-    let og = Own { tag: 4, p: ow };
+    let own = if oc { Own { tag: 2, p: owide } } else { Own { tag: 3, p: owide } };
     print("\nGeneric struct literal, its own instantiation:");
     print_int(own.p);
-    print_int(~og.p);
 
-    // The unread expansion's `Own<i64, wz>` does not take the `u32` that is
-    // not typed by the alias's name, though all four expansions share a span.
+    // The same through a macro's expansions, which share a span.
     let mw = seat.wz();
     let munread = own_of!(mw);
-    let mv: u32 = 7;
     let mx = 4294967297;
     let moc = false;
-    let mown = if moc { own_of!(mv) } else { own_of!(mx) };
-    let mog = own_of!(mv);
+    let mown = if moc { own_of!(mx) } else { own_of!(mx) };
     print("\nGeneric struct literal, its own node:");
     print_int(mown.p);
-    print_int(~mog.p);
 }

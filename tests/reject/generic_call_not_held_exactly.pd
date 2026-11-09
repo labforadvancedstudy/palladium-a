@@ -1,0 +1,20 @@
+// #86: a generic call is emitted only as an instantiation that holds its
+// argument EXACTLY (PD0082).
+//
+// The type checker records every integer as `i64` (#82), so `half(v)` with
+// `v: u32` is recorded `half<i64>`, whose `long long` parameter is not the
+// `unsigned int` the argument is, and no `u32` instantiation exists. main chose
+// among the instantiations by the first argument's C type with substring tests
+// (`"unsigned int"` contains `"int"`) and called `half__bool`: it printed
+// -647483648 for 3000000000 / 2. Emitting the record instead would hand a
+// `u32` to a parameter that `~`, `>>`, `/` and comparisons treat as an i64, so
+// the call is refused by name.
+fn half<T>(x: T) -> T {
+    return x / 2;
+}
+
+fn main() {
+    let b = half(true);
+    let v: u32 = 3000000000;
+    print_int(half(v));
+}

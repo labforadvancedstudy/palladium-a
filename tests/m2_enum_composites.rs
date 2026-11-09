@@ -868,7 +868,7 @@ fn a_generic_struct_literal_code_generation_cannot_instantiate_is_refused_by_nam
 /// main read `G { tag: 1, p: v }`).
 #[test]
 fn a_generic_struct_literal_at_i64_bool_or_string_still_runs() {
-    let rows: [(&str, &str, &str); 16] = [
+    let rows: [(&str, &str, &str); 11] = [
         (
             "i64, bool and String",
             "struct G<T> { v: T }\nfn main() { let a = G { v: 4294967297 }; \
@@ -938,40 +938,30 @@ fn a_generic_struct_literal_at_i64_bool_or_string_still_runs() {
              print_int(a.v.n); print_int(b.v); if c.v { print_int(1); } }",
             "6\n7\n1\n",
         ),
-        (
-            "a u32 argument",
-            "struct G<T> { v: T }\n\
-             fn main() { let x: u32 = 5; let g = G { v: x }; print_int(1); }",
-            "1\n",
-        ),
-        (
-            "an i32 argument",
-            "struct G<T> { v: T }\n\
-             fn main() { let x: i32 = 5; let g = G { v: x }; print_int(1); }",
-            "1\n",
-        ),
-        (
-            "a u32 argument, read",
-            "struct G<T> { v: T }\n\
-             fn main() { let x: u32 = 5; let g = G { v: x }; print_int(~g.v); }",
-            "-6\n",
-        ),
-        (
-            "an i32 argument, read",
-            "struct G<T> { v: T }\n\
-             fn main() { let x: i32 = 5; let g = G { v: x }; print_int(~g.v); }",
-            "-6\n",
-        ),
-        (
-            "a u32 argument beside an i64 one",
-            "struct G<T> { v: T }\n\
-             fn main() { let x: u32 = 5; let g = G { v: x }; let h = G { v: 4294967297 }; \
-             print_int(~g.v); print_int(h.v); }",
-            "-6\n4294967297\n",
-        ),
     ];
     for (shape, source, want) in rows {
         assert_eq!(run(source, "generic_literal_runs"), want, "{}", shape);
+    }
+    // A `u32` or an `i32` the record spells `i64` is NOT held by `G<i64>`'s
+    // `long long v` exactly, and since #86/#87 review round 2 such a literal is
+    // refused by name (PD0082): the field's type decides what `~` does with the
+    // value, and `~g.v` of the `u32` 5 printed -6 here where it is 4294967290.
+    // The rows that only built the literal, and the `i32` ones, ran correctly on
+    // main; they are refused by the same rule, as the record does not say which
+    // width the value is.
+    for (shape, source) in [
+        ("a u32 argument (main: 1)", "struct G<T> { v: T }\nfn main() { let x: u32 = 5; let g = G { v: x }; print_int(1); }"),
+        ("an i32 argument (main: 1)", "struct G<T> { v: T }\nfn main() { let x: i32 = 5; let g = G { v: x }; print_int(1); }"),
+        ("a u32 argument, read (main: -6, wrong)", "struct G<T> { v: T }\nfn main() { let x: u32 = 5; let g = G { v: x }; print_int(~g.v); }"),
+        ("an i32 argument, read (main: -6)", "struct G<T> { v: T }\nfn main() { let x: i32 = 5; let g = G { v: x }; print_int(~g.v); }"),
+        (
+            "a u32 argument beside an i64 one (main: -6, wrong)",
+            "struct G<T> { v: T }\nfn main() { let x: u32 = 5; let g = G { v: x }; let h = G { v: 4294967297 }; \
+             print_int(~g.v); print_int(h.v); }",
+        ),
+    ] {
+        let text = refused(source, "generic_literal_width");
+        assert!(text.contains("is a literal of the generic struct"), "{}: {}", shape, text);
     }
 }
 
@@ -1920,14 +1910,24 @@ fn a_value_main_typed_by_an_alias_name_instantiates_a_generic_at_that_name() {
             "let r: u32 = 7; print_int(g(r));",
         ),
     ];
+    // main's ERASED answer, -8, is not `~7` of a `u32` (4294967288): the value is
+    // recorded `g<i64>`, whose `long long` parameter `~`s it as an i64 (#82). Since
+    // #86/#87 review round 2 a call whose record does not hold its argument exactly,
+    // with no instantiation of the record's kind that does, is refused by name
+    // (PD0082) rather than given that answer.
     for (shape, defs, body) in erased {
         let program = format!("{}{}fn main() {{ {} }}\n", defs, bitnot, body);
+        let verdict = outcome(&program, "alias_erased");
         got.push(format!(
             "main's erased answer, {}: {}",
             shape,
-            outcome(&program, "alias_erased")
+            if verdict.starts_with("REFUSED: ") && verdict.contains("the call of `g`") {
+                "REFUSED (PD0082)".to_string()
+            } else {
+                verdict
+            }
         ));
-        want.push(format!("main's erased answer, {}: RUN: -8\n", shape));
+        want.push(format!("main's erased answer, {}: REFUSED (PD0082)", shape));
     }
     assert_eq!(got, want);
 }
@@ -2540,6 +2540,10 @@ fn two_aliases_of_two_types_are_not_one_type_where_they_meet() {
 /// refusal. Kept, each as main ran it: an annotation, an assignment into a
 /// binding annotated `N`, a non-generic function's parameter and a struct's
 /// field (main read each as the type `N` names), and a function's `return`.
+/// Since #86/#87 review round 2 the first five of those print nothing: each
+/// hands a `u32` to `g`, recorded `g<i64>`, and main's `-4` (`-2`) was `~` of
+/// an i64 where the `u32`'s is 4294967292 (4294967294); a call whose record
+/// does not hold its argument exactly is refused by name (PD0082).
 #[test]
 fn a_literal_meets_a_place_main_typed_by_a_narrowing_alias_name_as_main_did() {
     let head = |ty: &str, v: &str, op: &str| {
@@ -2633,34 +2637,34 @@ fn a_literal_meets_a_place_main_typed_by_a_narrowing_alias_name_as_main_did() {
             "REFUSED",
         ),
         (
-            "an annotation (main: the type N names)",
+            "an annotation (main: -4, the erased answer)",
             &u32,
             "let r: N = 3; ".to_string() + fwd,
-            "RUN: -4\n",
+            "REFUSED",
         ),
         (
-            "an annotation of a wider literal",
+            "an annotation of a wider literal (main: -2, the erased answer)",
             &u32,
             "let r: N = 4294967297; ".to_string() + fwd,
-            "RUN: -2\n",
+            "REFUSED",
         ),
         (
-            "assigned into a binding annotated `N`",
+            "assigned into a binding annotated `N` (main: -4, the erased answer)",
             &u32,
             "let mut r: N = 7; r = 3; ".to_string() + fwd,
-            "RUN: -4\n",
+            "REFUSED",
         ),
         (
-            "a non-generic function's `x: N`",
+            "a non-generic function's `x: N` (main: -4, the erased answer)",
             &u32,
             "let r = hn(3); ".to_string() + fwd,
-            "RUN: -4\n",
+            "REFUSED",
         ),
         (
-            "a struct's `n: N`",
+            "a struct's `n: N` (main: -4, the erased answer)",
             &u32,
             "let h2 = H2 { n: 3 }; let r = h2.n; ".to_string() + fwd,
-            "RUN: -4\n",
+            "REFUSED",
         ),
         (
             "returned from a generic's `-> N`",
@@ -2873,33 +2877,43 @@ fn a_generic_struct_literal_is_of_the_instantiation_recorded_for_it() {
     let iff = "let c = false; let r = if c { G { tag: 1, p: v } } else { G { tag: 2, p: w } }; ";
     let byname = "let s = S { n: 0 }; let v = s.get(); let w: i64 = 4294967297; ";
     let rows: Vec<(&str, &str, String, &str)> = vec![
-        ("unused G<i64, z>, an `if`, the field read", z, format!("{decoy}{vw}{iff}print_int(r.p);"), "RUN: 4294967297\n"),
-        ("unused G<i64, z>, an `if`, discarded", z, format!("{decoy}{vw}{iff}print_int(0);"), "RUN: 0\n"),
-        ("unused G<i64, z>, an `if`, the field forwarded to a generic", z, format!("{decoy}{vw}{iff}let x = r.p; print_int(id(x));"), "RUN: 4294967297\n"),
-        ("unused G<i64, z>, an `if`, the field re-bound annotated", z, format!("{decoy}{vw}{iff}let x: i64 = r.p; print_int(x);"), "RUN: 4294967297\n"),
-        ("unused G<i64, z>, an array", z, format!("{decoy}{vw}let a = G {{ tag: 1, p: v }}; let b = G {{ tag: 2, p: w }}; let xs = [a, b]; print_int(xs[1].p);"), "RUN: 4294967297\n"),
-        ("unused G<i64, z>, a `match`", z, format!("{decoy}{vw}let c = 1; let r = match c {{ 0 => G {{ tag: 1, p: v }}, _ => G {{ tag: 2, p: w }} }}; print_int(r.p);"), "RUN: 4294967297\n"),
-        ("unused G<i64, z>, a `loop`", z, format!("{decoy}{vw}let c = false; let r = loop {{ if c {{ break G {{ tag: 1, p: v }}; }} break G {{ tag: 2, p: w }}; }}; print_int(r.p);"), "RUN: 4294967297\n"),
-        ("unused G<i64, z> after the `if`", z, format!("{vw}{iff}{decoy}print_int(r.p);"), "RUN: 4294967297\n"),
-        ("unused G<String, z>, a `String` tag", z, format!("let s = S {{ n: 0 }}; let unused = G {{ tag: \"x\", p: s.get() }}; {vw}let c = false; let r = if c {{ G {{ tag: \"x\", p: v }} }} else {{ G {{ tag: \"y\", p: w }} }}; print_int(r.p);"), "RUN: 4294967297\n"),
-        ("unused G<i64, z>, `~` of a u32 the checker records as i64", z, format!("{decoy}let v: u32 = 7; let gg = G {{ tag: 1, p: v }}; print_int(~gg.p);"), "RUN: -8\n"),
-        ("no unused literal, an `if` (control)", z, format!("{vw}{iff}print_int(r.p);"), "RUN: 4294967297\n"),
-        ("no unused literal, `~` of the u32 (control)", z, "let v: u32 = 7; let gg = G { tag: 1, p: v }; print_int(~gg.p);".to_string(), "RUN: -8\n"),
+        ("unused G<i64, z>, an `if`, the field read (main: 4294967297)", z, format!("{decoy}{vw}{iff}print_int(r.p);"), "REFUSED (PD0082)"),
+        ("unused G<i64, z>, an `if`, discarded (main: 0)", z, format!("{decoy}{vw}{iff}print_int(0);"), "REFUSED (PD0082)"),
+        ("unused G<i64, z>, an `if`, the field forwarded to a generic (main: 4294967297)", z, format!("{decoy}{vw}{iff}let x = r.p; print_int(id(x));"), "REFUSED (PD0082)"),
+        ("unused G<i64, z>, an `if`, the field re-bound annotated (main: 4294967297)", z, format!("{decoy}{vw}{iff}let x: i64 = r.p; print_int(x);"), "REFUSED (PD0082)"),
+        ("unused G<i64, z>, an array (main: 4294967297)", z, format!("{decoy}{vw}let a = G {{ tag: 1, p: v }}; let b = G {{ tag: 2, p: w }}; let xs = [a, b]; print_int(xs[1].p);"), "REFUSED (PD0082)"),
+        ("unused G<i64, z>, a `match` (main: 4294967297)", z, format!("{decoy}{vw}let c = 1; let r = match c {{ 0 => G {{ tag: 1, p: v }}, _ => G {{ tag: 2, p: w }} }}; print_int(r.p);"), "REFUSED (PD0082)"),
+        ("unused G<i64, z>, a `loop` (main: 4294967297)", z, format!("{decoy}{vw}let c = false; let r = loop {{ if c {{ break G {{ tag: 1, p: v }}; }} break G {{ tag: 2, p: w }}; }}; print_int(r.p);"), "REFUSED (PD0082)"),
+        ("unused G<i64, z> after the `if` (main: 4294967297)", z, format!("{vw}{iff}{decoy}print_int(r.p);"), "REFUSED (PD0082)"),
+        ("unused G<String, z>, a `String` tag (main: 4294967297)", z, format!("let s = S {{ n: 0 }}; let unused = G {{ tag: \"x\", p: s.get() }}; {vw}let c = false; let r = if c {{ G {{ tag: \"x\", p: v }} }} else {{ G {{ tag: \"y\", p: w }} }}; print_int(r.p);"), "REFUSED (PD0082)"),
+        ("unused G<i64, z>, `~` of a u32 the checker records as i64 (main: -8)", z, format!("{decoy}let v: u32 = 7; let gg = G {{ tag: 1, p: v }}; print_int(~gg.p);"), "REFUSED (PD0082)"),
+        ("no unused literal, an `if` (control) (main: 4294967297)", z, format!("{vw}{iff}print_int(r.p);"), "REFUSED (PD0082)"),
+        ("no unused literal, `~` of the u32 (control) (main: -8)", z, "let v: u32 = 7; let gg = G { tag: 1, p: v }; print_int(~gg.p);".to_string(), "REFUSED (PD0082)"),
         ("a by-name z value is of G<i64, z> (refused on main)", z, "let s = S { n: 0 }; let v = s.get(); let gg = G { tag: 1, p: v }; print_int(~gg.p);".to_string(), "RUN: 4294967288\n"),
         ("a plain &i64 beside an unused G<i64, A>", a_ref, "let s = S { n: 5 }; let unused = G { tag: 1, p: s.get() }; let m: i64 = 4294967297; let g = G { tag: 2, p: &m }; print_int(*g.p);".to_string(), "RUN: 4294967297\n"),
-        ("an i32 first field beside a G<bool, i64>", bare, "let d = G { tag: true, p: 5 }; let k: i32 = 3; let w: i64 = 4294967297; let g = G { tag: k, p: w }; print_int(g.p);".to_string(), "RUN: 4294967297\n"),
+        ("an i32 first field beside a G<bool, i64> (main: 4294967297)", bare, "let d = G { tag: true, p: 5 }; let k: i32 = 3; let w: i64 = 4294967297; let g = G { tag: k, p: w }; print_int(g.p);".to_string(), "REFUSED (PD0082)"),
         ("a bool and an i64 instantiation (main: 1, #76)", bare, "let a = G { tag: 1, p: true }; let b = G { tag: 2, p: 4294967297 }; print_int(b.p);".to_string(), "RUN: 4294967297\n"),
-        ("an unused G<i64, A> under `type A = u32` (main: 1)", a_u32, format!("{decoy}{vw}{iff}print_int(r.p);"), "RUN: 4294967297\n"),
+        ("an unused G<i64, A> under `type A = u32` (main: 1)", a_u32, format!("{decoy}{vw}{iff}print_int(r.p);"), "REFUSED (PD0082)"),
         ("two by-name z values met in an `if` (refused on main)", z, format!("{byname}let s2 = S {{ n: 1 }}; let v2 = s2.get(); let c = true; let r = if c {{ G {{ tag: 1, p: v }} }} else {{ G {{ tag: 2, p: v2 }} }}; print_int(~r.p);"), "RUN: 4294967288\n"),
     ];
     let mut got = Vec::new();
     let mut want = Vec::new();
+    // A literal of a `u32` or an `i32` the record spells `i64` is not held by
+    // the record's `long long` exactly, and is refused by name since #86/#87
+    // review round 2 (PD0082): the field's type decides what `~` does with it
+    // (main's -8 is `~7` of an i64; a `u32`'s is 4294967288). Every such row is
+    // refused, the ones that only read the i64 branch of a join too.
     for (shape, head, body, out) in &rows {
         let program = format!("{head}fn main() {{ {body} }}\n");
+        let verdict = outcome(&program, "literal_record");
         got.push(format!(
             "{}: {}",
             shape,
-            outcome(&program, "literal_record")
+            if verdict.starts_with("REFUSED: ") && verdict.contains("is a literal of the generic struct") {
+                "REFUSED (PD0082)".to_string()
+            } else {
+                verdict
+            }
         ));
         want.push(format!("{}: {}", shape, out));
     }
@@ -2999,6 +3013,18 @@ fn outcome_of_files(modules: &[(&str, &str)], main: &str) -> String {
 /// the same value; so do the rows they control.
 #[test]
 fn a_struct_literal_is_recorded_as_itself_not_as_its_span() {
+    // Every literal here holds a `u32` the record spells `i64`, which the
+    // record's `long long p` does not hold exactly: since #86/#87 review round
+    // 2 each is refused by name (PD0082) — whatever expansion, span or file
+    // offset it shares — rather than printing `~` of an i64 (main's -8, where a
+    // `u32`'s is 4294967288) or reading the other branch of a join.
+    let pd0080 = |verdict: String| {
+        if verdict.starts_with("REFUSED: ") && verdict.contains("is a literal of the generic struct") {
+            "REFUSED (PD0082)".to_string()
+        } else {
+            verdict
+        }
+    };
     let z = "type z = u32;\nstruct S { n: i64 }\nimpl S { fn get(&self) -> z { return 7; } }\n\
              struct G<X, Y> { tag: X, p: Y }\nfn id<T>(t: T) -> T { return t; }\n";
     let pack = "macro pack!(x) { G { tag: 1, p: $x } }\n";
@@ -3007,21 +3033,21 @@ fn a_struct_literal_is_recorded_as_itself_not_as_its_span() {
     let vw = "let b: u32 = 7; let w: i64 = 4294967297; let c = false; ";
     let iff = "let r = if c { pack!(b) } else { pack!(w) }; ";
     let rows: Vec<(&str, String, &str)> = vec![
-        ("one macro, an `if`, the field read", format!("{pack}fn main() {{ {decoy}{vw}{iff}print_int(r.p); }}"), "RUN: 4294967297\n"),
-        ("one macro, an `if`, discarded", format!("{pack}fn main() {{ {decoy}{vw}{iff}print_int(0); }}"), "RUN: 0\n"),
-        ("one macro, an `if`, the field forwarded", format!("{pack}fn main() {{ {decoy}{vw}{iff}let q = r.p; print_int(id(q)); }}"), "RUN: 4294967297\n"),
-        ("one macro, an `if`, the field re-bound annotated", format!("{pack}fn main() {{ {decoy}{vw}{iff}let q: i64 = r.p; print_int(q); }}"), "RUN: 4294967297\n"),
-        ("two macros of one body, an `if`", format!("{two}fn main() {{ let s = S {{ n: 0 }}; let a = s.get(); let d = alpha!(a); {vw}let r = if c {{ beta!(b) }} else {{ beta!(w) }}; print_int(r.p); }}"), "RUN: 4294967297\n"),
-        ("the unused expansion in another function", format!("{pack}fn other() -> i64 {{ {decoy}return 0; }}\nfn main() {{ {vw}{iff}print_int(r.p); }}"), "RUN: 4294967297\n"),
-        ("`~` of a u32 the checker records as i64", format!("{pack}fn main() {{ {decoy}let b: u32 = 7; let r = pack!(b); print_int(~r.p); }}"), "RUN: -8\n"),
-        ("`~`, the unused argument named `aliaswide` (control)", format!("{pack}fn main() {{ let s = S {{ n: 0 }}; let aliaswide = s.get(); let d = pack!(aliaswide); let b: u32 = 7; let r = pack!(b); print_int(~r.p); }}"), "RUN: -8\n"),
-        ("`~`, no unused expansion (control)", format!("{pack}fn main() {{ let b: u32 = 7; let r = pack!(b); print_int(~r.p); }}"), "RUN: -8\n"),
+        ("one macro, an `if`, the field read (main: 4294967297)", format!("{pack}fn main() {{ {decoy}{vw}{iff}print_int(r.p); }}"), "REFUSED (PD0082)"),
+        ("one macro, an `if`, discarded (main: 0)", format!("{pack}fn main() {{ {decoy}{vw}{iff}print_int(0); }}"), "REFUSED (PD0082)"),
+        ("one macro, an `if`, the field forwarded (main: 4294967297)", format!("{pack}fn main() {{ {decoy}{vw}{iff}let q = r.p; print_int(id(q)); }}"), "REFUSED (PD0082)"),
+        ("one macro, an `if`, the field re-bound annotated (main: 4294967297)", format!("{pack}fn main() {{ {decoy}{vw}{iff}let q: i64 = r.p; print_int(q); }}"), "REFUSED (PD0082)"),
+        ("two macros of one body, an `if` (main: 4294967297)", format!("{two}fn main() {{ let s = S {{ n: 0 }}; let a = s.get(); let d = alpha!(a); {vw}let r = if c {{ beta!(b) }} else {{ beta!(w) }}; print_int(r.p); }}"), "REFUSED (PD0082)"),
+        ("the unused expansion in another function (main: 4294967297)", format!("{pack}fn other() -> i64 {{ {decoy}return 0; }}\nfn main() {{ {vw}{iff}print_int(r.p); }}"), "REFUSED (PD0082)"),
+        ("`~` of a u32 the checker records as i64 (main: -8)", format!("{pack}fn main() {{ {decoy}let b: u32 = 7; let r = pack!(b); print_int(~r.p); }}"), "REFUSED (PD0082)"),
+        ("`~`, the unused argument named `aliaswide` (control) (main: -8)", format!("{pack}fn main() {{ let s = S {{ n: 0 }}; let aliaswide = s.get(); let d = pack!(aliaswide); let b: u32 = 7; let r = pack!(b); print_int(~r.p); }}"), "REFUSED (PD0082)"),
+        ("`~`, no unused expansion (control) (main: -8)", format!("{pack}fn main() {{ let b: u32 = 7; let r = pack!(b); print_int(~r.p); }}"), "REFUSED (PD0082)"),
     ];
     let mut got = Vec::new();
     let mut want = Vec::new();
     for (shape, body, out) in &rows {
         let program = format!("{z}{body}\n");
-        got.push(format!("{}: {}", shape, outcome(&program, "literal_node")));
+        got.push(format!("{}: {}", shape, pd0080(outcome(&program, "literal_node"))));
         want.push(format!("{}: {}", shape, out));
     }
     // Two imported files whose literals sit at one offset: the literal in
@@ -3045,30 +3071,30 @@ fn a_struct_literal_is_recorded_as_itself_not_as_its_span() {
             "two files, one offset, `~` of a u32",
             bitnot,
             0,
-            "RUN: -8\n",
+            "REFUSED (PD0082)",
         ),
         (
             "two files, another offset, `~` (control)",
             bitnot,
             1,
-            "RUN: -8\n",
+            "REFUSED (PD0082)",
         ),
         (
             "two files, one offset, an `if`",
             iff,
             0,
-            "RUN: 4294967297\n",
+            "REFUSED (PD0082)",
         ),
         (
             "two files, another offset, an `if` (control)",
             iff,
             1,
-            "RUN: 4294967297\n",
+            "REFUSED (PD0082)",
         ),
     ] {
         let one = one(unused, "G { tag: 1, p: a }; return 0; }\n", two, extra);
         let files = [("lib1.pd", one.as_str()), ("lib2.pd", two)];
-        got.push(format!("{}: {}", shape, outcome_of_files(&files, main)));
+        got.push(format!("{}: {}", shape, pd0080(outcome_of_files(&files, main))));
         want.push(format!("{}: {}", shape, out));
     }
     assert_eq!(got, want);

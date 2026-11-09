@@ -2,7 +2,7 @@
 # manifest's pins by `make check-diagnostic-codes`.
 #
 # WHAT THIS IS. The su0 semantic map, as both review engines approved it, plus the
-# amendments recorded below: one row per refusal-witness manifest row (123
+# amendments recorded below: one row per refusal-witness manifest row (125
 # `reject` + 2 `skip`), saying which stable code that row's refusal carries and,
 # where the code prints more than one payload, which fragment of the PRIMARY
 # header's payload tells this row apart. The generator writes column 4 of every
@@ -187,3 +187,5 @@ PD0078	a `/*` must be closed (token.rs:166, raised through scanner.rs:64-66; one
 PD0079	a macro's expansion parses as what its invocation position requires (macros, `expansion_does_not_parse`, one site reached from two positions; the fixture is the STATEMENT position, and the expression position has no fixture of its own)	1	tests/reject/macro_expansion_does_not_parse.pd	reject	yes	-	no	no	-	corpus-gap
 PD0080	a type alias the compiler expands must name a type: its expansion may not reach an alias cycle (alias_cycles.rs: the `ExpansionGuard` in typeck and codegen, judged where an alias is opened; the alias and the cycle vary)	1	tests/reject/alias_cycle_through_generic_argument.pd	reject	yes	-	no	no	-	narrow-surface
 PD0081	a generic parameter list names each parameter once (parser, `refuse_a_parameter_named_twice`, one helper at the end of all five lists; the name varies)	1	tests/reject/generic_parameter_named_twice.pd	reject	yes	-	no	no	-	narrow-surface
+PD0082	a generic use is emitted only as an instantiation that holds its values exactly (codegen, `instantiation_called` and the struct literal emitter; the call and the literal print different payloads)	2	tests/reject/generic_call_not_held_exactly.pd	reject	yes	-	yes	yes	the call of `half`	-
+PD0082	a generic use is emitted only as an instantiation that holds its values exactly (codegen, `instantiation_called` and the struct literal emitter; the call and the literal print different payloads)	2	tests/reject/generic_literal_not_held_exactly.pd	reject	yes	-	yes	yes	is a literal of the generic struct	-

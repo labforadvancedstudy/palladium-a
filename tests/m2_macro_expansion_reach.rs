@@ -193,12 +193,15 @@ fn a_macro_in_a_method_body_expands_as_it_does_in_a_free_function() {
             "RUN: 44\n",
         ),
         (
+            // `b` was a `u32`: since #86/#87 review round 2 a literal of a `u32` the
+            // record spells `i64` is refused by name (PD0082, tests/m4_generic_call_sites.rs),
+            // and this row is about the expansions, so `b` is the `i64` the record holds.
             "struct literal in the macro body, two expansions in one method",
             "type z = u32;\nstruct S { n: i64 }\nimpl S { fn get(&self) -> z { return 7; } }\n\
              struct G<X, Y> { tag: X, p: Y }\nmacro pack!(x) { G { tag: 1, p: $x } }\n\
              struct H { k: i64 }\n\
              impl H { fn run(&self) -> i64 { let s = S { n: 0 }; let a = s.get(); let d = pack!(a); \
-             let b: u32 = 7; let w: i64 = 4294967297; let c = false; \
+             let b: i64 = 7; let w: i64 = 4294967297; let c = false; \
              let r = if c { pack!(b) } else { pack!(w) }; return r.p; } }\n\
              fn main() { let h = H { k: 0 }; print_int(h.run()); }"
                 .to_string(),

@@ -343,6 +343,13 @@ pub struct CodeGenerator {
     /// imported public generic, unless a local function of the name overwrites it, and a
     /// local generic. A call of one is emitted only as one of its instantiations.
     generic_templates: std::collections::HashSet<String>,
+    /// The parameters and unannotated `let` bindings of the function being
+    /// generated whose C type `variables` does not record exactly — a `u32`,
+    /// `u64`, `f32` or `f64` parameter is tracked there as `long long`, and so is
+    /// `let w = v + 0` with `v: u32` — as `(what variables holds, the exact C
+    /// type)`. Only `exact_c_type_in` reads it, and only while `variables` still
+    /// holds what was tracked (no binding has shadowed the name since).
+    param_exact_c: std::collections::HashMap<String, (String, String)>,
 }
 
 /// What `open_binding_scope` saves and `close_binding_scope` restores: the
@@ -936,6 +943,7 @@ impl CodeGenerator {
             call_records: crate::typeck::CallRecords::default(),
             emitting_instantiation: std::collections::HashMap::new(),
             generic_templates: std::collections::HashSet::new(),
+            param_exact_c: std::collections::HashMap::new(),
         })
     }
 
@@ -4656,6 +4664,7 @@ impl CodeGenerator {
         self.reference_facts =
             ReferenceFacts::collect(func, &self.functions, &self.impl_method_params);
         self.variables.clear(); // Clear variables from previous function
+        self.param_exact_c.clear();
         // ...and the top-level items come straight back: they are in scope in
         // every body, which is the one thing this map's per-function lifetime
         // cannot express on its own.
@@ -4759,6 +4768,14 @@ impl CodeGenerator {
                 }
                 _ => "long long".to_string(),
             };
+            let declared = self.type_to_c(&param.ty);
+            if declared != c_type
+                && !declared.contains('[')
+                && !matches!(param.ty, Type::Reference { .. } | Type::Tuple(_))
+            {
+                self.param_exact_c
+                    .insert(param.name.clone(), (c_type.clone(), declared));
+            }
             self.variables.insert(param.name.clone(), c_type);
         }
 
@@ -5032,6 +5049,25 @@ impl CodeGenerator {
                     }
                     _ => None,
                 };
+                // A binding declared at a C type its initializer is not exactly — `let w = v
+                // + 0` with `v: u32` is declared `long long` — is of the initializer's exact C
+                // type where an instantiation is chosen for it (`exact_c_type_in`), as a
+                // parameter `variables` tracks inexactly is. Any other binding of the name
+                // ends what an earlier one recorded.
+                let exact = match ty {
+                    None if array_dims.is_empty() => self
+                        .exact_c_type_in(value, &Default::default())
+                        .filter(|exact| !Self::same_c_type(exact, &c_type)),
+                    _ => None,
+                };
+                match exact {
+                    Some(exact) => {
+                        self.param_exact_c.insert(name.clone(), (c_type.clone(), exact));
+                    }
+                    None => {
+                        self.param_exact_c.remove(name.as_str());
+                    }
+                }
                 // Track variable type for future inference. Arrays keep their
                 // dimensions in the recorded type.
                 self.variables
@@ -7687,11 +7723,14 @@ impl CodeGenerator {
                     if found.is_none() {
                         if let Expr::StructLiteral { id, .. } = expr {
                             if self.literal_is_unrecorded(*id) {
-                                return Err(Self::unrecorded_literal_refused(name, instantiations));
+                                return Err(Self::unrecorded_literal_refused(name, instantiations)
+                                    .with_code(DiagnosticCode::GenericUseHeldExactly));
                             }
                         }
                     }
-                    Self::instantiation_matched(name, found.as_deref(), instantiations)?.to_string()
+                    Self::instantiation_matched(name, found.as_deref(), instantiations)
+                        .map_err(|e| e.with_code(DiagnosticCode::GenericUseHeldExactly))?
+                        .to_string()
                 } else {
                     // Use the original name for non-generic structs
                     name.clone()
@@ -8144,14 +8183,28 @@ impl CodeGenerator {
             )));
         }
         if own.is_empty() {
-            // No record: the one instantiation that takes the arguments as C converts them
-            // without changing them, and none where more than one or none does.
+            // No record: the one instantiation whose parameters are the arguments' C types
+            // exactly, and none where more than one or none is, or a C type cannot say a kind.
             let taking: Vec<&Vec<String>> = candidates
                 .iter()
                 .copied()
-                .filter(|type_args| self.fits(func_name, type_args, args, Fit::Lossless, false))
+                .filter(|type_args| self.fits(func_name, type_args, args))
                 .collect();
-            if let [one] = taking.as_slice() {
+            // Without a record nothing says WHICH kind a value of a C type two kinds share is:
+            // an `int` is a `bool` or an `i32`, a `long long` an `i64` or a `char`. Such a call
+            // is never given an instantiation of one of them by its C type alone.
+            let generic_at: Vec<bool> = candidates
+                .first()
+                .and_then(|type_args| self.instantiated_parameters(func_name, type_args))
+                .map(|params| params.into_iter().map(|(_, _, generic)| generic).collect())
+                .unwrap_or_default();
+            let shared = args.iter().enumerate().any(|(i, arg)| {
+                generic_at.get(i).copied().unwrap_or(true)
+                    && self
+                        .exact_c_type_in(arg, &Default::default())
+                        .is_none_or(|t| Self::c_type_is_shared_by_two_kinds(&t))
+            });
+            if let ([one], false) = (taking.as_slice(), shared) {
                 return Ok(Some(self.mangle_generic_name(func_name, one)));
             }
             let named: Vec<String> = taking.iter().map(|a| spelled(a)).collect();
@@ -8171,28 +8224,44 @@ impl CodeGenerator {
                 } else {
                     format!("{} each take these arguments", named.join(" and "))
                 }
-            )));
+            ))
+            .with_code(DiagnosticCode::GenericUseHeldExactly));
         }
-        // THE RECORD, WHERE IT IS FAITHFUL TO THE ARGUMENTS (review round 1). The record keeps
-        // no integer width and reads a reference as its referent (#82), so `half(v)` with
+        // THE RECORD, WHERE IT IS FAITHFUL TO THE ARGUMENTS (review rounds 1-2). The record
+        // keeps no integer width and reads a reference as its referent (#82), so `half(v)` with
         // `v: u64` is recorded `half<i64>` and `id(r)` with `r: &i64` is `id<i64>`. Emitted as
         // recorded, `half__i64` halved 9223372036854775808 as a `long long` (main, whose only
         // instantiation was the `unsigned long long` one, printed 4611686018427387904), and
-        // `id__i64` was handed a pointer (gcc, where main ran). A record is used as it is where
-        // every argument is the C type of its parameter there. Where one is not, the call is
-        // of the ONE instantiation whose parameters are the arguments' C types exactly — on C
-        // types alone the function the record's lost width or reference would have named —
-        // else of the record where C converts every argument into it without changing it
-        // (`u32` into `long long`, #86), and is refused by name where neither holds. A call
-        // is never emitted with an argument its parameter does not hold.
-        let fitting = |pool: &[&Vec<String>], fit: Fit| -> Vec<Vec<String>> {
+        // `id__i64` was handed a pointer (gcc, where main ran). A record is used where every
+        // argument is EXACTLY the C type of its parameter there: a parameter's C type governs
+        // what the body does with the value, so a `u32` handed to a `long long` parameter is
+        // `~`ed, shifted and compared as one (round 1 accepted a conversion that keeps the
+        // value; round 2 refused it). Where an argument is not, the call is of the ONE
+        // instantiation whose parameters are the arguments' C types exactly — on C types alone
+        // the function the record's lost width or reference would have named — and is refused
+        // by name where there is not exactly one. A call is never emitted with an argument its
+        // parameter does not hold exactly.
+        //
+        // ANOTHER instantiation is taken only where it is of the KIND the record names at each
+        // type argument (`type_argument_kind`): an integer of any width for an `i64` record,
+        // never the `bool` one that shares the C type `int` with an `i32` (review round 2).
+        let fitting = |pool: &[&Vec<String>], kinds_of_record: bool| -> Vec<Vec<String>> {
             pool.iter()
-                .filter(|type_args| self.fits(func_name, type_args, args, fit, true))
+                .filter(|type_args| self.fits(func_name, type_args, args))
+                .filter(|type_args| {
+                    !kinds_of_record
+                        || own.iter().any(|record| {
+                            record.len() == type_args.len()
+                                && record.iter().zip(type_args.iter()).all(|(r, c)| {
+                                    self.type_argument_kind(r) == self.type_argument_kind(c)
+                                })
+                        })
+                })
                 .map(|type_args| (*type_args).clone())
                 .collect()
         };
-        for (pool, fit) in [(&own, Fit::Exact), (&candidates, Fit::Exact), (&own, Fit::Lossless)] {
-            if let [one] = fitting(pool, fit).as_slice() {
+        for (pool, kinds_of_record) in [(&own, false), (&candidates, true)] {
+            if let [one] = fitting(pool, kinds_of_record).as_slice() {
                 return Ok(Some(self.mangle_generic_name(func_name, one)));
             }
         }
@@ -8201,13 +8270,13 @@ impl CodeGenerator {
                 return Err(CompileError::CodegenError {
                     message: format!(
                         "the call of `{}` is of {}, the instantiation the type checker recorded \
-                         for it, whose parameter `{}` is a `{}`; the argument is a `{}`, which C \
-                         does not convert into it without changing it, and no instantiation of \
-                         `{}` takes it exactly. The type checker records an integer of every \
-                         width as `i64` and a reference as the type it refers to, so the record \
-                         does not say which of those the argument is. Pass a value of the type \
-                         the record names: an `i64` integer, an array of `i64`, or a value \
-                         rather than a reference",
+                         for it, whose parameter `{}` is a `{}`; the argument is a `{}`, and no \
+                         instantiation of `{}` of that kind takes it exactly. The type checker \
+                         records an integer of every width as `i64` and a reference as the type \
+                         it refers to, so the record does not say which of those the argument \
+                         is, and a parameter's type decides what `~`, `>>`, `/` and a comparison \
+                         do with it. Pass a value of the type the record names: an `i64` \
+                         integer, an array of `i64`, or a value rather than a reference",
                         func_name,
                         spelled(one),
                         param,
@@ -8215,7 +8284,8 @@ impl CodeGenerator {
                         given,
                         func_name
                     ),
-                });
+                }
+                .with_code(DiagnosticCode::GenericUseHeldExactly));
             }
         }
         let named: Vec<String> = own.iter().map(|a| spelled(a)).collect();
@@ -8224,43 +8294,266 @@ impl CodeGenerator {
              type checker recorded {} for it, and not exactly one of them takes its arguments",
             func_name,
             named.join(" and ")
-        )))
+        ))
+        .with_code(DiagnosticCode::GenericUseHeldExactly))
     }
 
     /// Do `args` fit the parameters of the instantiation `type_args` of
-    /// `func_name`: each argument's C type the C type of its parameter there
-    /// (`Fit::Exact`), or one C converts into it without changing it
-    /// (`Fit::Lossless`, `converts_losslessly`)? An argument whose C type this
-    /// pass cannot say fits as `unknown_fits` says: for a recorded call it is
-    /// no evidence against the record; for a call with no record it is taken
-    /// by nothing, so such a call is refused rather than guessed.
-    fn fits(
-        &self,
-        func_name: &str,
-        type_args: &[String],
-        args: &[Expr],
-        fit: Fit,
-        unknown_fits: bool,
-    ) -> bool {
+    /// `func_name` EXACTLY: each argument's C type, as this pass knows it
+    /// (`exact_c_type_in`), the C type of its parameter there? An argument
+    /// whose C type is not known exactly fits nothing, so its call is refused
+    /// by name rather than guessed.
+    fn fits(&self, func_name: &str, type_args: &[String], args: &[Expr]) -> bool {
         let Some(params) = self.instantiated_parameters(func_name, type_args) else {
             return false;
         };
         params.len() == args.len()
-            && params
-                .iter()
-                .zip(args)
-                .all(|((_, wanted), arg)| match self.try_infer_expr_type(arg) {
-                    None => unknown_fits,
-                    Some(given) => match fit {
-                        Fit::Exact => Self::same_c_type(wanted, &given),
-                        Fit::Lossless => Self::converts_losslessly(&given, wanted),
-                    },
-                })
+            && params.iter().zip(args).all(|((_, wanted, generic), arg)| {
+                !generic
+                    || self
+                        .exact_c_type_in(arg, &Default::default())
+                        .is_some_and(|given| Self::same_c_type(wanted, &given))
+            })
+    }
+
+    /// Is `c_type` one two kinds of value share — `int` (`bool`, `i32`),
+    /// `long long` (`i64`, `char`), or a pointer to one?
+    fn c_type_is_shared_by_two_kinds(c_type: &str) -> bool {
+        let base = c_type.trim_start_matches("const ").trim_end_matches('*').trim();
+        matches!(base, "int" | "long long")
+    }
+
+    /// The kind of value the type argument `arg` is: `int` for an integer of
+    /// any width, `bool`, `char`, `float`, `String`, a struct's or an enum's
+    /// name — through the aliases it names, and a reference as its referent,
+    /// as the type checker's record reads it. Any other argument is its own
+    /// kind.
+    fn type_argument_kind(&self, arg: &str) -> String {
+        let mut ty = match arg {
+            "i32" => Type::I32,
+            "i64" => Type::I64,
+            "u32" => Type::U32,
+            "u64" => Type::U64,
+            "f32" => Type::F32,
+            "f64" => Type::F64,
+            "bool" => Type::Bool,
+            "char" => Type::Char,
+            "String" => Type::String,
+            other => Type::Custom(other.to_string()),
+        };
+        for _ in 0..64 {
+            ty = match ty {
+                Type::Custom(name) => match self.type_aliases.get(&name) {
+                    Some(aliased) => aliased.clone(),
+                    None => return name,
+                },
+                Type::Reference { inner, .. } => *inner,
+                Type::I32 | Type::I64 | Type::U32 | Type::U64 => return "int".to_string(),
+                Type::F32 | Type::F64 => return "float".to_string(),
+                Type::Bool => return "bool".to_string(),
+                Type::Char => return "char".to_string(),
+                Type::String => return "String".to_string(),
+                _ => return arg.to_string(),
+            };
+        }
+        arg.to_string()
+    }
+
+    /// The C type of `expr` where this pass KNOWS it, for deciding which
+    /// instantiation of a generic a value belongs to (review round 2); `None`
+    /// where it does not.
+    ///
+    /// `try_infer_expr_type_in` answers `long long` for an arithmetic, bitwise
+    /// or remainder expression over integers whatever its operands are, which
+    /// is harmless where it only picks a spelling and wrong as proof of which
+    /// instantiation a value is: `half(v + 0)` with `v: u64` was typed `long
+    /// long`, matched `half__i64` exactly, and halved 9223372036854775808 as a
+    /// signed number (main printed 4611686018427387904). Here an operator's
+    /// type is C's, from its operands' exact types — the usual arithmetic
+    /// conversions for `+ - * / % & | ^`, where an untyped literal operand is of
+    /// its other operand's type (`v + 0` with `v: u32` is a `u32`, though C
+    /// computes it as a `long long`), the left operand's for a shift, `int`
+    /// for a comparison or a logical connective — and an expression whose
+    /// type would have to be guessed (a value `if`, `match`, `loop` or block)
+    /// has none. A declared type (a binding, a field, an element, a cast, a
+    /// function's result) is exact as declared.
+    fn exact_c_type_in(
+        &self,
+        expr: &Expr,
+        locals: &std::collections::HashMap<String, String>,
+    ) -> Option<String> {
+        match expr {
+            Expr::Binary {
+                left, op, right, ..
+            } => match op {
+                BinOp::Eq
+                | BinOp::Ne
+                | BinOp::Lt
+                | BinOp::Gt
+                | BinOp::Le
+                | BinOp::Ge
+                | BinOp::And
+                | BinOp::Or => Some("int".to_string()),
+                BinOp::Shl | BinOp::Shr => self
+                    .exact_c_type_in(left, locals)
+                    .filter(|t| Self::c_integer_rank(t).is_some()),
+                _ => {
+                    // An untyped literal has no width of its own: it is of its other operand's
+                    // (`v + 0` with `v: u32` is a `u32`), though C computes `v + 0LL` as a `long
+                    // long` — which read as the operator's type passed a `u32` off as an i64.
+                    let adopts = |literal: &Expr, other: &str| match Self::untyped_literal(literal) {
+                        Some(true) => Self::c_integer_rank(other).is_some(),
+                        Some(false) => other == "double" || other == "float",
+                        None => false,
+                    };
+                    let l = self.exact_c_type_in(left, locals)?;
+                    let r = self.exact_c_type_in(right, locals)?;
+                    if adopts(left, &r) && Self::untyped_literal(right).is_none() {
+                        return Some(r);
+                    }
+                    if adopts(right, &l) && Self::untyped_literal(left).is_none() {
+                        return Some(l);
+                    }
+                    if matches!(op, BinOp::Add) && l == "const char*" && r == "const char*" {
+                        return Some(l);
+                    }
+                    Self::usual_arithmetic_conversion(&l, &r)
+                }
+            },
+            Expr::Unary { op, operand, .. } => match op {
+                UnaryOp::Not => Some("int".to_string()),
+                UnaryOp::Neg | UnaryOp::BitNot => self.exact_c_type_in(operand, locals),
+            },
+            Expr::Reference { expr, .. } => {
+                let inner = self.exact_c_type_in(expr, locals)?;
+                (!inner.contains('[')).then(|| format!("{}*", inner))
+            }
+            Expr::Deref { expr, .. } => self
+                .exact_c_type_in(expr, locals)?
+                .strip_suffix('*')
+                .map(|t| t.trim_end().to_string()),
+            Expr::Tuple { elements, .. } => {
+                let mut element_types = Vec::with_capacity(elements.len());
+                for element in elements {
+                    element_types.push(self.exact_c_type_in(element, locals)?);
+                }
+                Some(Self::tuple_c_name(&element_types))
+            }
+            // A generic function returning its type parameter returns what it was handed.
+            Expr::Call { func, args, .. } => {
+                if let Expr::Ident(name) = func.as_ref() {
+                    if let Some((params, Some(Type::TypeParam(p)))) = self.functions.get(name) {
+                        let at = params
+                            .iter()
+                            .position(|param| matches!(&param.ty, Type::TypeParam(n) if n == p))?;
+                        return self.exact_c_type_in(args.get(at)?, locals);
+                    }
+                }
+                self.try_infer_expr_type_in(expr, locals)
+            }
+            // An array literal is of its elements' exact type, where they all have one, with
+            // its length as the outermost dimension (`type_to_c` writes `[[i64; 2]; 3]` as
+            // `long long[3][2]`).
+            Expr::ArrayLiteral { elements, .. } => {
+                let element = self.exact_c_type_in(elements.first()?, locals)?;
+                elements[1..]
+                    .iter()
+                    .all(|e| self.exact_c_type_in(e, locals).as_deref() == Some(element.as_str()))
+                    .then(|| Self::c_array_of(&element, elements.len()))
+            }
+            Expr::ArrayRepeat { value, count, .. } => {
+                let Expr::Integer(n) = count.as_ref() else {
+                    return None;
+                };
+                let element = self.exact_c_type_in(value, locals)?;
+                Some(Self::c_array_of(&element, usize::try_from(*n).ok()?))
+            }
+            Expr::If { .. } | Expr::Match { .. } | Expr::Loop { .. } | Expr::Block { .. } => None,
+            // A parameter `variables` tracks inexactly is of its declared C type, while no
+            // binding has shadowed it.
+            Expr::Ident(name)
+                if !locals.contains_key(name)
+                    && self.param_exact_c.get(name).is_some_and(|(tracked, _)| {
+                        self.variables.get(name) == Some(tracked)
+                    }) =>
+            {
+                self.param_exact_c.get(name).map(|(_, declared)| declared.clone())
+            }
+            _ => self.try_infer_expr_type_in(expr, locals),
+        }
+    }
+
+    /// Is `expr` an untyped numeric literal — `Some(true)` an integer, `Some(false)`
+    /// a float, either possibly negated — whose width is its context's?
+    fn untyped_literal(expr: &Expr) -> Option<bool> {
+        match expr {
+            Expr::Integer(_) => Some(true),
+            Expr::Float(_) => Some(false),
+            Expr::Unary {
+                op: UnaryOp::Neg,
+                operand,
+                ..
+            } => Self::untyped_literal(operand),
+            _ => None,
+        }
+    }
+
+    /// The C type of an array of `len` elements of the C type `element`, the
+    /// new length outermost.
+    fn c_array_of(element: &str, len: usize) -> String {
+        match element.find('[') {
+            Some(at) => format!("{}[{}]{}", &element[..at], len, &element[at..]),
+            None => format!("{}[{}]", element, len),
+        }
+    }
+
+    /// The rank and signedness of an integer C type this compiler emits:
+    /// `(rank, unsigned)`.
+    fn c_integer_rank(c_type: &str) -> Option<(u8, bool)> {
+        match c_type {
+            "int" => Some((1, false)),
+            "unsigned int" => Some((1, true)),
+            "long long" => Some((2, false)),
+            "unsigned long long" => Some((2, true)),
+            _ => None,
+        }
+    }
+
+    /// C's usual arithmetic conversions over two operand types this compiler
+    /// emits (C11 6.3.1.8), or `None` for operands they do not apply to.
+    fn usual_arithmetic_conversion(a: &str, b: &str) -> Option<String> {
+        let numeric = |t: &str| Self::c_integer_rank(t).is_some() || t == "double" || t == "float";
+        if !numeric(a) || !numeric(b) {
+            return None;
+        }
+        if a == "double" || b == "double" {
+            return Some("double".to_string());
+        }
+        if a == "float" || b == "float" {
+            return Some("float".to_string());
+        }
+        let ((ra, ua), (rb, ub)) = (Self::c_integer_rank(a)?, Self::c_integer_rank(b)?);
+        let spelled = |rank: u8, unsigned: bool| {
+            match (rank, unsigned) {
+                (1, false) => "int",
+                (1, true) => "unsigned int",
+                (_, false) => "long long",
+                (_, true) => "unsigned long long",
+            }
+            .to_string()
+        };
+        if ua == ub {
+            return Some(spelled(ra.max(rb), ua));
+        }
+        let ((ru, _), (rs, _)) = if ua { ((ra, ua), (rb, ub)) } else { ((rb, ub), (ra, ua)) };
+        // The unsigned operand's type when its rank is at least the signed one's; else the
+        // signed type, which here (`long long` against `unsigned int`) holds every value of it.
+        Some(if ru >= rs { spelled(ru, true) } else { spelled(rs, false) })
     }
 
     /// The first parameter of the instantiation `type_args` of `func_name`
-    /// whose argument C does not convert into it without changing it: its
-    /// name, its C type and the argument's.
+    /// whose argument is not its C type: its name, its C type and the
+    /// argument's.
     fn lossy_argument(
         &self,
         func_name: &str,
@@ -8268,19 +8561,28 @@ impl CodeGenerator {
         args: &[Expr],
     ) -> Option<(String, String, String)> {
         let params = self.instantiated_parameters(func_name, type_args)?;
-        params.into_iter().zip(args).find_map(|((param, wanted), arg)| {
-            let given = self.try_infer_expr_type(arg)?;
-            (!Self::converts_losslessly(&given, &wanted)).then_some((param, wanted, given))
+        params.into_iter().zip(args).find_map(|((param, wanted, generic), arg)| {
+            if !generic {
+                return None;
+            }
+            match self.exact_c_type_in(arg, &Default::default()) {
+                Some(given) if Self::same_c_type(&given, &wanted) => None,
+                Some(given) => Some((param, wanted, given)),
+                None => Some((param, wanted, "value whose C type this compiler cannot say exactly".to_string())),
+            }
         })
     }
 
     /// The parameters of the instantiation `type_args` of `func_name`, each
-    /// with its C type there.
+    /// with its C type there and whether it is written with a type parameter.
+    /// Only those are the record's business: a parameter written as a concrete
+    /// type is checked by the type checker as any call's is (`half(10, 2)`
+    /// with `n: i32` hands the literal to an `int`, on main as here).
     fn instantiated_parameters(
         &self,
         func_name: &str,
         type_args: &[String],
-    ) -> Option<Vec<(String, String)>> {
+    ) -> Option<Vec<(String, String, bool)>> {
         let (_, _, template) = self
             .generic_instantiations
             .iter()
@@ -8295,26 +8597,15 @@ impl CodeGenerator {
             template
                 .params
                 .iter()
-                .map(|(param, ty)| (param.clone(), self.type_to_c(&self.substitute_type(ty, &type_map))))
+                .map(|(param, ty)| {
+                    (
+                        param.clone(),
+                        self.type_to_c(&self.substitute_type(ty, &type_map)),
+                        Self::names_a_type_parameter(ty, &template.type_params),
+                    )
+                })
                 .collect(),
         )
-    }
-
-    /// Does C convert a value of the C type `from` into `to` without changing
-    /// it? The same type; an integer into a wider one that holds every value
-    /// of it; a `float` into a `double`; a pointer into one to `const`. Never a
-    /// narrowing, a change of signedness that loses values, a pointer into an
-    /// integer, or an array of one element type into another.
-    fn converts_losslessly(from: &str, to: &str) -> bool {
-        Self::same_c_type(from, to)
-            || matches!(
-                (from, to),
-                ("int", "long long")
-                    | ("unsigned int", "long long")
-                    | ("unsigned int", "unsigned long long")
-                    | ("float", "double")
-            )
-            || (from.ends_with('*') && to == format!("const {}", from))
     }
 
     /// A type checker's record `written` in the type parameters of the generic
@@ -8575,6 +8866,10 @@ impl CodeGenerator {
             .generic_struct_instantiations
             .iter()
             .find(|(generic, _, _)| generic == name)?;
+        // Each value a field written with a type parameter holds, at the C type this pass
+        // KNOWS it has (`exact_c_type_in`, review round 2): a value whose C type would be a
+        // guess (`v + 0` over a `u64` answered `long long`) is no evidence of an
+        // instantiation, and the literal is of none.
         let values: Vec<(&String, String)> = fields
             .iter()
             .filter(|(field, _)| {
@@ -8582,8 +8877,8 @@ impl CodeGenerator {
                     written == field && Self::names_a_type_parameter(ty, &template.type_params)
                 })
             })
-            .filter_map(|(field, value)| Some((field, self.try_infer_expr_type_in(value, locals)?)))
-            .collect();
+            .map(|(field, value)| Some((field, self.exact_c_type_in(value, locals)?)))
+            .collect::<Option<_>>()?;
         let field_type = |mangled: &String, field: &String| {
             let layout = self.structs.get(mangled)?;
             let (_, ty) = layout.iter().find(|(f, _)| f == field)?;
@@ -8592,14 +8887,6 @@ impl CodeGenerator {
         let exactly = |mangled: &String| {
             values.iter().all(|(field, value)| {
                 field_type(mangled, field).is_some_and(|c| Self::same_c_type(&c, value))
-            })
-        };
-        let converts = |mangled: &String| {
-            values.iter().all(|(field, value)| {
-                field_type(mangled, field).is_some_and(|c| {
-                    Self::same_c_type(&c, value)
-                        || (Self::is_c_integer(value) && Self::is_c_integer(&c))
-                })
             })
         };
         let own = self.struct_literals.records.of(*id).map(|records| {
@@ -8614,29 +8901,20 @@ impl CodeGenerator {
                 .copied()
                 .filter(|(args, _)| own.contains(args))
                 .collect();
-            // Of its own records, one holding the values exactly, else one C converts them into
-            // without changing them (W2a: the record keeps no width, so a `u32` is held by an
-            // `i64` field). Where its records hold a value only by changing it (a `u64` in a
-            // `long long`, as #82 records it), the literal is of the ONE instantiation holding
-            // its values exactly, and none where not exactly one does (review round 1): main
-            // built such a literal in a generic body as that instantiation and printed the
-            // value; the record would wrap it.
-            let lossless = |mangled: &String| {
-                values.iter().all(|(field, value)| {
-                    field_type(mangled, field)
-                        .is_some_and(|c| Self::converts_losslessly(value, &c))
-                })
-            };
-            let held = of_own.iter().find(|(_, m)| exactly(m));
-            if let Some((_, mangled)) = held.or_else(|| of_own.iter().find(|(_, m)| lossless(m))) {
+            // Of its own records, the one holding every value EXACTLY — each value's C type
+            // the C type of its field there (review round 2). The record keeps no integer width
+            // (#82), and a field's C type governs what is done with the value later: `G { tag:
+            // t, p: v }` with `v: u32` is recorded `G<i64, i64>`, whose `long long p` made `~gg.p`
+            // -8 where `~` of a `u32` 7 is 4294967288. Round 1 took a record C converts the
+            // value into without changing it, and so printed -8 where main printed 4294967288
+            // (beside a `G<i64, z>`) or failed in gcc (without one). Nor is the literal of
+            // ANOTHER instantiation that happens to hold it: W2a measured (round 9) that a
+            // literal built as one struct and an `if`, `match`, `loop` or array joining it with
+            // another built as the record's is two C structs where one is declared, and in a
+            // generic body the walk gives both literals one record, so nothing would refuse the
+            // join first. A literal its records do not hold exactly is refused by name.
+            if let Some((_, mangled)) = of_own.iter().find(|(_, m)| exactly(m)) {
                 return Some(mangled.clone());
-            }
-            if of_own.iter().any(|(_, m)| converts(m)) {
-                let mut exact = instantiations.iter().filter(|(_, m)| exactly(m));
-                return match (exact.next(), exact.next()) {
-                    (Some((_, mangled)), None) => Some(mangled.clone()),
-                    _ => None,
-                };
             }
             // The parameter a field is written as, where it is written as one.
             let parameter = |field: &String| {
@@ -8661,7 +8939,7 @@ impl CodeGenerator {
             return instantiations
                 .iter()
                 .find(|(args, mangled)| {
-                    converts(mangled)
+                    exactly(mangled)
                         && of_own.iter().any(|(own_args, own_mangled)| {
                             let erased = erased(own_mangled);
                             !erased.is_empty()
@@ -8677,32 +8955,17 @@ impl CodeGenerator {
         }
         // A literal no record decides — in a generic body, in a statement the type checker
         // refused while it walked the body (`TypeChecker::walk_generic_body`) — is of the ONE
-        // instantiation whose fields hold its values, exactly or as C widens an integer into a
-        // 64-bit field (the checker records every integer as `i64`), and of none where more
-        // than one does or a value's C type is unknown. It was the first of all the
-        // instantiations that held its values exactly, else the first with an argument
-        // matching its first field's C type by substring: another literal's decided (#87).
-        let typed = fields
+        // instantiation whose fields hold its values exactly, and of none where not exactly one
+        // does or a value's C type is unknown. It was the first of all the instantiations that
+        // held its values exactly, else the first with an argument matching its first field's
+        // C type by substring: another literal's decided (#87).
+        if values
             .iter()
-            .filter(|(field, _)| {
-                template.fields.iter().any(|(written, ty)| {
-                    written == field && Self::names_a_type_parameter(ty, &template.type_params)
-                })
-            })
-            .count();
-        if values.len() != typed {
+            .any(|(_, value)| Self::c_type_is_shared_by_two_kinds(value))
+        {
             return None;
         }
-        let holds = |mangled: &String| {
-            values.iter().all(|(field, value)| {
-                field_type(mangled, field).is_some_and(|c| {
-                    Self::same_c_type(&c, value)
-                        || (Self::is_c_integer(value)
-                            && matches!(c.as_str(), "long long" | "unsigned long long"))
-                })
-            })
-        };
-        let mut holding = instantiations.iter().filter(|(_, m)| holds(m));
+        let mut holding = instantiations.iter().filter(|(_, m)| exactly(m));
         match (holding.next(), holding.next()) {
             (Some((_, mangled)), None) => Some(mangled.clone()),
             _ => None,
@@ -8743,15 +9006,6 @@ impl CodeGenerator {
     /// typedef `generate_struct` / `generate_enum` emit.
     fn same_c_type(a: &str, b: &str) -> bool {
         a == b || a.strip_prefix("struct ") == Some(b) || b.strip_prefix("struct ") == Some(a)
-    }
-
-    /// Is `c_type` an integer C type, which C converts to any other integer
-    /// type a field may have — never a pointer, a struct or a float?
-    fn is_c_integer(c_type: &str) -> bool {
-        matches!(
-            c_type,
-            "long long" | "unsigned long long" | "int" | "unsigned int"
-        )
     }
 
     /// The instantiation a generic struct literal was matched to, or a refusal
@@ -8829,11 +9083,10 @@ impl CodeGenerator {
                 message: format!(
                     "`{} {{ .. }}` is a literal of the generic struct `{}`, and code generation \
                      emits a literal as the instantiation the type checker recorded for it, \
-                     whose fields of a type parameter hold its values exactly or as C converts \
-                     an integer into a wider one without changing it (a reference the record \
-                     reads as its referent, where an instantiation keeps it; where the record \
-                     holds a value only by changing it, the one instantiation that holds it \
-                     exactly); none holds these values.{} \
+                     whose fields of a type parameter hold its values EXACTLY — each value's \
+                     C type the C type of its field, which decides what `~`, `>>`, `/` and a \
+                     comparison do with it (a reference the record reads as its referent, \
+                     where an instantiation keeps it); none holds these values.{} \
                      Write a non-generic struct for this argument",
                     name, name, record
                 ),
@@ -9123,16 +9376,6 @@ impl CodeGenerator {
         }
         crate::ast::expand_type_aliases_for_c(program, &aliases, &opaque)
     }
-}
-
-/// How the arguments of a call must fit an instantiation's parameters
-/// (`CodeGenerator::fits`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Fit {
-    /// Each argument is the C type of its parameter.
-    Exact,
-    /// Each argument is one C converts into its parameter's without changing it.
-    Lossless,
 }
 
 /// The instantiation each generic struct literal is of: the type checker's

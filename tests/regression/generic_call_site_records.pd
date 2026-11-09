@@ -1,13 +1,28 @@
 // A GENERIC CALL IS THE INSTANTIATION THE TYPE CHECKER RECORDED FOR IT (#86).
 //
 // Code generation chose among every instantiation of a generic function by the
-// C type of the call's FIRST argument, with substring tests. `"unsigned int"`
-// contains `"int"`, so `half(v)` with `v: u32` beside a `half(true)` called the
-// `bool` instantiation and printed -647483648; a type argument matched in ANY
-// position, so `snd(1, 2)` beside `snd(1, "hello")` called `snd__i64_String`
-// and gcc refused the program; and a call inside a generic body could name an
-// instantiation nothing had recorded (gcc: undeclared function). Each call now
-// prints the value its own instantiation computes.
+// C type of the call's FIRST argument, with substring tests, accepted a type
+// argument in ANY position, and fell back to the FIRST instantiation when
+// nothing matched. So `half(zval)` below — `zval` is a `u64` typed by the name
+// of `z`, recorded `half<z>` — fell through to `half__bool` and was halved as
+// an `int`; `snd(1, 2)` beside `snd(1, "hello")` called `snd__i64_String`
+// (gcc); and a call inside a generic body could name an instantiation nothing
+// had recorded (gcc: undeclared function). Each call is now emitted as its
+// record, which holds its arguments exactly. A record that does NOT hold an
+// argument exactly (`half(v)` with `v: u32`, recorded `half<i64>`) is refused
+// by name: tests/reject/generic_call_not_held_exactly.pd.
+type z = u64;
+
+struct S {
+    n: i64,
+}
+
+impl S {
+    fn get(&self) -> z {
+        return 9223372036854775807;
+    }
+}
+
 fn half<T>(x: T) -> T {
     return x / 2;
 }
@@ -29,21 +44,16 @@ fn wrap<T>(x: T) -> T {
     return id(x);
 }
 
-// A `u32` halved in a body, beside the `bool` instantiation `main` makes.
-fn halve_in_body<T>(x: T) -> i64 {
-    let v: u32 = 3000000000;
-    return half(v);
-}
-
 fn main() {
-    // The #86 repro.
+    // The first-entry default: a `u64` beside a `bool` instantiation.
     let b = half(true);
-    let v: u32 = 3000000000;
-    print_int(half(v));
+    let s = S { n: 0 };
+    let zval = s.get();
+    print_int(half(zval));
 
     // Two instantiations sharing a first type argument.
-    let s = snd(1, "hello");
-    print(s);
+    let t = snd(1, "hello");
+    print(t);
     print_int(snd(1, 2));
 
     // The type parameter is in the second parameter only.
@@ -51,8 +61,7 @@ fn main() {
     print_int(pick(2, 7));
     let c = pick(3, true);
 
-    // Calls inside generic bodies.
+    // A call inside a generic body.
     print_int(wrap(5));
     print(wrap("s"));
-    print_int(halve_in_body(1));
 }

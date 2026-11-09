@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The evidence gate for stable diagnostic codes — GI-12 spec D4/R2.
 #
-# WHAT THIS TARGET IS NOT. It is NOT a second runner over the 123 reject rows.
+# WHAT THIS TARGET IS NOT. It is NOT a second runner over the 125 reject rows.
 # A gate that re-executed the corpus its own way would be a second authority, and
 # two authorities over one question means the weaker one decides every
 # disagreement — in practice the one that says PASS. Execution belongs to
@@ -471,14 +471,17 @@ check_codes_pinned() {       # $1 = registry, $2 = manifest -> 0 clean / 1 compl
 #   tests/reject/alias_cycle_through_generic_argument.pd (reject|compile, PD0080).
 #   re-pinned 033dffe3… at #93 review round 4: 127 rows, ONE ADDED —
 #   tests/reject/generic_parameter_named_twice.pd (reject|compile, PD0081).
-REFUSAL_SET_SHA=033dffe37446920d49b68402a45dfb2c88f71d746443f651a39e7225d87c9047
+#   re-pinned 76b51583… at the rebase of #86/#87 onto #93: 129 rows, TWO ADDED —
+#   tests/reject/generic_call_not_held_exactly.pd and
+#   tests/reject/generic_literal_not_held_exactly.pd (reject|compile, PD0082).
+REFUSAL_SET_SHA=76b5158322889de9571d4672be98bcb8073ca84802cfda28489d67da93bd232d
 # THE SIZE OF THAT SET, pinned beside it and re-pinned by the same deliberate
 # edit. Every row of the set is at stage compile and pins a code, so this is also
 # the number of code-pinned refusal rows and the `coded=` conformance must report.
 # It is a COMMITTED number on purpose: the counts requirement used to be held to a
 # count taken from the live manifest, and deleting refusal rows lowered both sides
 # together (suF-a review round 1).
-REFUSAL_SET_SIZE=127
+REFUSAL_SET_SIZE=129
 refusal_set_digest() {       # $1 = manifest -> sha256 on stdout
   awk -F'\t' 'NF>=2 && $1 !~ /^#/ && ($2=="reject" || $2=="skip") {print $1 "\t" $2 "\t" $3}' "$1" \
     | LC_ALL=C sort | shasum -a 256 | cut -d' ' -f1
