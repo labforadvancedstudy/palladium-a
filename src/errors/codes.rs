@@ -628,9 +628,11 @@ pub enum DiagnosticCode {
 
     /// PD0080 — a type alias a program uses must name a type: its expansion
     /// may not reach an alias cycle (`type A = Id<A>;`, `type A = B; type B =
-    /// A;`). One site, `refuse_alias_cycle_uses` (`src/typeck/alias_cycles.rs`),
-    /// run before any pass expands an alias; the alias used and the cycle are
-    /// the parameter. An alias nothing uses is not refused (main compiles one).
+    /// A;`). One rule, two sites in `src/typeck/alias_cycles.rs`: the pre-check
+    /// `refuse_alias_cycle_uses` (what the checker is certain to expand) and the
+    /// `ExpansionGuard` every recursive alias expansion runs under (typeck and
+    /// codegen). The alias and the cycle are the parameter. An alias the checker
+    /// never expands is not refused (main compiles one).
     TypeAliasExpansionReachesNoCycle,
 }
 

@@ -166,15 +166,15 @@ self-hosting unit **imports nothing** (`grep -c '^import' bootstrap/pdc.pd` = 0)
 generics** (`grep -cE 'fn [a-zA-Z_]+<' bootstrap/pdc.pd` = 0; the subset spec excludes them, and
 `bootstrap/pdc.pd:8` states the exclusion as a virtue — *"This file is written in exactly the
 subset it implements"*). Both exclusions mattered because there were **two independent unordered
-emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:182-182`) emitted by iterating
+emission sources**: imported modules in a `HashMap` (`src/codegen/mod.rs:184-184`) emitted by iterating
 `.values()`, and generic instantiations in `HashMap`s (`src/typeck/mod.rs:1120-1120`,
 `src/typeck/mod.rs:1128-1128`) emitted by iterating `.keys()`.
 
 **Both are now ordered, and this paragraph was written before they were.** Every one of the four
-sites sorts before it emits: the imported-module walks at `src/codegen/mod.rs:2100-2101` and
-`src/typeck/mod.rs:1526-1526`, the two later codegen walks off their own sorted locals
-(`src/codegen/mod.rs:2194-2194`, `src/codegen/mod.rs:3169-3169`), and the instantiation keys at
-`src/typeck/mod.rs:6578-6579` and `src/typeck/mod.rs:6640-6641`. Pinned by
+sites sorts before it emits: the imported-module walks at `src/codegen/mod.rs:2107-2108` and
+`src/typeck/mod.rs:1529-1529`, the two later codegen walks off their own sorted locals
+(`src/codegen/mod.rs:2201-2201`, `src/codegen/mod.rs:3176-3176`), and the instantiation keys at
+`src/typeck/mod.rs:6581-6582` and `src/typeck/mod.rs:6643-6644`. Pinned by
 `tests/m3_imported_calls.rs` — `test_the_whole_emitted_c_is_byte_stable`,
 `test_modules_and_generics_together_are_byte_stable`,
 `test_imported_definitions_are_emitted_in_a_stable_order` and
@@ -1349,7 +1349,7 @@ owner's.
 
 ### F11. The async producer was alive and violated N7 — CLOSED
 
-M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:6568-6572` returns
+M1 fixed the `.await` **consumer** — `src/codegen/mod.rs:6575-6579` returns
 `CompileError::await_unimplemented`. The **producer** was not touched: code generation dispatched
 on `func.is_async` into `generate_async_function_with_name`, which emitted a `Future` struct and a
 poll routine commented "Simplified async - immediately ready".
@@ -1373,7 +1373,7 @@ representation."* A `struct` with a `state` field, emitted into the program's ow
 representation.
 
 **CLOSED.** `async fn` is refused at the construct — in the type checker (`src/typeck/mod.rs`,
-`check_function`) and again at the defect in code generation (`src/codegen/mod.rs:3468-3474`), the
+`check_function`) and again at the defect in code generation (`src/codegen/mod.rs:3475-3481`), the
 same double placement `?` and `.await` already had. The emitter is **deleted**, not merely
 unreachable: a private method nothing calls is one edit away from being called again. No line of
 `src/codegen/mod.rs` now writes `_Future` or `_poll` into the C, and

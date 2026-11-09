@@ -129,6 +129,8 @@ struct ArrayBinding {
 pub struct CodeGenerator {
     module_name: String,
     output: String,
+    /// Alias resolution by recursion, guarded (PD0080, `typeck::alias_cycles`)
+    alias_guard: crate::typeck::alias_cycles::ExpansionGuard,
     /// Map of function names to their signatures (params and return type)
     functions: std::collections::HashMap<String, (Vec<Param>, Option<Type>)>,
     /// Map of variable names to their C types (for type inference)
@@ -316,6 +318,7 @@ impl CodeGenerator {
             current_fn_name: String::new(),
             module_name: module_name.to_string(),
             output: String::with_capacity(initial_capacity),
+            alias_guard: Default::default(),
             functions: std::collections::HashMap::new(),
             variables: std::collections::HashMap::new(),
             globals: std::collections::HashMap::new(),
@@ -1234,7 +1237,7 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:4986`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:4989`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
     /// (`src/ownership/borrow_checker.rs:641-643`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
@@ -1394,9 +1397,13 @@ impl CodeGenerator {
     /// that built a `CodeGenerator` directly would otherwise emit C in which
     /// `fn double(x: i64)` is `long long double(long long x)`. See
     /// `c_ident::escape_reserved_names` for what it renames and what it leaves.
+    /// An alias this pass resolves by name is resolved under `alias_guard`
+    /// (`typeck::alias_cycles`): a cycle met there is refused here as PD0080,
+    /// ahead of anything its placeholder caused, instead of overflowing.
     pub fn compile(&mut self, program: &Program) -> Result<()> {
         let program = self.with_aliases_expanded(&c_ident::escape_reserved_names(program));
-        self.compile_escaped(&program)
+        let compiled = self.compile_escaped(&program);
+        self.alias_guard.take().map_or(compiled, Err)
     }
 
     fn compile_escaped(&mut self, program: &Program) -> Result<()> {
@@ -2487,8 +2494,8 @@ impl CodeGenerator {
             Type::Custom(name) => {
                 // First check if it's a type alias
                 if let Some(aliased_type) = self.type_aliases.get(name) {
-                    // Recursively resolve the aliased type
-                    self.type_to_c(aliased_type)
+                    // Resolve the aliased type, under the PD0080 guard (`alias_cycles`)
+                    (self.alias_guard.expand(name, || self.type_to_c(aliased_type))).unwrap_or_else(|| "void*".to_string())
                 } else {
                     // Otherwise it's a struct or enum name
                     // In C, structs need the "struct" prefix
@@ -7329,7 +7336,12 @@ impl CodeGenerator {
     fn register_tuple_type_behind(&mut self, ty: &Type) -> Result<()> {
         if let Type::Custom(name) = ty {
             if let Some(body) = self.type_aliases.get(name).cloned() {
-                return self.register_tuple_type(&body);
+                if !self.alias_guard.enter(name) {
+                    return Ok(()); // the guard tripped: `compile` reports PD0080
+                }
+                let registered = self.register_tuple_type(&body);
+                self.alias_guard.leave();
+                return registered;
             }
         }
         Ok(())

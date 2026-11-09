@@ -490,3 +490,87 @@ fn an_alias_cycle_in_checked_imported_code_is_refused_and_in_unchecked_code_is_n
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+// ---------------------------------------------------------------------------
+// Review round 2. The round-1 refusal was a PRE-CHECK over the program's
+// uses, and two paths ran past it into the checker's own expansion: an
+// instantiated generic's signature (imported or local), and a generic alias
+// whose parameter a filtered const argument left unsubstituted, which the
+// checker then resolves globally. Both overflowed the stack. The checker's
+// expansion is now itself guarded, so a path the pre-check does not see is
+// refused where it is met. And the pre-check had refused positions the
+// checker never expands — a trait's methods, a generic item nothing
+// instantiates — every one of which ran on main; those run again.
+// ---------------------------------------------------------------------------
+
+/// Every path to a cyclic alias the checker expands is refused by name. On
+/// 6fa392e each of these overflowed the stack (the growth, the two-argument
+/// struct and the imported chain had been refused there already, and stay).
+#[test]
+fn every_expansion_of_a_cyclic_alias_the_checker_performs_is_refused_by_name() {
+    let id = "pub type Id<T> = T;\n";
+    let cases: Vec<(Vec<(&str, String)>, &str, &str)> = vec![
+        // An instantiated generic's result, imported, in both spellings.
+        (vec![("lib.pd", format!("{}pub type A = Id<A>;\npub fn f<T>(x: T) -> A {{ return x; }}\n", id)), ("main.pd", "import lib;\nfn main() { print_int(f(1)); }\n".to_string())], "A", "A -> Id -> A"),
+        (vec![("lib.pd", format!("{}pub type Aa = Id<Aa>;\npub fn f<T>(x: T) -> Aa {{ return x; }}\n", id)), ("main.pd", "import lib;\nfn main() { print_int(f(1)); }\n".to_string())], "Aa", "Aa -> Id -> Aa"),
+        // ... and local.
+        (vec![("main.pd", "type Id<T> = T;\ntype Aa = Id<Aa>;\nfn f<T>(x: T) -> Aa { return x; }\nfn main() { print_int(f(1)); }\n".to_string())], "Aa", "Aa -> Id -> Aa"),
+        // A const argument leaves `T` unsubstituted; `T` is then the global
+        // alias. Used, in an uncalled signature, and under a const parameter.
+        (vec![("main.pd", "type T = G<1>;\ntype G<T> = T;\nfn main() { let x: T = 1; print_int(7); }\n".to_string())], "T", "T -> G -> T"),
+        (vec![("main.pd", "type T = G<1>;\ntype G<T> = T;\nfn f(x: T) -> i64 { return 1; }\nfn main() { print_int(7); }\n".to_string())], "T", "T -> G -> T"),
+        (vec![("main.pd", "type T = Id<T>;\ntype Id<T> = T;\nfn f<const n: i64>() { let x: Id<n> = 1; print_int(0); }\nfn main() { f(); }\n".to_string())], "Id", "T -> T"),
+        (vec![("main.pd", "type T = Id<T>;\ntype Id<T> = T;\nfn f<const n: i64>(x: Id<n>) -> i64 { return 1; }\nfn main() { print_int(7); }\n".to_string())], "Id", "T -> T"),
+        // An alias whose argument grows, a two-argument struct, an imported chain.
+        (vec![("main.pd", "type G<T> = G<(T, T)>;\nfn f(x: G<i64>) -> i64 { return 7; }\nfn main() { print_int(7); }\n".to_string())], "G", "G -> G"),
+        (vec![("main.pd", "struct P2<X, Y> { x: X, y: Y }\ntype Aa = P2<Aa, Aa>;\nfn f(a: Aa) -> i64 { return 1; }\nfn main() { print_int(7); }\n".to_string())], "Aa", "Aa -> Aa"),
+        (vec![("lib.pd", format!("{}pub type Aa = Id<Aa>;\npub type C = Aa;\npub fn one() -> i64 {{ return 1; }}\n", id)), ("main.pd", "import lib;\nfn main() { let c: C = 1; print_int(0); }\n".to_string())], "C", "Aa -> Aa"),
+    ];
+    let mut wrong = Vec::new();
+    for (i, (files, used, cycle)) in cases.iter().enumerate() {
+        let files: Vec<(&str, &str)> = files.iter().map(|(n, s)| (*n, s.as_str())).collect();
+        let (verdict, text) = pdc_verdict_files(&files);
+        let ok = verdict == "exit 1"
+            && text.contains("error[PD0080]")
+            && text.contains(&format!("`{}`", used))
+            && text.contains(cycle);
+        if !ok {
+            wrong.push(format!("case {} ({} / {}): {}: {}", i, used, cycle, verdict, text.lines().filter(|l| l.contains("error") || l.contains("fatal")).collect::<Vec<_>>().join(" | ")));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// A cyclic alias in a position the checker never expands is not refused:
+/// a trait's method (signature, result, default body), a generic function
+/// nothing instantiates (signature and body, local and imported), a generic
+/// struct's field and enum's payload, an imported generic shadowed by a local
+/// one. Every one ran on main and was refused on 6fa392e; each runs again.
+#[test]
+fn a_cyclic_alias_the_checker_never_expands_still_compiles_and_runs() {
+    let cm = "type Id<T> = T;\ntype Aa = Id<Aa>;\n";
+    let main7 = "fn main() { print_int(7); }\n";
+    let lib = "pub type Id<T> = T;\npub type A = Id<A>;\npub fn f<T>(x: T) -> A { return x; }\n";
+    let cases: Vec<Vec<(&str, String)>> = vec![
+        vec![("main.pd", format!("type Id<T> = T;\ntype A = Id<A>;\ntrait Tr {{ fn m(x: A) -> i64; }}\n{}", main7))],
+        vec![("main.pd", format!("{}trait Tr {{ fn m(x: Aa) -> i64; }}\n{}", cm, main7))],
+        vec![("main.pd", format!("{}trait Tr {{ fn m(x: i64) -> Aa; }}\n{}", cm, main7))],
+        vec![("main.pd", format!("{}trait Tr {{ fn m(x: i64) -> i64 {{ let a: Aa = 1; return 1; }} }}\n{}", cm, main7))],
+        vec![("main.pd", format!("{}fn f<T>(x: T) -> Aa {{ return x; }}\n{}", cm, main7))],
+        vec![("main.pd", format!("{}fn g<T>(x: T) -> i64 {{ let a: Aa = 1; return 1; }}\n{}", cm, main7))],
+        vec![("main.pd", format!("{}struct S<T> {{ a: Aa, v: T }}\n{}", cm, main7))],
+        vec![("main.pd", format!("{}enum E<T> {{ X(Aa), Y(T) }}\n{}", cm, main7))],
+        vec![("lib.pd", lib.to_string()), ("main.pd", format!("import lib;\n{}", main7))],
+        vec![("lib.pd", lib.to_string()), ("main.pd", "import lib;\nfn f<T>(x: T) -> i64 { return 7; }\nfn main() { print_int(f(1)); }\n".to_string())],
+        vec![("lib.pd", "pub type Id<T> = T;\npub type Aa = Id<Aa>;\npub fn g<T>(x: T) -> i64 { let a: Aa = 1; return 1; }\n".to_string()), ("main.pd", format!("import lib;\n{}", main7))],
+    ];
+    let mut wrong = Vec::new();
+    for (i, files) in cases.iter().enumerate() {
+        let files: Vec<(&str, &str)> = files.iter().map(|(n, s)| (*n, s.as_str())).collect();
+        let (verdict, text) = pdc_verdict_files(&files);
+        if verdict != "exit 0" {
+            wrong.push(format!("case {}: {}: {}", i, verdict, text.lines().filter(|l| l.contains("error") || l.contains("fatal")).collect::<Vec<_>>().join(" | ")));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

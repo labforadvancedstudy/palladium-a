@@ -318,9 +318,9 @@ impl CompileError {
     /// — `3?` and `unknown()?` reach here too. It also may not imply that the
     /// `match` alternative generalises further than it does: code generation
     /// skips generic enum definitions entirely — at all four sites, the two that
-    /// COLLECT (`src/codegen/mod.rs:2127-2131`, `src/codegen/mod.rs:2167-2171`)
-    /// and the two that EMIT (`src/codegen/mod.rs:2235-2240`,
-    /// `src/codegen/mod.rs:2265-2269`) — so `Result<T, E>` is
+    /// COLLECT (`src/codegen/mod.rs:2134-2138`, `src/codegen/mod.rs:2174-2178`)
+    /// and the two that EMIT (`src/codegen/mod.rs:2242-2247`,
+    /// `src/codegen/mod.rs:2272-2276`) — so `Result<T, E>` is
     /// not a compilable replacement and the help says so rather than leaving the
     /// reader to discover it.
     ///

@@ -1146,6 +1146,8 @@ pub struct TypeChecker {
     type_aliases: HashMap<String, crate::ast::Type>,
     /// Generic type alias definitions
     generic_type_aliases: HashMap<String, GenericTypeAlias>,
+    /// The checker's own alias expansion, guarded (PD0080, `alias_cycles`)
+    alias_guard: alias_cycles::ExpansionGuard,
     /// Current function return type (for checking return statements)
     current_function_return: Option<CheckerType>,
     /// Symbol table for variables
@@ -1240,6 +1242,7 @@ impl TypeChecker {
             generic_enums: HashMap::new(),
             type_aliases: HashMap::new(),
             generic_type_aliases: HashMap::new(),
+            alias_guard: Default::default(),
             current_function_return: None,
             symbols: SymbolTable::new(),
             imported_modules: HashMap::new(),
@@ -1271,8 +1274,8 @@ impl TypeChecker {
     /// emitted C.
     ///
     /// Every insert below is under the BARE name as well as the qualified one
-    /// (`src/typeck/mod.rs:1640-1641`, `src/typeck/mod.rs:1643-1645`,
-    /// `src/typeck/mod.rs:1740-1741`), and the map is last-writer-wins. So when two
+    /// (`src/typeck/mod.rs:1643-1644`, `src/typeck/mod.rs:1646-1648`,
+    /// `src/typeck/mod.rs:1743-1744`), and the map is last-writer-wins. So when two
     /// imported modules export the same name, iteration order decides which
     /// signature — and, for a generic, which BODY — survives. `get_instantiations`
     /// reads `generic_functions` by bare name and hands the winner to codegen's
@@ -2321,7 +2324,7 @@ impl TypeChecker {
     }
 
     /// Type check a program
-    pub fn check(&mut self, program: &Program) -> Result<()> {
+    fn check_program(&mut self, program: &Program) -> Result<()> {
         // WHAT COUNTS AS "THE PROGRAM" MUST BE ONE ANSWER IN BOTH PASSES.
         //
         // I argued last round that a value-carrying async return "cannot be
@@ -2883,7 +2886,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:3175-3178`), and walking an imported
+        // return (`src/typeck/mod.rs:3178-3181`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -3027,8 +3030,8 @@ impl TypeChecker {
 
                 // First check if it's a type alias
                 if let Some(aliased_type) = self.type_aliases.get(name) {
-                    // Recursively resolve the aliased type (a tuple: `DeclaredAs`)
-                    return self.resolved_alias(name, aliased_type);
+                    let resolved = self.alias_guard.expand(name, || self.resolved_alias(name, aliased_type));
+                    return resolved.unwrap_or_else(|| CheckerType::named_struct(name.clone())); // PD0080
                 }
 
                 // Enum or struct: ONE predicate, the one every depth uses.
@@ -3091,7 +3094,7 @@ impl TypeChecker {
                     // Substitute type parameters in the aliased type
                     let substituted_type =
                         self.substitute_type_params_map(&generic_alias.ty, &substitutions);
-                    return self.ast_type_to_checker_type(&substituted_type);
+                    return (self.alias_guard.expand(name, || self.ast_type_to_checker_type(&substituted_type))).unwrap_or_else(|| CheckerType::named_struct(name.clone()));
                 }
 
                 // Not a type alias, convert generic types normally
@@ -6547,7 +6550,7 @@ impl TypeChecker {
     /// produced thirty distinct outputs in thirty compiles.
     ///
     /// Emission order is not all that rides on this. `get_mangled_name_for_call`
-    /// (`src/codegen/mod.rs:6742-6806`) scans this list for every instantiation
+    /// (`src/codegen/mod.rs:6749-6813`) scans this list for every instantiation
     /// of a name and, when a function has more than one, picks by inferring from
     /// the first argument — so before this, *which monomorphization a call
     /// resolved to* could also vary between runs. Sorting does not make that
@@ -7440,9 +7443,9 @@ impl TypeChecker {
     /// alias of an alias keeps the name the inner one gives; a reference
     /// alias (`type A = &(i64, i64)`) gives none.
     ///
-    /// Any other body is resolved by a call in TAIL position, as before this
-    /// existed: a cyclic alias (`type A = B; type B = A;`, #79) still loops
-    /// rather than exhausting the stack — the behaviour main has, measured.
+    /// Any other body is resolved by a plain call. A cyclic alias (`type A =
+    /// B; type B = A;`, #79) looped here on main; the caller now opens every
+    /// alias under `alias_guard`, which stops it and refuses it (PD0080).
     fn resolved_alias(&self, name: &str, aliased_type: &crate::ast::Type) -> CheckerType {
         if !matches!(aliased_type, crate::ast::Type::Tuple(_)) {
             return self.ast_type_to_checker_type(aliased_type);
@@ -9505,4 +9508,18 @@ mod tests {
 }
 
 // After the tests on purpose: appended, it moves no line a document cites.
-mod alias_cycles;
+pub(crate) mod alias_cycles;
+
+impl TypeChecker {
+    /// Type check `program`. The checker's own alias expansion is guarded
+    /// (`alias_cycles::ExpansionGuard`): an expansion that would never end is
+    /// stopped where it is met, and refused here as PD0080 — ahead of any
+    /// error the stopped expansion's placeholder type went on to cause.
+    pub fn check(&mut self, program: &Program) -> Result<()> {
+        let result = self.check_program(program);
+        match self.alias_guard.take() {
+            Some(cycle) => Err(cycle),
+            None => result,
+        }
+    }
+}
