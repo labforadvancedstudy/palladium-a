@@ -629,13 +629,20 @@ fn width_sensitive_operators_compute_at_the_values_own_width_or_are_refused() {
 /// answer is 2147483648. Round 3 claimed the `long long`: `let w = v + 0;
 /// inv(w)` became `inv__i64`, -8, where main printed the `u32` answer
 /// 4294967288. Such a value is of no width known, and a use of it is refused
-/// by name: c22/c23/c24/c20/c17 (main printed C's `long long` answers, which
-/// are not the `u32` ones) and the shapes main got right by its search
-/// (4294967288 for `let w = v + 0; inv(w)` and for a body's `G { .., p: v + 0
-/// }`, two correct runs given up). A value that keeps its width does pick:
-/// over a `u64` `v + 0LL` is an `unsigned long long`; `let w = p` and a match
-/// binding of a `u32` parameter are `long long`s holding the `u32` unchanged
-/// (main printed -8 for both); `v + u` of two `u32`s is a `u32`.
+/// by name: c22/c23/c24/c20/c17 (main printed C's `long long` answers) and
+/// the shapes main got right by its search (4294967288 for `let w = v + 0;
+/// inv(w)` and for a body's `G { .., p: v + 0 }`): runs given up. A BINDING is
+/// exactly the C type it is declared at, where its value is of that type, and
+/// every assignment converts to it (review round 5): round 4 read `let mut w =
+/// p` (`p: u32`, declared `long long w`) as the `u32`, and after `w =
+/// 4294967297` or `w = w * 2` called `inv__z` of the `long long` (4294967294
+/// and 2589934591 where main printed -4294967298 and -6000000001). Such a
+/// binding, and a match binding of such a parameter, are of no width the
+/// program wrote and refused; `let y = x` of a `u32` local is declared
+/// `unsigned int` and picks the `u32` instantiation, `let mut w = 7; w =
+/// 4294967297` stays a `long long`, `let mut w: u32 = v; w = w * 2` stays a
+/// `u32`. Over a `u64` `v + 0LL` is an `unsigned long long`; `v + u` of two
+/// `u32`s is a `u32`.
 #[test]
 fn a_value_whose_width_the_emitted_c_does_not_keep_picks_no_instantiation() {
     let decoy = "type z = u32;\nstruct S { n: i64 }\nimpl S { fn get(&self) -> z { return 7; } }\n";
@@ -650,29 +657,28 @@ fn a_value_whose_width_the_emitted_c_does_not_keep_picks_no_instantiation() {
     };
     let rows: Vec<(&str, String, &str)> = vec![
         (
-            "`let w = p` of a u32 parameter holds the u32 (main: -8)",
-            in_body("let w = p; return invert(w);", ", p: u32", ", 7"),
+            "`let y = x` of a u32 local is an unsigned int (main: -8)",
+            in_body("let x: u32 = 7; let y = x; return invert(y);", "", ""),
             "RUN: 4294967288\n",
         ),
         (
-            "a match binding of a u32 parameter holds the u32 (main: -8)",
-            in_body("match p { x => { return invert(x); } } return 0;", ", p: u32", ", 7"),
-            "RUN: 4294967288\n",
+            "a long long binding reassigned stays a long long (main: same)",
+            in_body("let mut w = 7; w = 4294967297; return invert(w);", "", ""),
+            "RUN: -4294967298\n",
+        ),
+        (
+            "fable d03: `let mut w: u32 = v; w = w * 2` stays a u32 (main: 1705032704 2589934591 -1705032705)",
+            format!(
+                "{decoy}{invert}fn f(v: u32) -> i64 {{ let mut w: u32 = v; w = w * 2; print_int(w); \
+                 print_int(~w); return invert(w); }}\n\
+                 fn main() {{ {read_decoy}print_int(f(3000000000)); }}\n"
+            ),
+            "RUN: 1705032704\n2589934591\n2589934591\n",
         ),
         (
             "`v + u` of two u32s is a u32 (main: -9)",
             in_body("let v: u32 = 7; let u: u32 = 1; return invert(v + u);", "", ""),
             "RUN: 4294967287\n",
-        ),
-        (
-            "`let w = p` of a u64 parameter beside the alias's u64 instantiation (main: -4611686018427387904)",
-            format!(
-                "{}{HALF}fn wrap<T>(t: T, p: u64) -> i64 {{ let w = p; return half(w); }}\n\
-                 fn main() {{ let s = S {{ n: 0 }}; let zv = s.get(); let d = half(zv); let a = half(8); \
-                 let mut v: u64 = 9223372036854775807; v = v + 1; print_int(wrap(1, v)); }}\n",
-                by_name("u64", "8")
-            ),
-            "RUN: 4611686018427387904\n",
         ),
         (
             "a u64 `let w = v + 0` beside the alias's u64 instantiation (main: 2^62, then -2^62)",
@@ -755,6 +761,66 @@ fn a_value_whose_width_the_emitted_c_does_not_keep_picks_no_instantiation() {
         (
             "an array of `v + 0` over a u32, looped (main: -8)",
             in_body("let v: u32 = 7; let xs = [v + 0, 1]; for x in xs { return invert(x); } return 0;", "", ""),
+            call,
+        ),
+        (
+            "`let w = p` of a u32 parameter, declared `long long w` (main: -8)",
+            in_body("let w = p; return invert(w);", ", p: u32", ", 7"),
+            call,
+        ),
+        (
+            "a match binding of a u32 parameter, declared `long long x` (main: -8)",
+            in_body("match p { x => { return invert(x); } } return 0;", ", p: u32", ", 7"),
+            call,
+        ),
+        (
+            "astra assign_mut: `let mut w = p; w = 4294967297` (main: -4294967298)",
+            in_body("let mut w = p; w = 4294967297; return invert(w);", ", p: u32", ", 7"),
+            call,
+        ),
+        (
+            "astra assign_if: the assignment inside an `if` (main: -4294967298)",
+            in_body("let mut w = p; if true { w = 4294967297; } return invert(w);", ", p: u32", ", 7"),
+            call,
+        ),
+        (
+            "astra assign_compound: `w = w + 4294967290` (main: -4294967298)",
+            in_body("let mut w = p; w = w + 4294967290; return invert(w);", ", p: u32", ", 7"),
+            call,
+        ),
+        (
+            "fable d01: `let mut w = v; w = w * 2` (main: 6000000000 -6000000001 -6000000001)",
+            format!(
+                "{decoy}{invert}fn f(v: u32) -> i64 {{ let mut w = v; w = w * 2; print_int(w); \
+                 print_int(~w); return invert(w); }}\n\
+                 fn main() {{ {read_decoy}print_int(f(3000000000)); }}\n"
+            ),
+            call,
+        ),
+        (
+            "fable d02: `let mut w = v; w = w + 1` (main: 4294967296 -4294967297 -4294967297)",
+            format!(
+                "{decoy}{invert}fn f(v: u32) -> i64 {{ let mut w = v; w = w + 1; print_int(w); \
+                 print_int(~w); return invert(w); }}\n\
+                 fn main() {{ {read_decoy}print_int(f(4294967295)); }}\n"
+            ),
+            call,
+        ),
+        (
+            "fable d13: `let mut w = v; w = w + u` (main: 4294967296 -4294967297 -4294967297)",
+            format!(
+                "{decoy}{invert}fn f(v: u32, u: u32) -> i64 {{ let mut w = v; w = w + u; print_int(w); \
+                 print_int(~w); return invert(w); }}\n\
+                 fn main() {{ {read_decoy}print_int(f(4294967295, 1)); }}\n"
+            ),
+            call,
+        ),
+        (
+            "fable d12: `let mut w = v; w = v` (main: 7 -8)",
+            format!(
+                "{decoy}{invert}fn f(v: u32) -> i64 {{ let mut w = v; w = v; print_int(w); return invert(w); }}\n\
+                 fn main() {{ {read_decoy}print_int(f(7)); }}\n"
+            ),
             call,
         ),
         (
@@ -939,6 +1005,11 @@ fn a_value_if_match_loop_or_block_is_of_its_values_one_exact_type() {
             "a `loop` (main: same)",
             format!("{g}fn main() {{ let g = G {{ v: loop {{ break 5; }} }}; print_int(g.v); }}\n"),
             "RUN: 5\n",
+        ),
+        (
+            "a block whose unused local is of no exact width (main: same)",
+            format!("{g}fn main() {{ let v: u32 = 7; let g = G {{ v: {{ let unused = v + 0; 1 }} }}; print_int(g.v); }}\n"),
+            "RUN: 1\n",
         ),
         (
             "a block of a block and an `if` (main: same)",

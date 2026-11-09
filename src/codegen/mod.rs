@@ -346,14 +346,15 @@ pub struct CodeGenerator {
     /// The bindings of the function being generated whose EXACT C type — the
     /// width of the value it holds, which picks an instantiation
     /// (`exact_c_type_in`) — is not the C type `variables` tracks, by name:
-    /// `Some(t)` where it is `t`, `None` where it is not known. A `u32`, `u64`,
+    /// `Some(t)` where it is `t`, `None` where it has none. A `u32`, `u64`,
     /// `f32` or `f64` parameter is tracked as `long long` and declared at its
-    /// own type; a `let` C declares wider than its initializer without changing
-    /// the value (`let w = p` with `p: u32` is a `long long`) holds the
-    /// initializer's; and a binding of a value whose width the emitted C erased
-    /// (`let w = v + 0` with `v: u32`, which C computes as `v + 0LL`, a `long
-    /// long`; a `for` over such a range; a match binding of such a value) has
-    /// none. A binding absent here is exactly its tracked type. It is a BINDING
+    /// own type, which every assignment to it converts to. Any other binding is
+    /// exactly the C type it is declared at, where its value is of that type,
+    /// and of none otherwise (review rounds 4-5): `let w = p` with `p: u32` is
+    /// declared `long long w`, no `u32`; `let w = v + 0` holds the `long long`
+    /// C computes `v + 0LL` at; a `for` over such a range and a match binding
+    /// of such a value likewise. A binding absent here is exactly its tracked
+    /// type. It is a BINDING
     /// map like `variables` and `array_bindings`: every binding of a name sets
     /// or clears its entry, and a scope gives it back when it closes
     /// (`open_binding_scope`). Review round 3 measured a flat map: a `w` bound in
@@ -5064,35 +5065,28 @@ impl CodeGenerator {
                     }
                     _ => None,
                 };
-                // The binding holds its initializer's value, and is EXACTLY of the
-                // initializer's exact C type where C declares it at that type or at one that
-                // holds it unchanged (`let w = p` with `p: u32` is a `long long w`, and still
-                // the `u32` 7). Where the initializer's width is not known — `let w = v * 2`
-                // with `v: u32` is the `long long` C computes `v * 2LL` at, which is no
-                // `u32` (review round 4) — or the declaration changes the value, neither is
-                // the binding's. An annotation is exact as written. It shadows any binding
-                // of the name.
+                // A binding is exactly the C type it is DECLARED at here, and every
+                // assignment to it converts to that type, so no later write can make it
+                // another (review round 5: a `u32` claimed for `let mut w = p` outlived `w =
+                // 4294967297`, and `inv(w)` was `inv__z` of the `long long` 4294967297). It is
+                // that type's value only where its initializer's exact type IS that type; an
+                // initializer of another width — `let w = p` with `p: u32` is declared `long
+                // long w`, and `let w = v + 0` holds the `long long` C computes `v + 0LL` at,
+                // no `u32` (round 4) — leaves the binding of no width the program wrote, and
+                // it picks no instantiation. An annotation is exact as written. It shadows any
+                // binding of the name.
                 let exact = match ty {
-                    Some(_) => Some(None),
+                    Some(_) => true,
                     None => {
                         let declared = format!("{}{}", c_type, array_dims);
-                        match self.exact_c_type_in(value, &Default::default()) {
-                            Some(e) if Self::same_c_type(&e, &declared) => Some(None),
-                            Some(e) if Self::holds_unchanged(&declared, &e) => Some(Some(e)),
-                            _ => None,
-                        }
+                        self.exact_c_type_in(value, &Default::default())
+                            .is_some_and(|e| Self::same_c_type(&e, &declared))
                     }
                 };
-                match exact {
-                    Some(None) => {
-                        self.param_exact_c.remove(name.as_str());
-                    }
-                    Some(Some(e)) => {
-                        self.param_exact_c.insert(name.clone(), Some(e));
-                    }
-                    None => {
-                        self.param_exact_c.insert(name.clone(), None);
-                    }
+                if exact {
+                    self.param_exact_c.remove(name.as_str());
+                } else {
+                    self.param_exact_c.insert(name.clone(), None);
                 }
                 // Track variable type for future inference. Arrays keep their
                 // dimensions in the recorded type.
@@ -6914,16 +6908,12 @@ impl CodeGenerator {
         }
     }
 
-    /// Declare the variables an arm's pattern binds, at the top of its block.
-    ///
-    /// The bindings are written before anything else in the arm — before the
-    /// guard, which may read them, and before the body.
     /// A match arm declares its bindings at the scrutinee's tracked C type
-    /// (`emit_pattern_bindings`); where the scrutinee's EXACT type is another,
-    /// a whole-value binding holds it as a `let` would (`match p { x => .. }`
-    /// with `p: u32` is a `long long x` holding the `u32`), and every other
-    /// binding of the arm has no exact type known (round 4: an erased width
-    /// reached a match binding as an exact `long long`).
+    /// (`emit_pattern_bindings`), which is their exact type only where it is
+    /// the scrutinee's: `match p { x => .. }` with `p: u32` declares `long long
+    /// x`, of no width the program wrote, and so does a binding of a value C
+    /// computes at an erased width (rounds 4-5). Such bindings pick no
+    /// instantiation.
     fn mark_arm_bindings_exactness(
         &mut self,
         pattern: &Pattern,
@@ -6933,23 +6923,17 @@ impl CodeGenerator {
         if subject_exact.is_some_and(|e| Self::same_c_type(e, subject_type)) {
             return;
         }
-        let whole = match pattern {
-            Pattern::Ident(name) | Pattern::Binding { name, .. } => Some(name.as_str()),
-            _ => None,
-        };
         let mut names = Vec::new();
         Self::pattern_names(pattern, &mut names);
         for name in names {
-            let entry = match subject_exact {
-                Some(e) if whole == Some(name.as_str()) && Self::holds_unchanged(subject_type, e) => {
-                    Some(e.to_string())
-                }
-                _ => None,
-            };
-            self.param_exact_c.insert(name, entry);
+            self.param_exact_c.insert(name, None);
         }
     }
 
+    /// Declare the variables an arm's pattern binds, at the top of its block.
+    ///
+    /// The bindings are written before anything else in the arm — before the
+    /// guard, which may read them, and before the body.
     fn emit_pattern_bindings(
         &mut self,
         pattern: &Pattern,
@@ -8607,6 +8591,8 @@ impl CodeGenerator {
             }
             // A parameter is of the C type it is declared at, unless a binding of the
             // compound value being typed shadows it (`locals`).
+            // A compound value's own binding of no exact type (`exact_locals_of`).
+            Expr::Ident(name) if locals.contains_key(&Self::no_exact_type_key(name)) => None,
             // A binding `param_exact_c` knows the exact type of better than `variables`,
             // unless a binding of the compound value being typed shadows it (`locals`).
             Expr::Ident(name) if !locals.contains_key(name) && self.param_exact_c.contains_key(name) => {
@@ -8685,26 +8671,37 @@ impl CodeGenerator {
         let mut bound = std::collections::HashMap::new();
         if !names.is_empty() {
             let subject_type = self.try_infer_expr_type_in(subject, locals)?;
-            // The arm declares its bindings at the scrutinee's tracked type, which is
-            // their exact one only where the scrutinee's is (round 4).
-            let subject_exact = self.exact_c_type_in(subject, locals)?;
-            if !Self::same_c_type(&subject_exact, &subject_type) {
-                return None;
-            }
             self.bind_pattern_locals(pattern, &subject_type, &mut bound);
         }
         if !names.iter().all(|name| bound.contains_key(name)) {
             return None;
         }
+        // The arm declares its bindings at the scrutinee's tracked type, which is
+        // their exact one only where the scrutinee's is (`mark_arm_bindings_exactness`).
+        let exact = names.is_empty()
+            || self.exact_c_type_in(subject, locals).is_some_and(|e| {
+                self.try_infer_expr_type_in(subject, locals)
+                    .is_some_and(|t| Self::same_c_type(&e, &t))
+            });
         let mut out = locals.clone();
         out.extend(bound);
+        for name in &names {
+            if exact {
+                out.remove(&Self::no_exact_type_key(name));
+            } else {
+                out.insert(Self::no_exact_type_key(name), String::new());
+            }
+        }
         Some(out)
     }
 
-    /// `locals_of` for typing a compound value exactly: `None` where a `let` of
-    /// the statements is not exactly the C type it is declared at (`let w = v +
-    /// 0` with `v: u32` holds an erased width, review round 4), which the value
-    /// may read.
+    /// `locals_of` for typing a compound value exactly: each `let` at the C
+    /// type it is declared at, and marked as of no exact type
+    /// (`no_exact_type_key`) where its initializer is not exactly that type, as
+    /// a function's `let` is (`param_exact_c`). Only a value that READS such a
+    /// binding loses its exact type: `{ let unused = v + 0; 1 }` is the `long
+    /// long` 1 (review round 5: the whole block was refused). `None` only where
+    /// a `let`'s type is unknown, which code generation refuses anyway.
     fn exact_locals_of(
         &self,
         stmts: &[Stmt],
@@ -8716,21 +8713,44 @@ impl CodeGenerator {
                 name, ty, value, ..
             } = stmt
             {
-                let declared = match ty {
-                    Some(t) => self.type_to_c(t),
-                    None => {
-                        let declared = self.try_infer_expr_type_in(value, &locals)?;
-                        let exact = self.exact_c_type_in(value, &locals)?;
-                        if !Self::same_c_type(&exact, &declared) {
-                            return None;
-                        }
-                        declared
-                    }
-                };
-                locals.insert(name.clone(), declared);
+                self.bind_exact_local(&mut locals, name, ty.as_ref(), value)?;
             }
         }
         Some(locals)
+    }
+
+    /// Bind a `let` into a compound value's `locals` (`exact_locals_of`).
+    fn bind_exact_local(
+        &self,
+        locals: &mut std::collections::HashMap<String, String>,
+        name: &str,
+        ty: Option<&Type>,
+        value: &Expr,
+    ) -> Option<()> {
+        let (declared, exact) = match ty {
+            Some(t) => (self.type_to_c(t), true),
+            None => {
+                let declared = self.try_infer_expr_type_in(value, locals)?;
+                let exact = self
+                    .exact_c_type_in(value, locals)
+                    .is_some_and(|e| Self::same_c_type(&e, &declared));
+                (declared, exact)
+            }
+        };
+        locals.insert(name.to_string(), declared);
+        if exact {
+            locals.remove(&Self::no_exact_type_key(name));
+        } else {
+            locals.insert(Self::no_exact_type_key(name), String::new());
+        }
+        Some(())
+    }
+
+    /// The key under which a compound value's `locals` mark the binding `name`
+    /// as of no exact type. No identifier contains `\u{1}`, so it never names a
+    /// binding, and `try_infer_expr_type_in` never reads it.
+    fn no_exact_type_key(name: &str) -> String {
+        format!("\u{1}{}", name)
     }
 
     /// The names `pattern` binds.
@@ -8792,18 +8812,7 @@ impl CodeGenerator {
                     if Self::breaks_inside(value) {
                         return None;
                     }
-                    let c_type = match ty {
-                        Some(t) => self.type_to_c(t),
-                        None => {
-                            let declared = self.try_infer_expr_type_in(value, &locals)?;
-                            let exact = self.exact_c_type_in(value, &locals)?;
-                            if !Self::same_c_type(&exact, &declared) {
-                                return None;
-                            }
-                            declared
-                        }
-                    };
-                    locals.insert(name.clone(), c_type);
+                    self.bind_exact_local(&mut locals, name, ty.as_ref(), value)?;
                 }
                 Stmt::If {
                     condition,
@@ -8993,17 +9002,6 @@ impl CodeGenerator {
             } => Self::untyped_literal(operand),
             _ => false,
         }
-    }
-
-    /// Does a C object of type `carrier` hold every value of the exact C type
-    /// `exact` so that converting it back yields the value unchanged — an `int`
-    /// or `unsigned int` in a `long long`, the bits of an `unsigned long long`
-    /// in a `long long`, a `float` in a `double`?
-    fn holds_unchanged(carrier: &str, exact: &str) -> bool {
-        matches!(
-            (exact, carrier),
-            ("int" | "unsigned int" | "unsigned long long", "long long") | ("float", "double")
-        )
     }
 
     /// The C type of an array of `len` elements of the C type `element`, the

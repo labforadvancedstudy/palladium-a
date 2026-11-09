@@ -12,11 +12,14 @@
 //   `inv__z` (4294967294 where `~` of the i64 is -4294967298), and an inner
 //   `let w = 9` dropped the parameter's entry for good (-8 where the C
 //   `unsigned int` 7 inverts to 4294967288). It is scoped like every binding.
-// - A `let` or a match binding of such a parameter is declared `long long` and
-//   still holds the `u32`: it is of the parameter's width (main printed -8).
-//   A value C computes at a width the program never wrote — `v + 0` over a
-//   `u32` is `v + 0LL`, a `long long` — has none, and is refused by name
-//   (PD0082) rather than computed as a `u32` or as an i64.
+// - A binding is exactly the C type it is declared at, where its value is of
+//   that type, and every assignment converts to it: `let y = x` of a `u32`
+//   local is an `unsigned int` (main printed -8 for its `~`), and `let mut w =
+//   7; w = 4294967297;` stays a `long long`. A value C computes at a width the
+//   program never wrote — `v + 0` over a `u32` is `v + 0LL`, a `long long`; a
+//   `u32` parameter given to a `let`, which C declares `long long` — has none,
+//   and is refused by name (PD0082) rather than computed at a width it never
+//   had; an unused such binding in a block does not affect the block's value.
 // - A value `if`, `match`, `loop` or block is of the one C type its values
 //   have, where each is also the type of the temporary that carries it out;
 //   these were refused although their record `G<i64>` holds them exactly.
@@ -64,18 +67,16 @@ fn param_after_shadow<T>(t: T, w: u32) -> i64 {
     return inv(w);
 }
 
-fn via_let<T>(t: T, p: u32) -> i64 {
-    let w = p;
-    return inv(w);
+fn via_let<T>(t: T) -> i64 {
+    let x: u32 = 7;
+    let y = x;
+    return inv(y);
 }
 
-fn via_match<T>(t: T, p: u32) -> i64 {
-    match p {
-        x => {
-            return inv(x);
-        }
-    }
-    return 0;
+fn reassigned<T>(t: T) -> i64 {
+    let mut w = 7;
+    w = 4294967297;
+    return inv(w);
 }
 
 fn main() {
@@ -88,16 +89,19 @@ fn main() {
     print_int(for_over_param(1, 7));
     print_int(param_after_shadow(1, 7));
 
-    print_int(via_let(1, 7));
-    print_int(via_match(1, 7));
+    print_int(via_let(1));
+    print_int(reassigned(1));
 
     let g1 = G { v: if true { 1 } else { 2 } };
     let g2 = G { v: { let x = 1; x + 1 } };
     let n = 3;
     let g3 = G { v: match n { 0 => 10, _ => 20 } };
     let g4 = G { v: loop { break 5; } };
+    let u: u32 = 7;
+    let g5 = G { v: { let unused = u + 0; 6 } };
     print_int(g1.v);
     print_int(g2.v);
     print_int(g3.v);
     print_int(g4.v);
+    print_int(g5.v);
 }
