@@ -3198,7 +3198,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:4565-4568`), and walking an imported
+        // return (`src/typeck/mod.rs:4749-4752`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -3465,9 +3465,12 @@ impl TypeChecker {
     }
 
     /// The `&T` rule of an instantiated body (`check_statement`'s `let`): `let
-    /// r: &T = v;` is `void **r = v;`, which a value meets only if C does — a
-    /// borrow of a `let x: T` (`void **`) or a `void *` value. A value whose C
-    /// type is known to be another is refused (PD0022).
+    /// r: &T = v;` is `void **r = v;` — a body is not substituted — and a value
+    /// meets it only where C does: a borrow of a `let x: T` (`void **`) or a
+    /// `void *` value. A value whose C type is known to be another is refused
+    /// (PD0022), at a `&T` anywhere in the annotation: `[&T; 1]` and `(&T,
+    /// i64)` are `void **` in their element too (review round 4 of #88: only a
+    /// `&T` at the top was asked, and `[&a]` reached the ill-typed-C trap).
     fn type_parameter_reference_refusal(
         &self,
         annotated_type: &crate::ast::Type,
@@ -3475,17 +3478,15 @@ impl TypeChecker {
         value: &Expr,
     ) -> Option<CompileError> {
         let written = Self::type_params_bound(annotated_type, &self.instantiated_type_params);
-        let crate::ast::Type::Reference { inner, .. } = &written else {
-            return None;
-        };
-        if !matches!(inner.as_ref(), crate::ast::Type::TypeParam(_)) {
-            return None;
-        }
-        let known = match value_type {
-            CheckerType::Reference(_, referent, _) => referent.source.clone(),
-            _ => self.source_of(value),
-        };
-        if !known.is_some_and(|c| !matches!(c, crate::ast::Type::TypeParam(_))) {
+        let known = self.source_of(value).or_else(|| match value_type {
+            CheckerType::Reference(_, referent, _) => referent.source.clone().map(|inner| crate::ast::Type::Reference {
+                lifetime: None,
+                mutable: false,
+                inner: Box::new(inner),
+            }),
+            _ => None,
+        })?;
+        if !Self::void_reference_disagrees(&written, &known) {
             return None;
         }
         let expected_type = self.written_type(annotated_type);
@@ -3498,6 +3499,135 @@ impl TypeChecker {
                 )
                 .with_code(DiagnosticCode::LetAnnotationAndInitialiserAgree),
         )
+    }
+
+    /// Does the C type `source` disagree with `written` at a `&T` position —
+    /// `void **` — anywhere the two have the same shape (an array's element, a
+    /// tuple's)? A `&T` is met by a `void *` (`T`) or a `void **` (`&T`).
+    fn void_reference_disagrees(written: &crate::ast::Type, source: &crate::ast::Type) -> bool {
+        use crate::ast::Type as T;
+        let names_a_parameter = |t: &T| matches!(t, T::TypeParam(_));
+        match (written, source) {
+            (T::Reference { inner, .. }, _) if names_a_parameter(inner) => match source {
+                T::TypeParam(_) => false,
+                T::Reference { inner, .. } => !names_a_parameter(inner),
+                _ => true,
+            },
+            (T::Array(w, _), T::Array(s, _)) => Self::void_reference_disagrees(w, s),
+            (T::Tuple(ws), T::Tuple(ss)) if ws.len() == ss.len() => {
+                ws.iter().zip(ss).any(|(w, s)| Self::void_reference_disagrees(w, s))
+            }
+            _ => false,
+        }
+    }
+
+    /// The type the checker gives `l op r` (`Expr::Binary` in
+    /// `check_expression`), or `None` where it gives none because it refuses
+    /// the operands: `1 + 2.5` has no checker type (code generation declares
+    /// it `double`, which a binding of it reads through `source_of`).
+    fn binary_result(&self, op: &BinOp, l: &CheckerType, r: &CheckerType) -> Option<CheckerType> {
+        use CheckerType as C;
+        match op {
+            BinOp::Add => match (l, r) {
+                (C::Int(_), C::Int(_)) => Some(C::INT),
+                (C::Float(_), C::Float(_)) => Some(C::FLOAT),
+                (C::String(_), C::String(_)) => Some(C::STRING),
+                _ => None,
+            },
+            BinOp::Sub | BinOp::Mul | BinOp::Div => match (l, r) {
+                (C::Int(_), C::Int(_)) => Some(C::INT),
+                (C::Float(_), C::Float(_)) => Some(C::FLOAT),
+                _ => None,
+            },
+            BinOp::Mod | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
+                matches!((l, r), (C::Int(_), C::Int(_))).then_some(C::INT)
+            }
+            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
+                self.merged(l, r).map(|_| C::BOOL)
+            }
+            BinOp::And | BinOp::Or => matches!((l, r), (C::Bool(_), C::Bool(_))).then_some(C::BOOL),
+        }
+    }
+
+    /// The field `field` of the generic struct `name` instantiated at `args`,
+    /// as the checker types it (`Expr::FieldAccess` in `check_expression`).
+    fn generic_struct_field(&self, name: &str, args: &[GenericArgValue], field: &str) -> Option<CheckerType> {
+        let generic = self.generic_structs.get(name)?;
+        let declared = &generic.fields.iter().find(|(f, _)| f == field)?.1;
+        let types: Option<Vec<CheckerType>> = args
+            .iter()
+            .map(|a| match a {
+                GenericArgValue::Type(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        self.substitute_type_params(declared, &generic.type_params, &types?).ok()
+    }
+
+    /// The type a refused call of the generic `generic` returns, as the
+    /// checker types it: its own inference and instantiation where every
+    /// argument checked; otherwise each type parameter fixed by the argument
+    /// given for a parameter declared as it (merged, as inference merges),
+    /// substituted into the return type — and `None` where a parameter is not
+    /// fixed (review round 4 of #88: `id({ .. p })` answered no type, and the
+    /// comparison of two of them went unjudged). A parameter fixed at a type
+    /// with no name to carry it (`&i64`) is the instantiation's own refusal.
+    fn recovered_generic_return(
+        &mut self,
+        generic: &GenericFunction,
+        args: &[Expr],
+        call_args: &[(&Expr, Option<CheckerType>, bool)],
+    ) -> Result<Option<CheckerType>> {
+        if generic.params.len() != call_args.len() {
+            return Ok(None);
+        }
+        if call_args.iter().all(|(_, _, clean)| *clean) {
+            return Ok(match self
+                .infer_type_args(generic, args)
+                .and_then(|type_args| self.instantiate_generic_function(generic, &type_args))
+            {
+                Ok(CheckerType::Function(_, ret)) => Some(*ret),
+                _ => None,
+            });
+        }
+        let mut fixed: HashMap<String, CheckerType> = HashMap::new();
+        for ((_, found, _), (_, written)) in call_args.iter().zip(&generic.params) {
+            let crate::ast::Type::TypeParam(param) = Self::type_params_bound(written, &generic.type_params) else {
+                continue;
+            };
+            let Some(found) = found else { continue };
+            let merged = match fixed.get(&param) {
+                Some(existing) => self.merged(existing, found),
+                None => Some(found.clone()),
+            };
+            match merged {
+                Some(m) => {
+                    fixed.insert(param, m);
+                }
+                None => return Ok(None),
+            }
+        }
+        let mut types = Vec::with_capacity(generic.type_params.len());
+        for param in &generic.type_params {
+            let Some(ty) = fixed.get(param) else {
+                return Ok(None);
+            };
+            // A reference not declared by an alias has no name to carry it:
+            // the instantiation is refused, by name, as the checker refuses it.
+            if let CheckerType::Reference(..) = ty {
+                if ty.declared_as().is_none() {
+                    if let Err(refused) = Self::type_argument_as_named_type(&ty.to_string()) {
+                        Self::judge(refused, &[ty])?;
+                    }
+                    return Ok(None);
+                }
+            }
+            types.push(ty.clone());
+        }
+        Ok(match &generic.return_type {
+            None => Some(CheckerType::Unit),
+            Some(ret) => self.substitute_type_params(ret, &generic.type_params, &types).ok(),
+        })
     }
 
     /// A loop's body: a scope of its own, and the loop's frame. Answers the
@@ -3874,23 +4004,29 @@ impl TypeChecker {
             // Every element meets the element type the ones before it fixed,
             // pair by pair (the C array has one element type).
             Expr::ArrayLiteral { elements, .. } => {
+                // The array's type only where every element's is known and
+                // they merge, as the checker computes it.
                 let mut elem: Option<CheckerType> = None;
+                let mut exact = true;
                 for element in elements {
                     let Some(found) = self.walk_instantiated_expr(element)? else {
+                        exact = false;
                         continue;
                     };
-                    elem = Some(match elem {
-                        None => found,
+                    elem = match elem {
+                        None => Some(found),
                         Some(first) => match self.merged(&first, &found) {
-                            Some(merged) => merged,
+                            Some(merged) => Some(merged),
                             None => {
                                 Self::judge(Self::mismatch(&first, &found), &[&first, &found])?;
-                                first
+                                exact = false;
+                                Some(first)
                             }
                         },
-                    });
+                    };
                 }
-                elem.map(|e| CheckerType::Array(Box::new(e), ArraySizeValue::Literal(elements.len())))
+                elem.filter(|_| exact)
+                    .map(|e| CheckerType::Array(Box::new(e), ArraySizeValue::Literal(elements.len())))
             }
             Expr::Tuple { elements, .. } => {
                 let mut types = Vec::with_capacity(elements.len());
@@ -3938,8 +4074,11 @@ impl TypeChecker {
                 }
             }
             Expr::Range { start, end, .. } => {
+                let mut exact = true;
                 for bound in [start, end] {
-                    if let Some(ty) = self.walk_instantiated_expr(bound)? {
+                    let ty = self.walk_instantiated_expr(bound)?;
+                    exact &= matches!(ty, Some(CheckerType::Int(_)));
+                    if let Some(ty) = ty {
                         if ty != CheckerType::INT {
                             let refused = CompileError::TypeMismatch {
                                 expected: "Int".to_string(),
@@ -3950,7 +4089,7 @@ impl TypeChecker {
                         }
                     }
                 }
-                Some(CheckerType::Range)
+                exact.then_some(CheckerType::Range)
             }
             // The operator rule is asked of each operand alone (PD0083): an
             // unknown left operand does not let a reference right one through.
@@ -3965,11 +4104,13 @@ impl TypeChecker {
                 if let Some(ty) = &right_type {
                     self.refuse_reference_operand(&op.to_string(), ty, right)?;
                 }
-                match op {
-                    BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge | BinOp::And | BinOp::Or => {
-                        Some(CheckerType::BOOL)
-                    }
-                    _ => left_type.or(right_type),
+                // The type the checker gives the operation, where it gives one
+                // (review round 4 of #88: `1 + 2.5` was typed by its LEFT
+                // operand, an `Int`, and `&v` refused against the `&f64` C
+                // declares). Operands it refuses give none.
+                match (&left_type, &right_type) {
+                    (Some(l), Some(r)) => self.binary_result(op, l, r),
+                    _ => None,
                 }
             }
             Expr::Unary { op, operand, .. } => {
@@ -3977,9 +4118,10 @@ impl TypeChecker {
                 if let Some(ty) = &ty {
                     self.refuse_reference_operand(&op.to_string(), ty, operand)?;
                 }
-                match op {
-                    UnaryOp::Not => Some(CheckerType::BOOL),
-                    _ => ty,
+                match (op, &ty) {
+                    (UnaryOp::Not, Some(CheckerType::Bool(_))) => Some(CheckerType::BOOL),
+                    (UnaryOp::Neg | UnaryOp::BitNot, Some(CheckerType::Int(_))) => Some(CheckerType::INT),
+                    _ => None,
                 }
             }
             Expr::FieldAccess { object, field, .. } => {
@@ -3990,6 +4132,9 @@ impl TypeChecker {
                         .get(&name)
                         .and_then(|fields| fields.iter().find(|(f, _)| f == field))
                         .map(|(_, ty)| ty.clone()),
+                    // A generic struct's field, substituted as the checker
+                    // substitutes it (`Expr::FieldAccess` in check_expression).
+                    Some(CheckerType::Generic { name, args }) => self.generic_struct_field(&name, &args, field),
                     Some(other) => {
                         let refused = if clean {
                             refusal
@@ -4031,8 +4176,14 @@ impl TypeChecker {
             },
             Expr::Cast { expr: inner, ty, .. } => {
                 let target = CheckerType::from(ty);
+                // Where the operand checked, the cast itself was refused, and
+                // the checker gives it no type.
+                let mut typed = true;
                 match self.walk_part(inner)? {
-                    (Some(from), true) => Self::judge(refusal, &[&from, &target])?,
+                    (Some(from), true) => {
+                        Self::judge(refusal, &[&from, &target])?;
+                        typed = false;
+                    }
                     (Some(from), false) if from.holds_reference() => {
                         let refused = CompileError::Generic(format!(
                             "`{}` is a reference ({}), and `as` does not convert one: dereference it \
@@ -4044,7 +4195,7 @@ impl TypeChecker {
                     }
                     _ => {}
                 }
-                Some(target)
+                typed.then_some(target)
             }
             Expr::StructLiteral { name, fields, .. } => {
                 let mut found = Vec::with_capacity(fields.len());
@@ -4069,7 +4220,39 @@ impl TypeChecker {
                             Self::judge(Self::mismatch(&expected, ty), &[&expected, ty])?;
                         }
                     }
-                    None
+                    // Its type: the parameters fixed by the fields declared as
+                    // them, merged as the checker merges them — only where every
+                    // parameter is fixed (review round 4 of #88).
+                    let mut fixed: HashMap<String, CheckerType> = HashMap::new();
+                    let mut exact = true;
+                    for (field, _, ty) in &found {
+                        let Some((_, declared)) = generic.fields.iter().find(|(f, _)| f == *field) else {
+                            continue;
+                        };
+                        let crate::ast::Type::TypeParam(param) = Self::type_params_bound(declared, &generic.type_params) else {
+                            continue;
+                        };
+                        let Some(ty) = ty else {
+                            exact = false;
+                            continue;
+                        };
+                        let merged = match fixed.get(&param) {
+                            Some(existing) => self.merged(existing, ty),
+                            None => Some(ty.clone()),
+                        };
+                        match merged {
+                            Some(m) => {
+                                fixed.insert(param, m);
+                            }
+                            None => exact = false,
+                        }
+                    }
+                    let args: Option<Vec<CheckerType>> =
+                        generic.type_params.iter().map(|p| fixed.get(p).cloned()).collect();
+                    args.filter(|_| exact).map(|args| CheckerType::Generic {
+                        name: name.clone(),
+                        args: args.into_iter().map(GenericArgValue::Type).collect(),
+                    })
                 } else if let Some(declared) = self.structs.get(name).cloned() {
                     for (field, value, ty) in &found {
                         let (Some(ty), Some((_, expected))) = (ty, declared.iter().find(|(f, _)| f == *field)) else {
@@ -4216,10 +4399,12 @@ impl TypeChecker {
                             }
                             .with_code(DiagnosticCode::ValueIfBranchesAgree);
                             Self::judge(refused, &[&then_type, &else_type])?;
-                            Some(then_type)
+                            None
                         }
                     },
-                    (then_type, else_type) => then_type.or(else_type),
+                    // A branch whose type is not known leaves the `if`'s
+                    // unknown: the checker gives it the two merged.
+                    _ => None,
                 }
             }
             Expr::Block { stmts, value, .. } => self.walk_value_scope(stmts, value.as_deref())?,
@@ -4231,6 +4416,7 @@ impl TypeChecker {
             } => {
                 let scrutinee = self.walk_instantiated_expr(scrutinee_expr)?;
                 let mut unified: Option<CheckerType> = None;
+                let mut exact = true;
                 for arm in arms {
                     self.symbols.enter_scope();
                     let arm_type = self
@@ -4241,10 +4427,12 @@ impl TypeChecker {
                         });
                     self.symbols.exit_scope();
                     let Some(arm_type) = arm_type? else {
+                        exact = false;
                         continue;
                     };
                     // Each arm's value meets the first arm's, as the checker
-                    // asks it.
+                    // asks it; the `match` has a type only where every arm's is
+                    // known and they merge.
                     unified = Some(match unified {
                         None => arm_type,
                         Some(first) => match self.merged(&first, &arm_type) {
@@ -4259,12 +4447,13 @@ impl TypeChecker {
                                     span: Some(*span),
                                 };
                                 Self::judge(refused, &[&first, &arm_type])?;
+                                exact = false;
                                 first
                             }
                         },
                     });
                 }
-                unified
+                unified.filter(|_| exact)
             }
         })
     }
@@ -4336,12 +4525,7 @@ impl TypeChecker {
                     }
                 }
             }
-            return Ok(generic
-                .return_type
-                .as_ref()
-                .filter(|r| !Self::mentions_type_param(&Self::type_params_bound(r, &generic.type_params)))
-                .and_then(|r| self.substitute_type(r, &HashMap::new()).ok())
-                .map(|r| self.declared_type(&r)));
+            return Ok(self.recovered_generic_return(&generic, args, &call_args)?);
         }
         let Some(CheckerType::Function(params, return_type)) = self.functions.get(name).cloned() else {
             return Ok(None);

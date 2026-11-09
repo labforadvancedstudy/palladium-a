@@ -1,0 +1,34 @@
+// #88, review round 4: a recovered generic call has the type its
+// instantiation gives it, so two borrows compared through `id(..)` are
+// refused by name.
+//
+// The walk of an instantiated body recovers the type of an expression it
+// walked after an unrelated refusal (`return 7` at `-> N`, `N` an alias of
+// `u32`). For a call of a generic returning `T` it recovered NONE, so the
+// comparison of the two results went unjudged: two borrowed fives compared by
+// address. Measured on main (2ca5eb5) and on round 4 alike: it ran and printed
+// `ne`, then `7`. `T` is fixed by the argument given for it, and substituted.
+type A = &i64;
+type N = u32;
+
+fn id<T>(a: T) -> T {
+    a
+}
+
+fn h<U>(x: U, p: A, q: A) -> N {
+    if id({ if false { return 7; } p }) == id({ if false { return 7; } q }) {
+        print("eq");
+    } else {
+        print("ne");
+    }
+    7
+}
+
+fn main() {
+    let n = 5;
+    let m = 5;
+    let p: A = &n;
+    let q: A = &m;
+    let seed = id(p);
+    print_int(h(1, p, q));
+}

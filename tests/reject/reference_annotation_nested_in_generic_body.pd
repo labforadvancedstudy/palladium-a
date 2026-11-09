@@ -1,0 +1,16 @@
+// #90, review round 4: a `&T` inside an annotation's array (or tuple) in a
+// generic body is the `void **` a top-level one is, and a borrow of a concrete
+// parameter meets it at no instantiation — refused by name.
+//
+// A generic body is not substituted, so `let r: [&T; 1] = [&a];` is `void
+// **r[1] = {&a};` with `&a` a `long long *` at `T = i64`. Only a `&T` at the
+// top of the annotation was asked. Measured on main (2ca5eb5) and on round 4
+// alike: internal compiler error, the C backend emitted ill-typed C.
+fn f<T>(a: T) -> i64 {
+    let r: [&T; 1] = [&a];
+    7
+}
+
+fn main() {
+    print_int(f(5));
+}

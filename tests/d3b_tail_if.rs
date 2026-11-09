@@ -1806,7 +1806,7 @@ fn selective_import_excludes_a_symbol_from_the_consumers() {
 /// THE SCOPE OF THIS ROW ALSO COVERS DECLARATION IDENTITY, and it is bounded
 /// here rather than fixed. Imported generics are stored by BARE NAME
 /// (`TypeChecker.generic_functions`), and the deferred-refusal lists that
-/// src/typeck/mod.rs:4387-4408 filters carry `(name, span)` and nothing else.
+/// src/typeck/mod.rs:4571-4592 filters carry `(name, span)` and nothing else.
 /// So with two same-named imported generic `async fn`s, the refusal is raised
 /// off whichever declaration was RECORDED and the body that would have been
 /// emitted is whichever won a `HashMap`: THE REFUSAL MAY NAME A DECLARATION

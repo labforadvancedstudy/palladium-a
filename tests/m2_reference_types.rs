@@ -732,3 +732,31 @@ fn a_refusal_is_judged_by_its_own_pair() {
     ];
     check_table(&rows, "ref_own_pair");
 }
+
+/// REVIEW ROUND 4: A RECOVERED TYPE IS EXACTLY THE CHECKER'S, OR UNKNOWN. The
+/// walk typed `1 + 2.5` by its LEFT operand — an `Int` — where the checker
+/// gives mixed operands no type and code generation declares `double`, so
+/// `let r: &f64 = &v` was refused though main ran it; a binding of an unknown
+/// type is made at the C type code generation declares. And it answered no
+/// type for a generic call returning `T` or a generic struct literal, so two
+/// borrows compared through them went unjudged (`ne`): the instantiation is
+/// substituted. A `&T` inside an annotation's array or tuple is `void **` as
+/// one at the top is.
+#[test]
+fn a_recovered_type_is_the_checkers_or_unknown() {
+    let rows: Vec<(&str, &str, &str)> = vec![
+        ("`1 + 2.5`, borrowed as `&f64`", "fn f<T>(a: T) -> i64 { let v = 1 + 2.5; let r: &f64 = &v; ((*r) * 2.0) as i64 }\nfn main() { print_int(f(1)); }\n", "RUN: 7\n"),
+        ("`true + 4`, borrowed as `&i64`", "fn f<T>(a: T) -> i64 { let v = true + 4; let r: &i64 = &v; *r }\nfn main() { print_int(f(1)); }\n", "RUN: 5\n"),
+        ("`1 + 2.5` as a recovered block's value", "type N = u32;\nfn f<T>(a: T) -> N { let v = { if false { return 7; } 1 + 2.5 }; let r: &f64 = &v; print_int(((*r) * 2.0) as i64); 7 }\nfn main() { print_int(f(1)); }\n", "RUN: 7\n7\n"),
+        ("two recovered `id(..)` of reference aliases, compared", "type A = &i64;\ntype N = u32;\nfn id<T>(a: T) -> T { a }\nfn f<U>(x: U, p: A, q: A) -> N { if id({ if false { return 7; } p }) == id({ if false { return 7; } q }) { print(\"eq\"); } else { print(\"ne\"); } 7 }\nfn main() { let n = 5; let m = 5; let p: A = &n; let q: A = &m; let seed = id(p); print_int(f(1, p, q)); }\n", "REFUSED[PD0083]: in `f` instantiated at `i64`"),
+        ("a recovered `id(..)` for `print_int`", "type A = &i64;\nfn id<T>(a: T) -> T { a }\nfn f<U>(x: U, p: A) -> i64 { print_int(id({ let k: i64 = true; p })); 7 }\nfn main() { let n = 5; let p: A = &n; let seed = id(p); print_int(f(1, p)); }\n", "REFUSED[PD0042]"),
+        ("two recovered generic struct literals' fields, compared", "type A = &i64;\nstruct G<T> { tag: i64, p: T }\nfn f<U>(x: U, p: A, q: A) -> bool { G { tag: { let k: i64 = true; 1 }, p: p }.p == G { tag: { let k: i64 = true; 1 }, p: q }.p }\nfn main() { let n = 5; let m = 5; let p: A = &n; let q: A = &m; let seed = G { tag: 1, p: p }; if f(1, p, q) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]"),
+        ("`[&T; 1]` over a borrow of a concrete parameter", "fn f<T>(a: T) -> i64 { let r: [&T; 1] = [&a]; 7 }\nfn main() { print_int(f(5)); }\n", "REFUSED[PD0022]: in `f` instantiated at `i64`"),
+        ("`(&T, i64)` over a borrow of a concrete parameter", "fn f<T>(a: T) -> i64 { let r: (&T, i64) = (&a, 7); 7 }\nfn main() { print_int(f(5)); }\n", "REFUSED[PD0022]"),
+        ("`[&T; 1]` over a borrow of a `let x: T`", "fn f<T>(a: T) -> i64 { let x: T = a; let r: [&T; 1] = [&x]; 7 }\nfn main() { print_int(f(\"ok\")); }\n", "RUN: 7\n"),
+    ];
+    check_table(&rows, "ref_exact_recovery");
+    let module = [("znum.pd", "pub fn f<T>(a: T) -> i64 { let v = 1 + 2.5; let r: &f64 = &v; ((*r) * 2.0) as i64 }\n")];
+    let got = outcome_with(&module, "import znum;\nfn main() { print_int(f(1)); }\n", "ref_exact_recovery_import");
+    assert!(got.starts_with("RUN: 7\n"), "an imported generic body\n    got: {}", got);
+}

@@ -32,6 +32,13 @@
 //     for an `i64` — beside a correct `&m` for a parameter or a field declared
 //     `Type` — was judged by the reference beside it, and `siblings(x)` was
 //     refused. Main runs it and prints what this prints.
+//
+// And the way round 4 got them wrong:
+//
+//   * A RECOVERED TYPE IS THE CHECKER'S, OR UNKNOWN. `1 + 2.5` in a generic
+//     body (mixed operands, which the checker gives no type) was typed by its
+//     left operand, an `Int`, and `&v` refused against the `&f64` code
+//     generation declares; `mixed(x)` is main's `7`.
 struct G<T> {
     n: T,
 }
@@ -64,6 +71,12 @@ impl Adder {
     fn add(&self, k: i64, p: Type) -> i64 {
         *p + 2
     }
+}
+
+fn mixed<T>(t: T) -> i64 {
+    let v = 1 + 2.5;
+    let r: &f64 = &v;
+    ((*r) * 2.0) as i64
 }
 
 fn siblings<T>(t: T) -> i64 {
@@ -114,6 +127,8 @@ fn main() {
     print_int(wide(x) as i64);
 
     print_int(siblings(x));
+
+    print_int(mixed(x));
 
     print_int(x as i64);
 }
