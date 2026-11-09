@@ -451,24 +451,61 @@ impl MacroExpander {
         Ok(tokens)
     }
 
-    /// Expand macros in an item
+    /// Expand macros in an item: in EVERY body it has.
+    ///
+    /// NO CATCH-ALL, ON PURPOSE (#85). This had one arm, `Item::Function`, and
+    /// a `_ => {}` with a TODO, so an invocation in an `impl` method — inherent,
+    /// static or trait impl — was left in the tree and reached the type
+    /// checker's internal assertion ("Unexpected macro invocation in type
+    /// checking"), while the same body in a free function printed its value.
+    /// Every variant is named below, so an item kind added later fails to
+    /// compile here until somebody says whether it has a body.
     fn expand_item(&mut self, item: &mut Item) -> Result<()> {
         match item {
-            Item::Function(func) => {
-                // Expand macros in function body
-                let mut new_body = Vec::new();
-                for stmt in &func.body {
-                    new_body.extend(self.expand_stmt(stmt)?);
+            Item::Function(func) => self.expand_body(&mut func.body)?,
+            Item::Impl(impl_block) => {
+                for method in &mut impl_block.methods {
+                    self.expand_body(&mut method.body)?;
                 }
-                func.body = new_body;
             }
-            // TODO: Handle other item types that might contain expressions
-            _ => {}
+            // A default body is not type-checked or emitted yet (the type
+            // checker registers the signature only), so nothing reads it today;
+            // it is expanded anyway, so that the first pass to read it gets the
+            // body the author wrote and not an invocation, and so that an
+            // invocation the author got wrong is refused here as it is in a
+            // free function.
+            Item::Trait(trait_def) => {
+                for method in &mut trait_def.methods {
+                    if let Some(body) = &mut method.body {
+                        self.expand_body(body)?;
+                    }
+                }
+            }
+            // NOT EXPANDED, AND IT CANNOT HOLD ONE: the parser refuses a macro
+            // invocation in a `const`/`static` initialiser by name (PD0020,
+            // `validate_global_initializer`), and expanding here would hand on
+            // an initialiser that check never saw.
+            Item::Global(_) => {}
+            // No expression anywhere in these.
+            Item::Struct(_) | Item::Enum(_) | Item::TypeAlias(_) => {}
+            // Collected and removed by `expand_program` before this walk.
+            Item::Macro(_) => {}
         }
         Ok(())
     }
 
+    /// Expand macros in one body, in place. A statement may expand to several.
+    fn expand_body(&mut self, body: &mut Vec<Stmt>) -> Result<()> {
+        *body = self.expand_stmts(body)?;
+        Ok(())
+    }
+
     /// Expand macros in a statement (returns possibly multiple statements)
+    ///
+    /// NO CATCH-ALL (#85, extended), for the reason `expand_item` gives: this
+    /// ended in `_ => {}`, and an `Assign`'s TARGET and a `match` arm's GUARD
+    /// were never walked, so `a[two!()] = 1;` and `k if k == two!() => …` met
+    /// the type checker's internal assertion. Every variant is named.
     fn expand_stmt(&mut self, stmt: &Stmt) -> Result<Vec<Stmt>> {
         let mut result = vec![stmt.clone()];
 
@@ -482,8 +519,12 @@ impl MacroExpander {
                 }
             }
             Stmt::Let { value, .. } => self.expand_expr(value)?,
-            Stmt::Assign { value, .. } => self.expand_expr(value)?,
+            Stmt::Assign { target, value, .. } => {
+                self.expand_assign_target(target)?;
+                self.expand_expr(value)?;
+            }
             Stmt::Return(Some(expr)) => self.expand_expr(expr)?,
+            Stmt::Return(None) => {}
             Stmt::If {
                 condition,
                 then_branch,
@@ -509,6 +550,11 @@ impl MacroExpander {
             Stmt::Match { expr, arms, .. } => {
                 self.expand_expr(expr)?;
                 for arm in arms {
+                    // A pattern holds literals only (`PatternLiteral`), never
+                    // an expression; the guard is an expression.
+                    if let Some(guard) = &mut arm.guard {
+                        self.expand_expr(guard)?;
+                    }
                     arm.body = self.expand_stmts(&arm.body)?;
                 }
             }
@@ -516,7 +562,7 @@ impl MacroExpander {
                 *body = self.expand_stmts(body)?;
             }
             // N5-07's two statements. Without these they fell to the catch-all
-            // below, so a macro in `loop { … }` or in `break <expr>;` survived
+            // this match used to end in, so a macro in `loop { … }` or in `break <expr>;` survived
             // expansion and reached the type checker, which refuses a macro by
             // name. Measured: `let e = loop { break forty_two!(); };` was
             // "Unexpected macro invocation in type checking".
@@ -526,10 +572,27 @@ impl MacroExpander {
             Stmt::Break {
                 value: Some(expr), ..
             } => self.expand_expr(expr)?,
-            _ => {}
+            Stmt::Break { value: None, .. } | Stmt::Continue { .. } => {}
         }
 
         Ok(result)
+    }
+
+    /// Expand macros in the expressions an assignment's target holds: the
+    /// array and index of `a[i] = …`, the object of `o.f = …`, the pointer of
+    /// `*p = …`.
+    fn expand_assign_target(&mut self, target: &mut crate::ast::AssignTarget) -> Result<()> {
+        use crate::ast::AssignTarget;
+        match target {
+            AssignTarget::Ident(_) => {}
+            AssignTarget::Index { array, index } => {
+                self.expand_expr(array)?;
+                self.expand_expr(index)?;
+            }
+            AssignTarget::FieldAccess { object, .. } => self.expand_expr(object)?,
+            AssignTarget::Deref { expr } => self.expand_expr(expr)?,
+        }
+        Ok(())
     }
 
     /// Expand statements
@@ -693,17 +756,44 @@ impl MacroExpander {
             Expr::Match { expr, arms, .. } => {
                 self.expand_expr(expr)?;
                 for arm in arms {
+                    if let Some(guard) = &mut arm.guard {
+                        self.expand_expr(guard)?;
+                    }
                     arm.body = self.expand_stmts(&arm.body)?;
                     if let Some(v) = &mut arm.value {
                         self.expand_expr(v)?;
                     }
                 }
             }
+            // The type is not walked: an array length in a type is a literal or
+            // a name (`ArraySize::Expr` is never built by the parser).
             Expr::Cast { expr, .. } => {
                 self.expand_expr(expr)?;
             }
-            // Literals don't need expansion
-            _ => {}
+            // NO CATCH-ALL (#85, extended). These three fell to a `_ => {}`
+            // that was meant for literals, so `(two!(), 1)`, `pair!().0` and
+            // `two!().await` kept their invocation: the first two met the type
+            // checker's internal assertion; `.await` is refused before its
+            // operand is read, and is expanded anyway so nothing downstream
+            // can meet one.
+            Expr::Tuple { elements, .. } => {
+                for elem in elements {
+                    self.expand_expr(elem)?;
+                }
+            }
+            Expr::TupleIndex { expr, .. } => {
+                self.expand_expr(expr)?;
+            }
+            Expr::Await { expr, .. } => {
+                self.expand_expr(expr)?;
+            }
+            // Leaves: nothing below them to expand.
+            Expr::String(_)
+            | Expr::Integer(_)
+            | Expr::Float(_)
+            | Expr::Char(_)
+            | Expr::Bool(_)
+            | Expr::Ident(_) => {}
         }
         Ok(())
     }

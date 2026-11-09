@@ -120,7 +120,7 @@ tests/m2_value_form_lowering.rs	an_enum_owned_method_is_reachable_by_its_path_fo
 tests/m3_imported_calls.rs	test_a_block_local_shadow_does_not_change_the_outer_bindings_copy_class	owed	M4	an inner `let s: i64` made the outer struct `s` look Copy
 tests/m3_imported_calls.rs	test_a_generic_call_resolves_to_its_own_monomorphization	owed	M4	the call was lowered to the wrong monomorphization and gcc is what noticed
 tests/m3_imported_calls.rs	test_a_generic_struct_referenced_by_its_bare_name_is_emitted	owed	M4	a generic struct named without type arguments emitted C for an undefined type
-tests/m3_imported_calls.rs	test_a_macro_in_an_imported_body_is_never_expanded	owed	M4	a macro in an imported body was not expanded
+tests/m3_imported_calls.rs	test_a_macro_in_an_imported_body_is_never_expanded	paid	-	-
 tests/m3_imported_calls.rs	test_a_module_can_use_its_own_private_items	owed	M4	a module could not call its own private function
 tests/m3_imported_calls.rs	test_a_module_can_use_what_it_imports	owed	M4	a module could not call what it imported
 tests/m3_imported_calls.rs	test_a_module_in_a_subdirectory_can_be_imported	owed	M4	a module in a subdirectory could not be imported

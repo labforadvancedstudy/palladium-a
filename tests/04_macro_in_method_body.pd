@@ -1,0 +1,157 @@
+// A macro invocation inside a METHOD body expands, compiles and runs (#85).
+//
+// `MacroExpander::expand_item` (src/macros/mod.rs) walked `Item::Function`
+// and nothing else, so an invocation in an `impl` method was left in the tree
+// and reached the type checker's internal assertion: "Unexpected macro
+// invocation in type checking - macros should be expanded before this phase".
+// The same body in a free function printed 42, which is the first line below.
+// Every line of this transcript was that refusal on d5166e8.
+//
+// tests/04_macro_in_value_position.pd is the sibling for the expander's walk
+// over VALUE forms inside one body; this one is about which BODIES it walks.
+// The negative half (a refusal in a method is the free function's refusal,
+// word for word) and the imported-module half are in
+// tests/m2_macro_expansion_reach.rs, because both need two programs or two
+// files to state.
+
+macro two!() { 2 }
+macro say!(v) { print_int($v); }
+macro pair!() { (2, 40) }
+// A struct literal in a macro body: each expansion is parsed anew, so each is
+// its own literal (`LiteralId`), in a method as in a free function.
+macro origin!() { Point { x: 1, y: 2 } }
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+enum Pick {
+    First,
+    Second,
+}
+
+// A trait whose method takes no `self`: a trait declaration does not parse
+// `self` or `&self` today, and the impl below is what this file is about.
+trait Get {
+    fn get(s: S) -> i64;
+}
+
+struct S {
+    n: i64,
+}
+
+// The issue's program, a static method and a statement body.
+impl S {
+    fn plus_two(&self) -> i64 {
+        return two!() + self.n;
+    }
+
+    fn make() -> S {
+        return S { n: two!() + 40 };
+    }
+
+    fn show(&self) {
+        let n = self.n;
+        say!(n);
+    }
+
+    // Every position inside one method: an `if` branch, a `while` body, a
+    // `loop` break value, a match arm, a value block and a value `if`.
+    fn walk(&self) -> i64 {
+        let mut t = 0;
+        if self.n > two!() {
+            t = t + two!();
+        } else {
+            t = t + 100;
+        }
+        let mut i = 0;
+        while i < two!() {
+            i = i + 1;
+            t = t + 1;
+        }
+        let e = loop {
+            break two!();
+        };
+        let p = Pick::Second;
+        match p {
+            Pick::First => {
+                t = t + 100;
+            }
+            Pick::Second => {
+                t = t + two!();
+            }
+        }
+        let k = match p {
+            Pick::First => 100,
+            Pick::Second => two!(),
+        };
+        let b = { two!() };
+        let v = if self.n > 0 { two!() } else { 100 };
+        return t + e + k + b + v + self.n;
+    }
+
+    // Inside expressions the walk did not reach either: a tuple element, the
+    // tuple a tuple index reads, a match guard in statement and in value
+    // position, and the index of an assignment target. (`q` is annotated
+    // because a tuple index over a tuple literal needs one with or without a
+    // macro.)
+    fn positions(&self) -> i64 {
+        let t = (two!(), self.n);
+        let q: i64 = pair!().0;
+        let mut a = [0, 0, 0];
+        a[two!()] = t.0 + t.1;
+        let mut g = 0;
+        match self.n {
+            k if k > two!() => {
+                g = 1;
+            }
+            _ => {
+                g = 100;
+            }
+        }
+        let h = match t.0 {
+            k if k == two!() => 1,
+            _ => 100,
+        };
+        return a[2] * g * h + q - two!();
+    }
+
+    fn corner_sum(&self) -> i64 {
+        let a = origin!();
+        let b = origin!();
+        return a.x + a.y + b.x + b.y + self.n;
+    }
+}
+
+impl Get for S {
+    fn get(&self) -> i64 {
+        return two!() + self.n;
+    }
+}
+
+fn main() {
+    let s = S { n: 40 };
+    print("an inherent method, as the issue wrote it:");
+    print_int(s.plus_two());
+
+    print("a static method, a struct literal around a macro:");
+    let m = S::make();
+    print_int(m.n);
+
+    print("a trait impl method:");
+    print_int(s.get());
+
+    print("statement position, a statement body:");
+    s.show();
+
+    print("if, while, loop break, match arm, value block, value if:");
+    let w = S { n: 30 };
+    print_int(w.walk());
+
+    print("a struct literal in the macro body, expanded twice:");
+    print_int(s.corner_sum());
+
+    print("a tuple, a tuple index, two match guards, an assignment target:");
+    print_int(s.positions());
+}

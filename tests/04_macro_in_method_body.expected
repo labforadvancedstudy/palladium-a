@@ -1,0 +1,14 @@
+an inherent method, as the issue wrote it:
+42
+a static method, a struct literal around a macro:
+42
+a trait impl method:
+42
+statement position, a statement body:
+40
+if, while, loop break, match arm, value block, value if:
+44
+a struct literal in the macro body, expanded twice:
+46
+a tuple, a tuple index, two match guards, an assignment target:
+42

@@ -565,28 +565,34 @@ fn test_the_local_twin_of_the_generic_use_after_move_is_also_refused() {
 /// The guard on the other side, and the reason the predicate is "instantiated"
 /// rather than "check every generic body".
 ///
-/// Imported ASTs are never macro-expanded — the driver expands the top-level
-/// AST before it resolves modules — so walking a generic body that holds a
-/// macro reports the internal "macros should be expanded before this phase".
-/// Checking every generic body unconditionally turned a compilation `main`
-/// COMPLETES into a hard error, on a module function nothing calls.
+/// Until #85 imported ASTs were never macro-expanded — the driver expanded the
+/// top-level AST before it resolved modules — so walking a generic body that
+/// held a macro reported the internal "macros should be expanded before this
+/// phase". Checking every generic body unconditionally turned a compilation
+/// `main` COMPLETES into a hard error, on a module function nothing calls. The
+/// resolver expands each module now, so the macro no longer reaches this pass,
+/// and the body also moves `a` twice: an expanded macro alone would pass this
+/// row whether or not the body is skipped, and the use-after-move is what
+/// still tells the two apart (instantiating `gen` is refused with "Use of moved
+/// value: a").
 ///
-/// Nothing emits this body either, so skipping it is the emission rule and not
-/// an exception to it. Instantiating the same body fails in both trees, so the
-/// rule costs no accepted program.
+/// Nothing emits this body, so skipping it is the emission rule and not an
+/// exception to it.
 #[test]
 fn test_an_uninstantiated_imported_generic_with_a_macro_still_compiles() {
     let (compiled, output, _stdout) = compile_and_run(
         &[(
             "g2.pd",
-            "pub fn gen<T>(x: T) -> T { let v = vec!(7); return x; }\n",
+            "pub struct S { v: i64 }\n\
+             pub fn gen<T>(x: T) -> T { let v = vec!(7); \
+             let a: S = S{v:7}; let b: S = a; let c: S = a; return x; }\n",
         )],
         "import g2;\n\nfn main() { print_int(1); }\n",
     );
     assert!(
         compiled,
-        "a generic imported body nothing instantiates was walked anyway, and its \
-         unexpanded macro killed a compilation that emits none of it; \
+        "a generic imported body nothing instantiates was walked anyway, and an \
+         error in it killed a compilation that emits none of it; \
          compiler said:\n{}",
         output
     );
@@ -641,9 +647,10 @@ fn test_a_local_generic_is_not_vetoed_by_a_displaced_imported_twin() {
 /// reach this pass by different routes and a fix could close one and not the
 /// other.
 ///
-/// An imported body is never macro-expanded, so walking a displaced one reports
-/// the internal "macros should be expanded before this phase" — again over a
-/// body nothing emits.
+/// Until #85 an imported body was never macro-expanded, so walking a displaced
+/// one reported the internal "macros should be expanded before this phase" —
+/// again over a body nothing emits. The resolver expands each module now; the
+/// row stays as the guard that a displaced body is not checked.
 #[test]
 fn test_a_displaced_imported_twin_with_a_macro_does_not_veto_the_build() {
     let (compiled, output, stdout) = compile_and_run(
@@ -1032,7 +1039,7 @@ fn test_imported_function_bodies_are_type_checked() {
 }
 
 /// A module's own imports are resolved and then discarded:
-/// `src/resolver/mod.rs:203` is `let _sub_modules = self.resolve_program(&ast)?;`,
+/// `src/resolver/mod.rs:212` is `let _sub_modules = self.resolve_program(&ast)?;`,
 /// and `resolve_program` (`src/resolver/mod.rs:70-95`) builds its returned map
 /// from the TOP-LEVEL program's `program.imports` alone. The sub-module lands in
 /// the resolver's private cache and never reaches typeck, the borrow checker or
@@ -1042,7 +1049,7 @@ fn test_imported_function_bodies_are_type_checked() {
 /// It works if `main` also imports `liba` directly — which is the diamond case,
 /// and is why this is a missing hop rather than a missing feature.
 #[test]
-#[ignore = "XFAIL: transitive imports are resolved and thrown away — src/resolver/mod.rs:203 discards the recursive result into `_sub_modules` and src/resolver/mod.rs:70-95 returns only the top-level program's own imports, so `main -> libb -> liba` emits `outer`'s body calling `base` and gcc reports \"call to undeclared function 'base'\" (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: transitive imports are resolved and thrown away — src/resolver/mod.rs:212 discards the recursive result into `_sub_modules` and src/resolver/mod.rs:70-95 returns only the top-level program's own imports, so `main -> libb -> liba` emits `outer`'s body calling `base` and gcc reports \"call to undeclared function 'base'\" (owned by M4, cross-file module imports)"]
 fn test_a_module_can_use_what_it_imports() {
     let (compiled, output, stdout) = compile_and_run(
         &[
@@ -1104,26 +1111,19 @@ fn test_a_module_can_use_its_own_private_items() {
     assert_eq!(stdout.as_deref(), Some("4\n"), "compiler said:\n{}", output);
 }
 
-/// An imported module's AST is never macro-expanded, and no pass says so.
+/// An imported module's AST is macro-expanded (#85; this row was an XFAIL owed
+/// to M4 until then, and keeps its name so the `paid` row in
+/// tests/rust-debt-manifest.txt is the row that was owed).
 ///
-/// The driver expands macros over the top-level AST (`src/driver/mod.rs:80-81`)
-/// and resolves modules AFTER that (`src/driver/mod.rs:89-97`); the resolver
-/// itself only lexes and parses (`src/resolver/mod.rs:145-148`). So every
-/// imported body still carries `Expr::MacroInvocation` nodes when the checkers
-/// walk it, and every pass that meets one reports the internal error "macros
-/// should be expanded before this phase" — a message about compiler phases,
-/// shown to a user who wrote a macro in a library.
-///
-/// THIS IS DECLARED RATHER THAN GUARDED. The generic case WAS a regression this
-/// branch introduced and is fixed: the third pass now skips generic imported
-/// bodies, matching `TypeChecker::check_function` and codegen, so
-/// `pub fn gen<T>(..) { vec!(7) }` no longer kills a compilation that never
-/// calls it. The non-generic case below is broken on `main` too — the macro
-/// reaches codegen there instead — so nothing regressed, and a guard would only
-/// move which phase says it. The honest fix is expanding module ASTs in the
-/// resolver, which is M3's work.
+/// The driver expands macros over the top-level AST and resolves modules AFTER
+/// that, and the resolver only lexed and parsed each module, so every imported
+/// body still carried `Expr::MacroInvocation` nodes when the checkers walked it
+/// and the first pass to meet one reported the internal error "macros should be
+/// expanded before this phase" — a message about compiler phases, shown to a
+/// user who wrote a macro in a library. The resolver now runs the expander over
+/// each module it loads, with the module's own macros;
+/// `tests/m2_macro_expansion_reach.rs` covers what those can and cannot see.
 #[test]
-#[ignore = "XFAIL: an imported module's AST is never macro-expanded — src/driver/mod.rs:80-81 expands the top-level AST BEFORE module resolution at src/driver/mod.rs:89-97, and src/resolver/mod.rs:145-148 only lexes and parses, so a macro in a public imported body reaches the checkers as Expr::MacroInvocation and reports the internal \"macros should be expanded before this phase\"; on main the same program reaches codegen and reports it there (owned by M4, cross-file module imports)"]
 fn test_a_macro_in_an_imported_body_is_never_expanded() {
     let (compiled, output, stdout) = compile_and_run(
         &[(

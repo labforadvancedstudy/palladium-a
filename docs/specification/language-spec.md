@@ -1742,11 +1742,11 @@ against `tests/conformance-manifest.txt`, a **closed inventory** declaring what 
 expected to do. Current status, re-measured on the tree integrating `feat/m2-xfail-six`
 (2026-08-31):
 
-**verified 89 · untranscribed 0 · vacuous 6 · xfail 6 · reject 122 · skip 2 · failures 0**, over 225
+**verified 90 · untranscribed 0 · vacuous 6 · xfail 6 · reject 122 · skip 2 · failures 0**, over 226
 fixtures. (WT-01 unit W1c added two `run` fixtures, `tests/04_self_field_reads.pd` and
 `tests/04_self_type_positions.pd`: `Self` now means the impl's type in the borrow checker and in a
 method body too. Then `fix/projection-move-scope` added one `run` fixture, `tests/regression/projection_move_scope.pd`:
-a move out of a field that used to outlive its function, measured on the merged tree 2026-10-07. Then WT-01 unit W2a added one `run` fixture, `tests/regression/enum_in_composites.pd`: a user `enum` inside an array, a tuple, a reference, a method signature and a generic instantiation, each refused before with one type named on both sides. The su2 round of `feat/m2-xfail-six` added five: `tests/04_self_place.pd`, the first
+a move out of a field that used to outlive its function, measured on the merged tree 2026-10-07. Then WT-01 unit W2a added one `run` fixture, `tests/regression/enum_in_composites.pd`: a user `enum` inside an array, a tuple, a reference, a method signature and a generic instantiation, each refused before with one type named on both sides. Then issue #85 added one `run` fixture, `tests/04_macro_in_method_body.pd`: a macro invocation in a method body, which the expander never walked. The su2 round of `feat/m2-xfail-six` added five: `tests/04_self_place.pd`, the first
 fixture in which a method taking a reference receiver links at all, and four `reject`s for the
 writes through a receiver the type checker refuses — through `&self`, through a by-value
 `self`, `self` as an assignment target and `*self` as a place. Its review round added

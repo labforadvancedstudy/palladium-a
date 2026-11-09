@@ -496,19 +496,19 @@ impl BorrowChecker {
                     // codegen monomorphizes from.
                     //
                     // The uninstantiated case still has to be skipped, and that is
-                    // not this defect wearing a hat: imported ASTs are never
-                    // macro-expanded (the driver expands the top-level AST before it
-                    // resolves modules), so walking `pub fn gen<T>(..) { vec!(7) }`
-                    // that nothing calls turned a compilation `main` COMPLETES into
-                    // "Unexpected macro invocation in borrow checking". Nothing emits
-                    // that body either, so skipping it is the emission rule, not an
-                    // exception to it. When the same body IS instantiated the
-                    // compilation already fails in codegen with the macro error, so
-                    // checking it here moves the phase and not the verdict. The
-                    // underlying asymmetry is declared in
-                    // `tests/m3_imported_calls.rs`
-                    // (`test_a_macro_in_an_imported_body_is_never_expanded`); the
-                    // honest fix is expanding module ASTs.
+                    // not this defect wearing a hat: nothing emits that body, so
+                    // skipping it is the emission rule, not an exception to it.
+                    // Until #85 it was also what kept an unexpanded macro out of
+                    // this pass — imported ASTs were never macro-expanded, and
+                    // walking `pub fn gen<T>(..) { vec!(7) }` that nothing calls
+                    // turned a compilation `main` COMPLETES into "Unexpected macro
+                    // invocation in borrow checking". The resolver expands each
+                    // module now (`tests/m3_imported_calls.rs`,
+                    // `test_a_macro_in_an_imported_body_is_never_expanded`, paid),
+                    // so an instantiated body is checked here like any emitted one:
+                    // `test_an_uninstantiated_imported_generic_with_a_macro_still_compiles`
+                    // carries a use-after-move for that reason, which this skip
+                    // keeps out of the uninstantiated build and nothing else does.
                     // The ORIGIN, not just the name. `generic_functions` in the
                     // type checker is keyed by bare name and last-writer-wins,
                     // with locals walked after imports, so a local `pick<T>`

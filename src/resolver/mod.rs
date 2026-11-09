@@ -145,7 +145,16 @@ impl ModuleResolver {
         let mut lexer = Lexer::new(&source);
         let tokens = lexer.collect_tokens()?;
         let mut parser = Parser::new(tokens);
-        let ast = parser.parse()?;
+        let mut ast = parser.parse()?;
+
+        // A MODULE IS EXPANDED LIKE THE FILE THAT IMPORTS IT (#85), with its
+        // own macros: the driver expands the importing file and nothing
+        // expanded this one, so a module's macro in its own `pub fn` reached
+        // the type checker as "Unexpected macro invocation in type checking".
+        // A fresh expander, because a macro is not exported: the importing
+        // file's macros are not visible here, and this file's are not visible
+        // there.
+        crate::macros::MacroExpander::new().expand_program(&mut ast)?;
 
         // Extract exported items (those marked as 'pub')
         let mut exports = HashSet::new();

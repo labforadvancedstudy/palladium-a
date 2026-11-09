@@ -19,7 +19,7 @@ bootstrap/v2_full_compiler/ast.pd	83-83	docs/contributing/MILESTONES.md	f7f1ef90
 bootstrap/v2_full_compiler/ast.pd	83-83	src/lexer/token.rs	f7f1ef90bc4b	else_branch: Option<Vec<Stmt>>,
 bootstrap/v2_full_compiler/parser.pd	178-178	docs/specification/bootstrap-subset.md	0f84a753b824	let op = if matches!(op_token.token_type, TokenType::Star) {
 docs/contributing/MILESTONES.md	1062-1062	tests/m3_imported_calls.rs	f823ac7a9feb	## M3 — Traits and generics (v0.6.0)
-docs/contributing/MILESTONES.md	1122-1129	tests/m3_imported_calls.rs	91ce4d6a55e1	## M4 — Modules (v0.7.0) **Waits on**: C0. Split out of the old combined mile ...  are su3's type-alias rows, owned by M3) and the vacuous `12_modules_imports`.
+docs/contributing/MILESTONES.md	1122-1129	tests/m3_imported_calls.rs	12e351662ab0	## M4 — Modules (v0.7.0) **Waits on**: C0. Split out of the old combined mile ...  are su3's type-alias rows, owned by M3) and the vacuous `12_modules_imports`.
 docs/marketing/Turing.md	67-67	docs/reference/features/advanced/totality-checking.md	1825edf6bd0c	By outlawing `unsafe` blocks inside `#![total(strict)]` crates, the language
 docs/marketing/avp_marketing.md	17-20	docs/reference/features/advanced/totality-checking.md	3bc1a629dd9b	#![total(strict)] // Turing's vision realized: Provable termination fn fibonacci(n: nat) -> nat { #[decreases(n)] // Compiler PROVES this terminates
 docs/specification/bootstrap-subset.md	132-132	src/typeck/mod.rs	22b89ce977e8	**Generics**: excluded from PBS-1. They monomorphize in limited cases, but generic-argument
@@ -223,8 +223,6 @@ src/driver/mod.rs	49-49	docs/reference/features/feature-index.toml	9ec5ae2ed903	
 src/driver/mod.rs	49-49	docs/specification/language-spec.md	9ec5ae2ed903	pub fn compile_string(&self, source: &str, filename: &str) -> Result<PathBuf> {
 src/driver/mod.rs	53-53	docs/reference/features/feature-index.toml	56f8f09ac839	// Phase 1: Lexing
 src/driver/mod.rs	59-59	docs/reference/features/feature-index.toml	0e752a9d643b	println!(
-src/driver/mod.rs	80-81	tests/m3_imported_calls.rs	aab6158f94e2	let mut macro_expander = MacroExpander::new(); macro_expander.expand_program(&mut ast)?;
-src/driver/mod.rs	89-97	tests/m3_imported_calls.rs	d5c2bf511389	let resolved_modules = if !ast.imports.is_empty() { println!("📦 Resolving mod ... ln!(" Resolved {} modules", modules.len()); modules } else { HashMap::new() };
 src/effects/mod.rs	151-151	docs/reference/features/async-system/async-as-effect.md	ce3bfad04493	pub fn analyze_function(&mut self, func: &Function) -> Result<EffectSet> {
 src/effects/mod.rs	16-29	docs/reference/features/async-system/async-as-effect.md	e985896b26e1	pub enum Effect { /// IO operations (file, network, console) IO, /// Memory a ... ptions Panic, /// Asynchronous operations Async, /// Unsafe operations Unsafe,
 src/effects/mod.rs	298-298	docs/reference/features/async-system/async-as-effect.md	f9149f2ca4bd	Expr::Call { func, args, .. } => {
@@ -361,8 +359,7 @@ src/parser/mod.rs	986-986	docs/reference/features/async-system/async-as-effect.m
 src/resolver/mod.rs	105-118	tests/d3b_tail_if.rs	2efdeab49c0e	/// Filter module info to only include specified items fn filter_module_info( ... .filter(|export_name| item_set.contains(*export_name)) .cloned() .collect(), }
 src/resolver/mod.rs	105-118	tests/m3_imported_calls.rs	2efdeab49c0e	/// Filter module info to only include specified items fn filter_module_info( ... .filter(|export_name| item_set.contains(*export_name)) .cloned() .collect(), }
 src/resolver/mod.rs	113-113	tests/m3_imported_calls.rs	e358d5e52a06	.exports
-src/resolver/mod.rs	145-148	tests/m3_imported_calls.rs	0b31c8cef0ac	let mut lexer = Lexer::new(&source); let tokens = lexer.collect_tokens()?; let mut parser = Parser::new(tokens); let ast = parser.parse()?;
-src/resolver/mod.rs	203-203	tests/m3_imported_calls.rs	5b864e1c2dec	let _sub_modules = self.resolve_program(&ast)?;
+src/resolver/mod.rs	212-212	tests/m3_imported_calls.rs	5b864e1c2dec	let _sub_modules = self.resolve_program(&ast)?;
 src/resolver/mod.rs	37-37	tests/m3_imported_calls.rs	0814f00a09ee	PathBuf::from("."), // Current directory
 src/resolver/mod.rs	51-51	docs/reference/features/feature-index.toml	891ba0920fa5	// Check for PALLADIUM_PATH environment variable
 src/resolver/mod.rs	51-52	docs/specification/language-spec.md	07ec7e442f32	// Check for PALLADIUM_PATH environment variable if let Ok(pd_path) = std::env::var("PALLADIUM_PATH") {
@@ -424,7 +421,7 @@ src/typeck/mod.rs	744-748	docs/specification/language-spec.md	d9166315602a	crate
 stdlib/MANIFEST.tsv	1-1	docs/reference/features/feature-index.toml	a9011a68453c	# Pinned compile verdict for every .pd under stdlib/.
 tests/advanced_features_test.rs	340-340	docs/contributing/MILESTONES.md	9efc88caac80	#[ignore = "XFAIL: `macro_rules!` — grammar.ebnf:181 defines only `macro name ... ests/reject/macro_rules.pd. Retiring it is the owner's call, not this test's"]
 tests/compiler_comprehensive_test.rs	633-633	docs/contributing/MILESTONES.md	33e1b803ccb2	fn test_missing_return_is_an_error() {
-tests/conformance-manifest.txt	129-129	docs/contributing/MILESTONES.md	a7538c654525	tests/projects/hello_pdm/tests/test_math.pd xfail compile Undefined function: ... enerics. This is a correction against the ownership roster, not a reassignment
+tests/conformance-manifest.txt	130-130	docs/contributing/MILESTONES.md	a7538c654525	tests/projects/hello_pdm/tests/test_math.pd xfail compile Undefined function: ... enerics. This is a correction against the ownership roster, not a reassignment
 tests/e2e_test.rs	277-277	docs/contributing/MILESTONES.md	da9d5556e31e	fn test_c_keyword_identifier_still_links() {
 tests/e2e_test.rs	322-322	docs/contributing/MILESTONES.md	42427853e62c	fn test_tail_if_function_emits_a_return() {
 tests/m3_imported_calls.rs	1245-1249	docs/contributing/citation-and-predicate-debt.md	c6a8f8acac08	/// filter (`src/resolver/mod.rs:113` is the only hit in `src/`). Every consu ... / `register_imported_functions`. So `import lib2::{helper};` imports the whole
