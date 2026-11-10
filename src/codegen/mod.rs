@@ -343,6 +343,11 @@ pub struct CodeGenerator {
     /// imported public generic, unless a local function of the name overwrites it, and a
     /// local generic. A call of one is emitted only as one of its instantiations.
     generic_templates: std::collections::HashSet<String>,
+    /// The generic structs this program can build a literal of, local and imported. A
+    /// literal of one with no instantiation at all — in a generic body, of a value the
+    /// type checker names no type argument by — is refused by name, not emitted as the
+    /// `struct G` nothing defines (review round 7).
+    generic_struct_names: std::collections::HashSet<String>,
     /// The bindings of the function being generated whose EXACT C type — the
     /// width of the value it holds, which picks an instantiation
     /// (`exact_c_type_in`) — is not the C type `variables` tracks, by name:
@@ -956,6 +961,7 @@ impl CodeGenerator {
             call_records: crate::typeck::CallRecords::default(),
             emitting_instantiation: std::collections::HashMap::new(),
             generic_templates: std::collections::HashSet::new(),
+            generic_struct_names: std::collections::HashSet::new(),
             param_exact_c: std::collections::HashMap::new(),
         })
     }
@@ -2273,7 +2279,7 @@ impl CodeGenerator {
     ///
     /// Refusing the *assignment* is not enough on its own: nothing between the
     /// front end and here re-checks a reference's mutability - the typechecker
-    /// drops it (`src/typeck/mod.rs:4954`, `mutable: _`) and the borrow checker
+    /// drops it (`src/typeck/mod.rs:4975`, `mutable: _`) and the borrow checker
     /// gives every parameter a plain owned place
     /// (`src/ownership/borrow_checker.rs:641-643`). So `fn f(xs: &[i64; 3])` could
     /// call `fn mutate(xs: &mut [i64; 3])` and have the write performed under
@@ -3279,6 +3285,8 @@ impl CodeGenerator {
                                 && struct_def.lifetime_params.is_empty()
                             {
                                 imported_defs.push((struct_def.name.clone(), item.clone()));
+                            } else if !struct_def.type_params.is_empty() {
+                                self.generic_struct_names.insert(struct_def.name.clone());
                             }
                         }
                     }
@@ -3313,6 +3321,9 @@ impl CodeGenerator {
                     // Skip generic structs - they should only be generated when instantiated
                     if struct_def.type_params.is_empty() && struct_def.lifetime_params.is_empty() {
                         local_defs.push((struct_def.name.clone(), item.clone()));
+                        self.generic_struct_names.remove(&struct_def.name);
+                    } else if !struct_def.type_params.is_empty() {
+                        self.generic_struct_names.insert(struct_def.name.clone());
                     }
                 }
                 Item::Enum(enum_def) => {
@@ -7418,6 +7429,22 @@ impl CodeGenerator {
                     self.check_call_array_capabilities(name, args)?;
                 }
 
+                // Issue #84's lending rule is about the ARGUMENTS, whichever instantiation
+                // a generic's call is of, so it is asked before `instantiation_called`: a
+                // shared tuple reference lent to a generic's `&mut (T, T)` is refused as
+                // that, not as an argument no instantiation holds exactly (`set(*p, 97)`
+                // with `p: &(i64, i64)`). The argument loop below asks it again for the
+                // marker it keeps while the argument is emitted.
+                if let Expr::Ident(name) = func.as_ref() {
+                    if self.is_generic_template(name) {
+                        if let Some((params, _)) = self.functions.get(name) {
+                            for (i, arg) in args.iter().enumerate() {
+                                self.check_tuple_reference_lending(params.get(i), arg, i, name)?;
+                            }
+                        }
+                    }
+                }
+
                 // Generate function name
                 match func.as_ref() {
                     Expr::Ident(name) => {
@@ -7815,6 +7842,9 @@ impl CodeGenerator {
                     Self::instantiation_matched(name, found.as_deref(), instantiations)
                         .map_err(|e| e.with_code(DiagnosticCode::GenericUseHeldExactly))?
                         .to_string()
+                } else if self.generic_struct_names.contains(name) {
+                    return Err(Self::unrecorded_literal_refused(name, &[])
+                        .with_code(DiagnosticCode::GenericUseHeldExactly));
                 } else {
                     // Use the original name for non-generic structs
                     name.clone()
@@ -8279,7 +8309,7 @@ impl CodeGenerator {
             // is never given an instantiation of one of them by its C type alone.
             let generic_at: Vec<bool> = candidates
                 .first()
-                .and_then(|type_args| self.instantiated_parameters(func_name, type_args))
+                .and_then(|type_args| self.instantiated_parameters(func_name, type_args, &[]))
                 .map(|params| params.into_iter().map(|(_, _, generic)| generic).collect())
                 .unwrap_or_default();
             let shared: Option<Option<String>> = args.iter().enumerate().find_map(|(i, arg)| {
@@ -8401,7 +8431,7 @@ impl CodeGenerator {
     /// whose C type is not known exactly fits nothing, so its call is refused
     /// by name rather than guessed.
     fn fits(&self, func_name: &str, type_args: &[String], args: &[Expr]) -> bool {
-        let Some(params) = self.instantiated_parameters(func_name, type_args) else {
+        let Some(params) = self.instantiated_parameters(func_name, type_args, args) else {
             return false;
         };
         params.len() == args.len()
@@ -8420,24 +8450,42 @@ impl CodeGenerator {
         matches!(base, "int" | "long long")
     }
 
+    /// The type the type argument `arg` names, read back from the name the
+    /// type checker spells it by (`TypeChecker::checker_type_to_string`): each
+    /// primitive by its own name — `f32`, `f64` and `char` as well as the
+    /// integers, `bool` and `String` — and any other name as the struct, enum
+    /// or alias it is.
+    ///
+    /// THE ONE READING, for every place a type argument becomes a type
+    /// (`substitute_type`'s two arms, `type_argument_kind`). `substitute_type`
+    /// read the integers, `bool` and `String` only, so an instantiation at
+    /// `f64` was `struct f64 id__f64(struct f64 x)` and one at `char` an
+    /// anonymous struct: gcc. No program main ran had one, until the walk of
+    /// a generic body (#86) instantiated `id<f64>` for `id(p)`, `p: f64`,
+    /// beside an alias's `id<F>`, the instantiation main emitted that call as:
+    /// unused or not, it broke a program main ran (review round 7).
+    fn type_argument_type(arg: &str) -> Type {
+        match arg {
+            "i32" | "I32" => Type::I32,
+            "i64" | "I64" => Type::I64,
+            "u32" | "U32" => Type::U32,
+            "u64" | "U64" => Type::U64,
+            "f32" => Type::F32,
+            "f64" => Type::F64,
+            "bool" | "Bool" => Type::Bool,
+            "char" => Type::Char,
+            "string" | "String" => Type::String,
+            other => Type::Custom(other.to_string()),
+        }
+    }
+
     /// The kind of value the type argument `arg` is: `int` for an integer of
     /// any width, `bool`, `char`, `float`, `String`, a struct's or an enum's
     /// name — through the aliases it names, and a reference as its referent,
     /// as the type checker's record reads it. Any other argument is its own
     /// kind.
     fn type_argument_kind(&self, arg: &str) -> String {
-        let mut ty = match arg {
-            "i32" => Type::I32,
-            "i64" => Type::I64,
-            "u32" => Type::U32,
-            "u64" => Type::U64,
-            "f32" => Type::F32,
-            "f64" => Type::F64,
-            "bool" => Type::Bool,
-            "char" => Type::Char,
-            "String" => Type::String,
-            other => Type::Custom(other.to_string()),
-        };
+        let mut ty = Self::type_argument_type(arg);
         for _ in 0..64 {
             ty = match ty {
                 Type::Custom(name) => match self.type_aliases.get(&name) {
@@ -9081,7 +9129,7 @@ impl CodeGenerator {
         type_args: &[String],
         args: &[Expr],
     ) -> Option<(String, String, String)> {
-        let params = self.instantiated_parameters(func_name, type_args)?;
+        let params = self.instantiated_parameters(func_name, type_args, args)?;
         params.into_iter().zip(args).find_map(|((param, wanted, generic), arg)| {
             if !generic {
                 return None;
@@ -9099,10 +9147,20 @@ impl CodeGenerator {
     /// Only those are the record's business: a parameter written as a concrete
     /// type is checked by the type checker as any call's is (`half(10, 2)`
     /// with `n: i32` hands the literal to an `int`, on main as here).
+    ///
+    /// A reference parameter whose argument is a PLACE is handed the place's
+    /// address by the call (`reference_param_needs_address`), so what that
+    /// argument has to be exactly is the place's type, the referent's: `set(t,
+    /// 97)` against `fn set<T>(q: &mut (T, T), x: T)` is emitted `set__i64(&t,
+    /// 97LL)`. Compared with the pointer, every such call was refused — `bump(x,
+    /// 5)` with `q: &mut T`, which main ran, and once issue #84 lowered tuple
+    /// references, `set(t, 97)`, which main f2d1dd3 runs. `args` empty: no
+    /// argument decides, and each parameter is its declared C type.
     fn instantiated_parameters(
         &self,
         func_name: &str,
         type_args: &[String],
+        args: &[Expr],
     ) -> Option<Vec<(String, String, bool)>> {
         let (_, _, template) = self
             .generic_instantiations
@@ -9118,10 +9176,20 @@ impl CodeGenerator {
             template
                 .params
                 .iter()
-                .map(|(param, ty)| {
+                .enumerate()
+                .map(|(i, (param, ty))| {
+                    let concrete = self.substitute_type(ty, &type_map);
+                    let held = match (&concrete, args.get(i)) {
+                        (Type::Reference { inner, .. }, Some(arg))
+                            if Self::reference_param_needs_address(&concrete, arg) =>
+                        {
+                            inner.as_ref().clone()
+                        }
+                        _ => concrete,
+                    };
                     (
                         param.clone(),
-                        self.type_to_c(&self.substitute_type(ty, &type_map)),
+                        self.type_to_c(&held),
                         Self::names_a_type_parameter(ty, &template.type_params),
                     )
                 })
@@ -9161,19 +9229,9 @@ impl CodeGenerator {
         match ty {
             Type::TypeParam(name) => {
                 // Replace type parameter with concrete type
-                if let Some(concrete_name) = type_map.get(name) {
-                    // Parse the concrete type name
-                    match concrete_name.as_str() {
-                        "i32" | "I32" => Type::I32,
-                        "i64" | "I64" => Type::I64,
-                        "u32" | "U32" => Type::U32,
-                        "u64" | "U64" => Type::U64,
-                        "bool" | "Bool" => Type::Bool,
-                        "string" | "String" => Type::String,
-                        _ => Type::Custom(concrete_name.clone()),
-                    }
-                } else {
-                    ty.clone()
+                match type_map.get(name) {
+                    Some(concrete_name) => Self::type_argument_type(concrete_name),
+                    None => ty.clone(),
                 }
             }
             Type::Array(elem_type, size) => Type::Array(
@@ -9196,19 +9254,9 @@ impl CodeGenerator {
             }
             Type::Custom(name) => {
                 // Check if this custom type is actually a type parameter
-                if let Some(concrete_name) = type_map.get(name) {
-                    // Parse the concrete type name
-                    match concrete_name.as_str() {
-                        "i32" | "I32" => Type::I32,
-                        "i64" | "I64" => Type::I64,
-                        "u32" | "U32" => Type::U32,
-                        "u64" | "U64" => Type::U64,
-                        "bool" | "Bool" => Type::Bool,
-                        "string" | "String" => Type::String,
-                        _ => Type::Custom(concrete_name.clone()),
-                    }
-                } else {
-                    ty.clone()
+                match type_map.get(name) {
+                    Some(concrete_name) => Self::type_argument_type(concrete_name),
+                    None => ty.clone(),
                 }
             }
             _ => self.substitute_type_below(ty, type_map),
@@ -9630,11 +9678,13 @@ impl CodeGenerator {
             .collect();
         CompileError::CodegenError {
             message: format!(
-                "`{} {{ .. }}` is a literal of the generic struct `{}` in a statement of a \
-                 generic function's body that the type checker could not check, so it recorded \
-                 no instantiation for it; code generation emits such a literal only as the one \
+                "`{} {{ .. }}` is a literal of the generic struct `{}` in a generic function's \
+                 body that the type checker recorded no instantiation for — in a statement it \
+                 could not check, or of a value it names no type argument by (a float, a char, \
+                 an array or a tuple); code generation emits such a literal only as the one \
                  instantiation whose fields hold its values, and not exactly one of {} does. \
-                 Build it in a statement of its own from variables or literals",
+                 Build it in a statement of its own from variables or literals, or write a \
+                 non-generic struct for such a value",
                 name,
                 name,
                 if named.is_empty() { "none".to_string() } else { named.join(", ") }

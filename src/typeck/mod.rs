@@ -4031,13 +4031,8 @@ impl TypeChecker {
 
                 // First check if it's a generic function that needs instantiation
                 if let Some(generic_func) = self.generic_functions.get(func_name).cloned() {
-                    // Infer type arguments from the call, and keep them FOR THIS CALL: they
-                    // are the instantiation code generation emits it as (`CallRecords`).
+                    // Infer type arguments from the call
                     let type_args = self.infer_type_args(&generic_func, args)?;
-                    self.call_records.record(*id, &type_args);
-                    if let Some(uses) = &mut self.body_uses {
-                        uses.calls.push((func_name.clone(), type_args.clone()));
-                    }
 
                     // Create instantiation key
                     let instantiation = FunctionInstantiation {
@@ -4045,14 +4040,27 @@ impl TypeChecker {
                         type_args: type_args.clone(),
                     };
 
-                    // Check if we've already instantiated this combination
-                    if let Some(func_type) = self.instantiations.get(&instantiation) {
-                        return self.check_call_with_type(func_name, func_type.clone(), args);
-                    }
+                    // Instantiate the generic function, unless this combination already is
+                    let func_type = match self.instantiations.get(&instantiation) {
+                        Some(func_type) => func_type.clone(),
+                        None => {
+                            let func_type =
+                                self.instantiate_generic_function(&generic_func, &type_args)?;
+                            self.instantiations.insert(instantiation, func_type.clone());
+                            func_type
+                        }
+                    };
 
-                    // Need to instantiate the generic function
-                    let func_type = self.instantiate_generic_function(&generic_func, &type_args)?;
-                    self.instantiations.insert(instantiation, func_type.clone());
+                    // Keep the type arguments FOR THIS CALL: they are the instantiation code
+                    // generation emits it as (`CallRecords`) — once that instantiation exists,
+                    // and at arguments C declares (`declares_in_c`), so that a record always
+                    // names one code generation can emit (review round 7).
+                    if type_args.iter().all(|arg| Self::declares_in_c(arg)) {
+                        self.call_records.record(*id, &type_args);
+                        if let Some(uses) = &mut self.body_uses {
+                            uses.calls.push((func_name.clone(), type_args.clone()));
+                        }
+                    }
 
                     return self.check_call_with_type(func_name, func_type, args);
                 }
@@ -4497,9 +4505,22 @@ impl TypeChecker {
                             .collect(),
                     };
 
-                    self.struct_literal_records.record(expr, &instantiation);
-                    if let Some(uses) = &mut self.body_uses {
-                        uses.literals.push((name.clone(), instantiation.type_args.clone()));
+                    // In a generic body the walk records a literal only at type arguments an
+                    // instantiation can be declared at: a float, a `char`, an array or a tuple
+                    // is the placeholder, which none is, and the closure made `G<?>` of it
+                    // (review round 7). Unrecorded, the literal is of the one instantiation
+                    // holding its values, as before the walk; in `main` the placeholder stays
+                    // the record, refused by name.
+                    let walked = self.body_uses.is_some();
+                    let unnamed = instantiation
+                        .type_args
+                        .iter()
+                        .any(|arg| arg.contains(UNNAMED_TYPE_ARGUMENT));
+                    if !(walked && unnamed) {
+                        self.struct_literal_records.record(expr, &instantiation);
+                        if let Some(uses) = &mut self.body_uses {
+                            uses.literals.push((name.clone(), instantiation.type_args.clone()));
+                        }
                     }
                     self.struct_instantiations
                         .insert(instantiation, instantiated_type.clone());
@@ -6678,6 +6699,17 @@ impl TypeChecker {
             .collect()
     }
 
+    /// Does C declare a value of the type argument `arg`, as this checker
+    /// spells it (`checker_type_to_string`)? Every name does — a primitive, a
+    /// struct, an enum, an alias, a type parameter — but `()` (no C value: a
+    /// `void`) and `range` (no surface name: no instantiation is spelled at
+    /// it), whose instantiation code generation emits as `id__()` or with a
+    /// `struct range` parameter. A call at one is not recorded, so the walk of
+    /// a generic body never instantiates one (review round 7).
+    fn declares_in_c(arg: &str) -> bool {
+        arg != "()" && arg != "range"
+    }
+
     /// The checker's type for the type argument `arg`, as a generic's
     /// instantiation reads it (`substitute_type`).
     fn type_argument_type(&self, arg: &str) -> CheckerType {
@@ -8364,6 +8396,12 @@ impl StructLiteralRecords {
 /// the record through the instantiation it is emitting. A call checked more
 /// than once (one node) keeps every record it was given, as a struct literal
 /// does (`StructLiteralRecords`); two calls never share a key.
+///
+/// A call is recorded once its instantiation exists, at type arguments C
+/// declares (`TypeChecker::declares_in_c`): a call at a tuple, which has no
+/// type-argument name and no instantiation, was recorded before instantiating
+/// it failed in a walked body, and code generation met a record naming an
+/// instantiation nobody made, where main ran the program (review round 7).
 #[derive(Debug, Clone, Default)]
 pub struct CallRecords {
     records: HashMap<CallId, Vec<Vec<String>>>,

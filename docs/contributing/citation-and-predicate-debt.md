@@ -41,11 +41,11 @@ such thing. Verified 2026-08-23 by reading each line:
 
 | # | Cites | What is actually there | Wrong? |
 |---|---|---|---|
-| C1 | `src/codegen/mod.rs:2982` | a comment about unrecognised constant values | yes |
-| C2 | `src/codegen/mod.rs:2905` | `self.output.push_str("    return __pd_empty_owned();\n");` | yes |
-| C3 | `src/codegen/mod.rs:3223` | `for (_, module_info) in &imported_modules {` — the loop header, not the visibility test inside it | yes, narrowly |
-| — | `src/typeck/mod.rs:1643` | the private-import registration comment | no |
-| — | `src/codegen/mod.rs:3390` | `!crate::ast::local_definition_shadows_import(program, &func.name)` | no |
+| C1 | `src/codegen/mod.rs:3027` | a comment about unrecognised constant values | yes |
+| C2 | `src/codegen/mod.rs:2950` | `self.output.push_str("    return __pd_empty_owned();\n");` | yes |
+| C3 | `src/codegen/mod.rs:3276` | `for (_, module_info) in &imported_modules {` — the loop header, not the visibility test inside it | yes, narrowly |
+| — | `src/typeck/mod.rs:1655` | the private-import registration comment | no |
+| — | `src/codegen/mod.rs:3456` | `!crate::ast::local_definition_shadows_import(program, &func.name)` | no |
 
 All three were **pre-existing on `main`** before the recursive-data-types work,
 and all three have since been relocated MECHANICALLY three times — by a `difflib`
@@ -97,7 +97,7 @@ it is the range the sentence means.
 
 | # | Cites | What is actually there | Wrong? |
 |---|---|---|---|
-| C6 | `src/typeck/mod.rs:4466-4466`, from the "empty array literal `[]`" row of the PBS-1 exclusion table in `docs/specification/bootstrap-subset.md` | `GenericArgValue::Type(t) => match t {`, inside the generic-struct instantiation's type-argument stringifier. The refusal the row describes is the one `fn main() { let xs = []; }` prints — `Empty array literals are not supported (cannot infer type)` — raised from the array-literal arm of `check_expression`, not from this line | yes |
+| C6 | `src/typeck/mod.rs:4474-4474`, from the "empty array literal `[]`" row of the PBS-1 exclusion table in `docs/specification/bootstrap-subset.md` | `GenericArgValue::Type(t) => match t {`, inside the generic-struct instantiation's type-argument stringifier. The refusal the row describes is the one `fn main() { let xs = []; }` prints — `Empty array literals are not supported (cannot infer type)` — raised from the array-literal arm of `check_expression`, not from this line | yes |
 
 Re-derivable by content, unlike C1–C5 — the message is quoted above and appears at
 one raising site — so it is a repair any change touching that table row should make;

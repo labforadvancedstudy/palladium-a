@@ -1,0 +1,88 @@
+// A USE IN A GENERIC BODY AT A FLOAT, A CHAR OR A TUPLE IS OF AN INSTANTIATION
+// C DECLARES (#86, #87, review round 7).
+//
+// The walk of a generic body records `id(p)` with `p: f64` as `id<f64>` and
+// instantiates it. Code generation read a type argument back by name for the
+// integers, `bool` and `String` only, so `id<f64>` was emitted as
+// `struct f64 id__f64(struct f64 x)` and `id<char>` as an anonymous struct, and
+// gcc refused a program main ran (main emitted `wrapf`'s call as the alias
+// seed's `id__F`). A call at a tuple was recorded although no instantiation of
+// it can exist (an internal error), and a struct literal of a float in a body
+// was recorded at the placeholder `?` and refused; main built both as the one
+// instantiation holding them. Each runs here as it ran on main in a program of
+// its own (together, main's first-argument match passed the tuple to `id__C`:
+// gcc).
+type F = f64;
+type C = char;
+type P = (i64, i64);
+
+struct S {
+    n: i64,
+}
+
+impl S {
+    fn getf(&self) -> F {
+        return 8.5;
+    }
+    fn getc(&self) -> C {
+        return '한';
+    }
+    fn getp(&self) -> P {
+        return (4, 5);
+    }
+}
+
+struct G<X> {
+    p: X,
+}
+
+fn id<T>(x: T) -> T {
+    return x;
+}
+
+fn wrapf<T>(t: T) -> f64 {
+    let p = 3.5;
+    return id(p);
+}
+
+fn wrapc<T>(t: T) -> char {
+    let p = '한';
+    return id(p);
+}
+
+fn wrapp<T>(t: T) -> (i64, i64) {
+    let p = (6, 7);
+    return id(p);
+}
+
+fn wrapg<T>(t: T) -> i64 {
+    let p: f64 = 3.5;
+    let g = G { p: p };
+    if g.p > 3.0 {
+        return 1;
+    }
+    return 0;
+}
+
+fn main() {
+    let s = S { n: 0 };
+    let a = s.getf();
+    let d = id(a);
+    let b = s.getc();
+    let e = id(b);
+    let q = s.getp();
+    let r = id(q);
+    let g0 = G { p: a };
+    if wrapf(1) > 3.0 {
+        print_int(1);
+    } else {
+        print_int(0);
+    }
+    print_int(wrapc(1) as i64);
+    let w = wrapp(1);
+    print_int(w.1);
+    print_int(wrapg(1));
+    if g0.p > 8.0 {
+        print_int(2);
+    }
+}

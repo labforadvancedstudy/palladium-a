@@ -1142,3 +1142,236 @@ fn a_value_if_match_loop_or_block_is_of_its_values_one_exact_type() {
         refused_pd0082(&program, "compound_value_refused", fragment, shape);
     }
 }
+
+/// A use in a generic body at a float, a `char` or a tuple is of an
+/// instantiation C declares, or of none (review round 7).
+///
+/// The walk of a generic body records `id(p)` with `p: f64` as `id<f64>` and
+/// instantiates it. Code generation read a type argument back by name for
+/// `i32`, `i64`, `u32`, `u64`, `bool` and `String` only, so `id<f64>` was
+/// emitted as `struct f64 id__f64(struct f64 x)` and `id<char>` as an
+/// anonymous struct: gcc on 3c86348, though the call was emitted as the alias
+/// seed's `id__F` and main ran the program (1; 54620). A call at a tuple was
+/// recorded before its instantiation failed (a tuple has no type-argument
+/// name), so the record named an instantiation that did not exist (an internal
+/// error, where main ran 5); and a body's struct literal of a float, a `char`
+/// or a tuple was recorded at the placeholder `?`, which no instantiation is,
+/// and refused where main built it as the one instantiation holding it.
+#[test]
+fn a_body_use_at_a_float_char_or_tuple_is_of_an_instantiation_c_declares() {
+    let seed = |ty: &str, value: &str| {
+        format!(
+            "type B = {ty};\nstruct S {{ n: i64 }}\n\
+             impl S {{ fn get(&self) -> B {{ return {value}; }} }}\n"
+        )
+    };
+    let sz = "fn sz<T>(x: T) -> i64 { return 8; }\n";
+    let g = "struct G<X> { p: X }\n";
+    let rows: Vec<(&str, String, &str)> = vec![
+        (
+            "an f64 in a body beside an alias seed (astra float_body; main: 1)",
+            "type F=f64; struct S{n:i64} impl S{fn get(&self)->F{return 8.5;}} \
+             fn id<T>(x:T)->T{return x;} fn wrap<T>(t:T)->f64{let p=3.5;return id(p);} \
+             fn main(){let s=S{n:0};let a=s.get();let d=id(a);if wrap(1)>3.0{print_int(1);}else{print_int(0);}}\n"
+                .to_string(),
+            "RUN: 1\n",
+        ),
+        (
+            "a char in a body beside an alias seed (astra char_body; main: 54620)",
+            "type C=char; struct S{n:i64} impl S{fn get(&self)->C{return '한';}} \
+             fn id<T>(x:T)->T{return x;} fn wrap<T>(t:T)->char{let p='한';return id(p);} \
+             fn main(){let s=S{n:0};let a=s.get();let d=id(a);let x=wrap(1);print_int(x as i64);}\n"
+                .to_string(),
+            "RUN: 54620\n",
+        ),
+        (
+            "an f64 in a body, nothing else instantiated (main: gcc, id undeclared)",
+            format!("{ID}fn wrap<T>(t: T) -> f64 {{ let p = 3.5; return id(p); }}\n\
+                     fn main() {{ if wrap(1) > 3.0 {{ print_int(1); }} else {{ print_int(0); }} }}\n"),
+            "RUN: 1\n",
+        ),
+        (
+            "an f32 in a body beside an f32 alias seed (main: 1 0)",
+            format!("{}{ID}fn wrap<T>(t: T) -> i64 {{ let p: f32 = 3.5; let q: f32 = id(p); \
+                     if q > 3.0 {{ print_int(1); }} else {{ print_int(0); }} return 0; }}\n\
+                     fn main() {{ let s = S {{ n: 0 }}; let a = s.get(); let d = id(a); print_int(wrap(1)); }}\n",
+                    seed("f32", "3.5")),
+            "RUN: 1\n0\n",
+        ),
+        (
+            "a generic of an f64, its result no T (main: gcc)",
+            format!("{sz}fn wrap<T>(t: T) -> i64 {{ let p: f64 = 3.5; return sz(p); }}\n\
+                     fn main() {{ print_int(wrap(1)); }}\n"),
+            "RUN: 8\n",
+        ),
+        (
+            "a char and an i64 in one body (main: gcc)",
+            format!("{ID}fn wrap<T>(t: T) -> i64 {{ let c: char = 'a'; let d: char = id(c); \
+                     let k: i64 = id(5); return (d as i64) + k; }}\n\
+                     fn main() {{ print_int(wrap(1)); }}\n"),
+            "RUN: 102\n",
+        ),
+        (
+            "a tuple in a body beside a tuple alias seed (main: 5)",
+            format!("{}{ID}fn wrap<T>(t: T) -> (i64, i64) {{ let p = (4, 5); return id(p); }}\n\
+                     fn main() {{ let s = S {{ n: 0 }}; let a = s.get(); let d = id(a); \
+                     let q: (i64, i64) = wrap(1); print_int(q.1); }}\n",
+                    seed("(i64, i64)", "(4, 5)")),
+            "RUN: 5\n",
+        ),
+        (
+            "an f64 struct literal in a body beside an alias-typed one (main: 1 1 0)",
+            format!("{}{g}fn wrap<T>(t: T) -> i64 {{ let p: f64 = 3.5; let g = G {{ p: p }}; \
+                     if g.p > 3.0 {{ print_int(1); }} else {{ print_int(0); }} return 0; }}\n\
+                     fn main() {{ let s = S {{ n: 0 }}; let a = s.get(); let g0 = G {{ p: a }}; \
+                     if g0.p > 3.0 {{ print_int(1); }} else {{ print_int(0); }} print_int(wrap(1)); }}\n",
+                    seed("f64", "3.5")),
+            "RUN: 1\n1\n0\n",
+        ),
+        (
+            "a tuple struct literal in a body beside an alias-typed one (main: 5 5 0)",
+            format!("{}{g}fn wrap<T>(t: T) -> i64 {{ let p: (i64, i64) = (4, 5); let g = G {{ p: p }}; \
+                     print_int(g.p.1); return 0; }}\n\
+                     fn main() {{ let s = S {{ n: 0 }}; let a = s.get(); let g0 = G {{ p: a }}; \
+                     print_int(g0.p.1); print_int(wrap(1)); }}\n",
+                    seed("(i64, i64)", "(4, 5)")),
+            "RUN: 5\n5\n0\n",
+        ),
+    ];
+    table(&rows, "body_primitive");
+    refused_pd0082(
+        &format!("{ID}fn wrap<T>(t: T) -> i64 {{ let p: f32 = 3.5; let q: f32 = id(p); \
+                  if q > 3.0 {{ return 1; }} return 0; }}\nfn main() {{ print_int(wrap(1)); }}\n"),
+        "body_f32_refused",
+        "the call of `id`",
+        "an f32 in a body, recorded id<f64>, no f32 instantiation (main: gcc)",
+    );
+}
+
+/// EVERY PRIMITIVE, and an alias of each, as a type argument a generic body
+/// uses — called directly beside an alias-typed seed, through a nested
+/// generic, and from an imported module — compiles and runs or is refused by
+/// name: never gcc, never an internal error (review round 7). On 3c86348 the
+/// f32, f64 and char rows beside a seed failed in gcc (main ran them).
+#[test]
+fn every_primitive_a_generic_body_uses_is_an_instantiation_c_declares() {
+    let observe = |ty: &str, v: &str| match ty {
+        "f32" | "f64" => format!("if {v} > 3.0 {{ print_int(1); }} else {{ print_int(0); }}"),
+        "bool" => format!("if {v} {{ print_int(1); }} else {{ print_int(0); }}"),
+        "String" => format!("print({v});"),
+        "i64" => format!("print_int({v});"),
+        _ => format!("print_int({v} as i64);"),
+    };
+    let mut seen = Vec::new();
+    for (ty, value, printed) in [
+        ("i32", "7", "7"),
+        ("i64", "7", "7"),
+        ("u32", "7", "7"),
+        ("u64", "7", "7"),
+        ("f32", "3.5", "1"),
+        ("f64", "3.5", "1"),
+        ("bool", "true", "1"),
+        ("char", "'한'", "54620"),
+        ("String", "\"hi\"", "hi"),
+    ] {
+        for alias in [false, true] {
+            let decl = if alias { format!("type A = {ty};\n") } else { String::new() };
+            let t = if alias { "A" } else { ty };
+            let body = format!("let p: {t} = {value}; let q: {t} = id(p); {} return 0;", observe(ty, "q"));
+            let direct = format!(
+                "{decl}type B = {ty};\nstruct S {{ n: i64 }}\nimpl S {{ fn get(&self) -> B {{ return {value}; }} }}\n\
+                 {ID}fn wrap<T>(t: T) -> i64 {{ {body} }}\n\
+                 fn main() {{ let s = S {{ n: 0 }}; let a = s.get(); let d = id(a); print_int(wrap(1)); }}\n"
+            );
+            let nested = format!(
+                "{decl}{ID}fn mid<U>(u: U) -> i64 {{ {body} }}\nfn wrap<T>(t: T) -> i64 {{ return mid(t); }}\n\
+                 fn main() {{ print_int(wrap(1)); }}\n"
+            );
+            let module = format!(
+                "{decl}pub fn id<T>(x: T) -> T {{ return x; }}\npub fn wrap<T>(t: T) -> i64 {{ {body} }}\n"
+            );
+            let shape = |s: &str| format!("{} {}{}", s, ty, if alias { " (alias)" } else { "" });
+            // Beside the seed main ran every row, printing the value then 0; so does this.
+            seen.push((
+                shape("direct"),
+                outcome(&direct, "every_primitive"),
+                Some(format!("RUN: {printed}\n0\n")),
+            ));
+            seen.push((shape("nested"), outcome(&nested, "every_primitive"), None));
+            seen.push((
+                shape("imported"),
+                outcome_of_files(&[("pl.pd", &module)], "import pl;\nfn main() { print_int(wrap(1)); }\n"),
+                None,
+            ));
+        }
+    }
+    let broken: Vec<String> = seen
+        .iter()
+        .filter(|(_, got, want)| match want {
+            Some(want) => got != want,
+            None => got == "GCC" || got.contains("internal error"),
+        })
+        .map(|(shape, got, want)| {
+            let want = want.as_deref().unwrap_or("no gcc");
+            format!("{}: {} (want {})", shape, got.trim_end(), want.trim_end())
+        })
+        .collect();
+    assert!(broken.is_empty(), "{}", broken.join("\n"));
+}
+
+/// A reference parameter given a PLACE is handed the place's address, so the
+/// argument is held exactly where the PLACE is the referent's C type (rebase
+/// onto f2d1dd3, issue #84).
+///
+/// The record's parameter was compared with the place itself: a `long long*`
+/// against a `long long`, so `bump(x, 5)` with `q: &mut T` was refused by name
+/// on 2440dbc though main ran it, and once #84 lowered tuple references
+/// `set(t, 97)` with `q: &mut (T, T)` was refused where main f2d1dd3 prints
+/// `97 97`. A place of another width is still refused (main f2d1dd3: an
+/// internal compiler error), and a shared tuple reference lent to a generic's
+/// `&mut` is refused by #84's rule, which is asked before the instantiation.
+#[test]
+fn a_reference_parameter_given_a_place_holds_the_place_at_its_referents_c_type() {
+    let rows: Vec<(&str, String, &str)> = vec![
+        (
+            "a place handed to a generic `&mut T` (main 2ca5eb5, f2d1dd3: 5)",
+            "fn bump<T>(q: &mut T, v: T) { q = v; }\n\
+             fn main() { let mut x = 1; bump(x, 5); print_int(x); }\n"
+                .to_string(),
+            "RUN: 5\n",
+        ),
+        (
+            "a tuple place handed to a generic `&mut (T, T)` (main f2d1dd3: 97 97)",
+            "fn set<T>(q: &mut (T, T), x: T) { *q = (x, x); }\n\
+             fn main() { let mut t = (11, 29); set(t, 97); print_int(t.0); print_int(t.1); }\n"
+                .to_string(),
+            "RUN: 97\n97\n",
+        ),
+        (
+            "control: the address written out (main f2d1dd3: 97 97)",
+            "fn set<T>(q: &mut (T, T), x: T) { *q = (x, x); }\n\
+             fn main() { let mut t = (11, 29); set(&mut t, 97); print_int(t.0); print_int(t.1); }\n"
+                .to_string(),
+            "RUN: 97\n97\n",
+        ),
+    ];
+    table(&rows, "place_by_address");
+    refused_pd0082(
+        "fn bump<T>(q: &mut T, v: T) { q = v; }\n\
+         fn main() { let mut x: u32 = 1; bump(x, 5); print_int(x as i64); }\n",
+        "place_by_address_refused",
+        "the call of `bump`",
+        "a u32 place handed to `&mut T` recorded bump<i64> (main f2d1dd3: internal compiler error)",
+    );
+    let lent = outcome(
+        "fn set<T>(q: &mut (T, T), x: T) { *q = (x, x); }\n\
+         fn f(mut p: &(i64, i64)) { set(*p, 97); }\n\
+         fn main() { let mut t = (11, 29); f(t); print_int(t.0); print_int(t.1); }\n",
+        "place_by_address_lent",
+    );
+    assert!(
+        lent.starts_with("REFUSED: ") && lent.contains("that parameter may write"),
+        "a shared tuple reference lent to a generic's `&mut` is #84's refusal: {}",
+        lent
+    );
+}
