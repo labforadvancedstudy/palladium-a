@@ -3198,7 +3198,7 @@ impl TypeChecker {
         // It used to say "no generic guard needed: `check_function` already
         // returns early for a function with type parameters". That was true
         // until the async-value-return refusal was placed BEFORE that early
-        // return (`src/typeck/mod.rs:4967-4970`), and walking an imported
+        // return (`src/typeck/mod.rs:5012-5015`), and walking an imported
         // generic now raises it at DECLARATION. An uninstantiated generic is
         // emitted by nobody, so refusing it rejects a declaration the output
         // cannot contain — which is what
@@ -3512,10 +3512,10 @@ impl TypeChecker {
     /// value's (`pointees_differ`), where the two pointed-to types must be one.
     fn void_reference_disagrees(written: &crate::ast::Type, source: &crate::ast::Type) -> bool {
         use crate::ast::Type as T;
-        let names_a_parameter = |t: &T| matches!(t, T::TypeParam(_));
+        let names_a_parameter = |t: &T| matches!(t, T::TypeParam(name) if !Self::names_no_parameter(name));
         match (written, source) {
             // A `void *` value converts to any pointer.
-            (T::Reference { .. }, T::TypeParam(_)) => false,
+            (T::Reference { .. }, T::TypeParam(name)) if !Self::names_no_parameter(name) => false,
             (T::Reference { inner: w, .. }, T::Reference { inner: s, .. }) => Self::pointees_differ(w, s),
             // A `&T` met by no pointer at all.
             (T::Reference { inner, .. }, _) if names_a_parameter(inner) => true,
@@ -3527,6 +3527,13 @@ impl TypeChecker {
         }
     }
 
+    /// Is `name`, spelled as a type parameter in a source type, one no program
+    /// can name — a C `char` (`C_CHAR`) or a value of no known type
+    /// (`UNKNOWN_REFERENT`) — and so not a `void *`?
+    fn names_no_parameter(name: &str) -> bool {
+        name == C_CHAR || name == UNKNOWN_REFERENT
+    }
+
     /// Do the types two C pointers point to differ — `written`, from an
     /// annotation naming a type parameter of the instantiated body (`T` is
     /// `void *` there), and `source`, the value's? Pointed-to types must be ONE
@@ -3535,7 +3542,13 @@ impl TypeChecker {
     /// them (`sources_agree`, which gives a name the benefit of the doubt).
     fn pointees_differ(written: &crate::ast::Type, source: &crate::ast::Type) -> bool {
         use crate::ast::Type as T;
+        let marker = |t: &T| matches!(t, T::TypeParam(name) if Self::names_no_parameter(name));
         match (written, source) {
+            // A C `char` is one with another; a value of no known type is
+            // known to be nothing.
+            _ if marker(written) || marker(source) => {
+                written != source || matches!(source, T::TypeParam(name) if name == UNKNOWN_REFERENT)
+            }
             (T::TypeParam(_), T::TypeParam(_)) => false,
             (T::Reference { inner: w, .. }, T::Reference { inner: s, .. }) => Self::pointees_differ(w, s),
             (T::Array(w, _), T::Array(s, _)) => Self::pointees_differ(w, s),
@@ -3790,6 +3803,32 @@ impl TypeChecker {
         walked
     }
 
+    /// The value of an `if`, a `match` or an array literal whose branches, arms
+    /// or elements the walk typed as `parts`, in order (`None`, or a value of no
+    /// known type: refused, never typed). Code generation declares such a
+    /// value by its FIRST part (`try_infer_expr_type`), so where that one is
+    /// known the value is the known parts merged, a part never typed adding
+    /// nothing (review round 6 of #88: `if true { p } else { 0 + false }`
+    /// became a reference of an unknown referent and `let r: &i64 = ..` was
+    /// refused, though main ran it, and `if true { &p } .. ` lost the layer
+    /// below its `&`). Where the first is not known, nothing is — except that a
+    /// value one of whose known parts is a reference is a reference
+    /// (`unknown_reference`), as a reference meets only a reference.
+    fn value_of_parts(&self, parts: &[Option<CheckerType>]) -> Option<CheckerType> {
+        let known = |t: &Option<CheckerType>| t.as_ref().filter(|t| !t.is_unknown_value()).cloned();
+        match parts.first().and_then(known) {
+            Some(first) => parts
+                .iter()
+                .skip(1)
+                .filter_map(known)
+                .try_fold(first, |merged, part| self.merged(&merged, &part)),
+            None => parts.iter().filter_map(known).find_map(|t| match t {
+                CheckerType::Reference(_, referent, _) => Some(CheckerType::unknown_reference(referent.mutable)),
+                _ => None,
+            }),
+        }
+    }
+
     /// One statement, checked whole. Refused for a reason the reference rules
     /// do not own, it is walked part by part instead (`walk_refused_statement`)
     /// and answers `Ok(false)`.
@@ -3847,14 +3886,55 @@ impl TypeChecker {
                     | D::ReferenceParameterTakesAPlaceOrABorrow
             )
         );
-        // A comparison with a value of no known type (`holds_unknown_value`)
-        // compares nothing known: it is not judged, as when the walk had no
-        // type for it at all.
-        if by_code || (judged.iter().any(CheckerType::holds_reference) && !judged.iter().any(CheckerType::holds_unknown_value)) {
+        let about_references = match judged {
+            [a, b] => Self::references_disagree(a, b),
+            _ => judged.iter().any(CheckerType::holds_reference),
+        };
+        if by_code || about_references {
             RefusalKind::Reference
         } else {
             RefusalKind::Unrelated
         }
+    }
+
+    /// Is a refused comparison of `a` with `b` about references — POSITION BY
+    /// POSITION inside a tuple, an array or a generic's arguments (review round
+    /// 6 of #88: an unknown element anywhere excused the whole comparison, and
+    /// `z = (c, p)` over `z: (i64, i64)` reached gcc)? A position where either
+    /// side is a value of no known type (`unknown_value`) compares nothing
+    /// known and is not judged; a position where the two are one type is not
+    /// where they differ; any other position is about references where either
+    /// side holds one. Composites that differ in no position are judged whole.
+    fn references_disagree(a: &CheckerType, b: &CheckerType) -> bool {
+        use CheckerType as C;
+        if a.is_unknown_value() || b.is_unknown_value() {
+            return false;
+        }
+        let pairwise = |pairs: Vec<(&CheckerType, &CheckerType)>| {
+            let differing: Vec<_> = pairs.into_iter().filter(|(x, y)| x != y).collect();
+            if differing.is_empty() {
+                None
+            } else {
+                Some(differing.into_iter().any(|(x, y)| Self::references_disagree(x, y)))
+            }
+        };
+        let positions = match (a, b) {
+            (C::Tuple(xs, _), C::Tuple(ys, _)) if xs.len() == ys.len() => pairwise(xs.iter().zip(ys).collect()),
+            (C::Array(x, _), C::Array(y, _)) => pairwise(vec![(x.as_ref(), y.as_ref())]),
+            (C::Generic { name: n, args: xs }, C::Generic { name: m, args: ys }) if n == m && xs.len() == ys.len() => {
+                pairwise(
+                    xs.iter()
+                        .zip(ys)
+                        .filter_map(|pair| match pair {
+                            (GenericArgValue::Type(x), GenericArgValue::Type(y)) => Some((x, y)),
+                            _ => None,
+                        })
+                        .collect(),
+                )
+            }
+            _ => None,
+        };
+        positions.unwrap_or_else(|| a.holds_reference() || b.holds_reference())
     }
 
     /// `refusal`, judged by the types of the ONE comparison it is about: an
@@ -4140,35 +4220,25 @@ impl TypeChecker {
             // Every element meets the element type the ones before it fixed,
             // pair by pair (the C array has one element type).
             Expr::ArrayLiteral { elements, .. } => {
-                // The array's type only where every element's is known and
-                // they merge, as the checker computes it.
+                let mut parts: Vec<Option<CheckerType>> = Vec::with_capacity(elements.len());
                 let mut elem: Option<CheckerType> = None;
-                let mut exact = true;
                 for element in elements {
-                    let Some(found) = self.walk_instantiated_expr(element)? else {
-                        exact = false;
-                        continue;
-                    };
+                    let found = self.walk_instantiated_expr(element)?;
+                    parts.push(found.clone());
+                    let Some(found) = found else { continue };
                     elem = match elem {
                         None => Some(found),
                         Some(first) => match self.merged(&first, &found) {
                             Some(merged) => Some(merged),
                             None => {
                                 Self::judge(Self::mismatch(&first, &found), &[&first, &found])?;
-                                exact = false;
                                 Some(first)
                             }
                         },
                     };
                 }
-                // An element of no known type beside reference elements: an
-                // array of references of a referent not known, as for an `if`.
-                let elem = match elem {
-                    Some(e) if exact => Some(e),
-                    Some(CheckerType::Reference(_, referent, _)) => Some(CheckerType::unknown_reference(referent.mutable)),
-                    _ => None,
-                };
-                elem.map(|e| CheckerType::Array(Box::new(e), ArraySizeValue::Literal(elements.len())))
+                self.value_of_parts(&parts)
+                    .map(|e| CheckerType::Array(Box::new(e), ArraySizeValue::Literal(elements.len())))
             }
             Expr::Tuple { elements, .. } => {
                 let mut types = Vec::with_capacity(elements.len());
@@ -4606,27 +4676,12 @@ impl TypeChecker {
                             }
                             .with_code(DiagnosticCode::ValueIfBranchesAgree);
                             Self::judge(refused, &[&then_type, &else_type])?;
-                            match (&then_type, &else_type) {
-                                (CheckerType::Reference(_, referent, _), other)
-                                | (other, CheckerType::Reference(_, referent, _))
-                                    if other.holds_unknown_value() =>
-                                {
-                                    Some(CheckerType::unknown_reference(referent.mutable))
-                                }
-                                _ => None,
-                            }
+                            self.value_of_parts(&[Some(then_type), Some(else_type)])
                         }
                     },
-                    // A branch whose type is not known leaves the `if`'s
-                    // unknown: the checker gives it the two merged — but where
-                    // the other is a reference, the `if` is one (a reference
-                    // meets only a reference), of a referent not known
-                    // (review round 5 of #88).
-                    (Some(CheckerType::Reference(_, referent, _)), None)
-                    | (None, Some(CheckerType::Reference(_, referent, _))) => {
-                        Some(CheckerType::unknown_reference(referent.mutable))
-                    }
-                    _ => None,
+                    // A branch not known (refused, never typed) beside a known
+                    // one: `value_of_parts`.
+                    (then_type, else_type) => self.value_of_parts(&[then_type, else_type]),
                 }
             }
             Expr::Block { stmts, value, .. } => self.walk_value_scope(stmts, value.as_deref())?,
@@ -4638,8 +4693,7 @@ impl TypeChecker {
             } => {
                 let scrutinee = self.walk_instantiated_expr(scrutinee_expr)?;
                 let mut unified: Option<CheckerType> = None;
-                let mut exact = true;
-                let mut unknown_arm = false;
+                let mut parts: Vec<Option<CheckerType>> = Vec::with_capacity(arms.len());
                 for arm in arms {
                     self.symbols.enter_scope();
                     let arm_type = self
@@ -4649,9 +4703,9 @@ impl TypeChecker {
                             None => Ok(None),
                         });
                     self.symbols.exit_scope();
-                    let Some(arm_type) = arm_type? else {
-                        exact = false;
-                        unknown_arm = true;
+                    let arm_type = arm_type?;
+                    parts.push(arm_type.clone());
+                    let Some(arm_type) = arm_type else {
                         continue;
                     };
                     // Each arm's value meets the first arm's, as the checker
@@ -4671,21 +4725,12 @@ impl TypeChecker {
                                     span: Some(*span),
                                 };
                                 Self::judge(refused, &[&first, &arm_type])?;
-                                exact = false;
                                 first
                             }
                         },
                     });
                 }
-                // An arm not known beside a reference arm: a reference, of a
-                // referent not known, as for an `if`.
-                match unified {
-                    Some(unified) if exact => Some(unified),
-                    Some(CheckerType::Reference(_, referent, _)) if unknown_arm => {
-                        Some(CheckerType::unknown_reference(referent.mutable))
-                    }
-                    _ => None,
-                }
+                self.value_of_parts(&parts)
             }
         })
     }
@@ -9788,8 +9833,9 @@ impl TypeChecker {
         if let CheckerType::Reference(inner, ..) = ty {
             return Ok(inner.as_ref().clone());
         }
-        // A value of no known type (`CheckerType::unknown_value`) may be one.
-        if ty.holds_unknown_value() {
+        // A value of no known type (`CheckerType::unknown_value`) may be one;
+        // a tuple holding one is not (review round 6 of #88).
+        if ty.is_unknown_value() {
             return Ok(ty.clone());
         }
         let detail = match e {
@@ -9857,6 +9903,9 @@ impl TypeChecker {
             },
             Expr::Index { array, .. } => match self.source_in(array, env)? {
                 T::Array(elem, _) => *elem,
+                // `const char*` -> `char` (`try_infer_expr_type`): a C type no
+                // Palladium type names (`C_CHAR`, review round 6 of #88).
+                T::String => T::TypeParam(C_CHAR.to_string()),
                 _ => return None,
             },
             Expr::TupleIndex { expr, index, .. } => match self.source_in(expr, env)? {
@@ -10479,26 +10528,12 @@ impl CheckerType {
     /// A value of no known type, where the walk of an instantiated generic body
     /// must type the composite around it — an element of a tuple, a type
     /// argument of a generic struct literal — because a reference beside it is
-    /// read through that composite (review round 5 of #88). A comparison it
-    /// takes part in is not judged (`refusal_kind`), as when the walk had no
-    /// type at all; a reference to it is a reference (`unknown_reference`).
+    /// read through that composite (review round 5 of #88). A comparison at
+    /// its position is not judged (`references_disagree`), as when the walk
+    /// had no type at all; a reference to it is a reference
+    /// (`unknown_reference`).
     fn unknown_value() -> CheckerType {
         CheckerType::TypeParam(UNKNOWN_REFERENT.to_string())
-    }
-
-    /// Does `ty` hold a value of no known type (`unknown_value`) — at its top or
-    /// in an array, a tuple or a generic's argument, NOT behind a reference (a
-    /// reference to an unknown referent is a known reference)?
-    fn holds_unknown_value(&self) -> bool {
-        match self {
-            CheckerType::TypeParam(name) => name == UNKNOWN_REFERENT,
-            CheckerType::Array(elem, _) => elem.holds_unknown_value(),
-            CheckerType::Tuple(elements, _) => elements.iter().any(CheckerType::holds_unknown_value),
-            CheckerType::Generic { args, .. } => args
-                .iter()
-                .any(|a| matches!(a, GenericArgValue::Type(t) if t.holds_unknown_value())),
-            _ => false,
-        }
     }
 
     /// A reference whose referent's type is not known: `&x` over an `x` the
@@ -10506,16 +10541,20 @@ impl CheckerType {
     /// one of whose branches is a reference and another not known. An
     /// explicit borrow is a reference whatever it refers to (review round 5 of
     /// #88: it was typeless, and `&x == &y` over two characters read from
-    /// strings compared their addresses unjudged). Its referent is spelled as
-    /// a type parameter no program can name (`UNKNOWN_REFERENT`), so it agrees
-    /// with no KNOWN referent (`sources_agree`) — and with another unknown one,
-    /// which is all that was ever known of either (`if c { &x } else { &y }`
-    /// over two string characters merges, as it ran on main).
+    /// strings compared their addresses unjudged). Its referent is not known,
+    /// so it agrees with NO referent — another unknown one included, which may
+    /// be another C type (review round 6 of #88: a `char *` and a `long long *`
+    /// were one `&_`, and `r = q` reached the ill-typed-C trap). Two characters
+    /// read out of strings are not unknown: they are C `char`s (`C_CHAR`).
     fn unknown_reference(mutable: bool) -> CheckerType {
-        let unknown = || CheckerType::TypeParam(UNKNOWN_REFERENT.to_string());
-        let source = crate::ast::Type::TypeParam(UNKNOWN_REFERENT.to_string());
-        let known = Referent::of(Some(source), mutable, &unknown());
-        CheckerType::Reference(Box::new(unknown()), known, DeclaredAs(None, false))
+        let unknown = CheckerType::unknown_value();
+        let known = Referent::of(None, mutable, &unknown);
+        CheckerType::Reference(Box::new(unknown), known, DeclaredAs(None, false))
+    }
+
+    /// Is `ty` itself a value of no known type (`unknown_value`)?
+    fn is_unknown_value(&self) -> bool {
+        matches!(self, CheckerType::TypeParam(name) if name == UNKNOWN_REFERENT)
     }
 
     fn holds_reference(&self) -> bool {
@@ -10638,10 +10677,16 @@ fn shown_argument<'a>(spelling: &'a str, value: &'a Option<CheckerType>) -> &'a 
 /// is a test for the placeholder and for nothing else (review round 4).
 pub const UNNAMED_TYPE_ARGUMENT: &str = "?";
 
-/// The referent of a reference whose referent's type is not known
-/// (`CheckerType::unknown_reference`), spelled as a type parameter no program
-/// can name: it agrees with no known referent (`sources_agree`).
+/// A value of no known type (`CheckerType::unknown_value`), spelled as a type
+/// parameter no program can name.
 const UNKNOWN_REFERENT: &str = "_";
+
+/// The C type `char` code generation declares a character read out of a
+/// `String` with (`s[0]`: `try_infer_expr_type`), which no Palladium type names
+/// (`char` is a code point, not a C `char`): spelled as a type parameter no
+/// program can name. Two of them are one C type (`sources_agree`), and agree
+/// with nothing else (review round 6 of #88).
+const C_CHAR: &str = "C char";
 
 /// THE INSTANTIATION THE TYPE CHECKER DECIDED FOR EACH GENERIC STRUCT LITERAL
 /// (review round 10): the type arguments it recorded for the literal (the

@@ -4,9 +4,10 @@
 // refuses to index a String), so `x` had no type, `&x` had none either, and
 // `&x == &y` compared two ADDRESSES unjudged. Measured on main (2ca5eb5) and
 // on round 5 alike: it ran and printed `ne` for two equal characters. The
-// borrow is now a reference of an unknown referent, and the comparison is
-// refused by name, as every comparison of two references is; `*r == *q`
-// compares the characters.
+// borrow is now a reference -- to a C `char`, the type code generation
+// declares `s[0]` with (review round 6) -- and the comparison is refused by
+// name, as every comparison of two references is; `*r == *q` compares the
+// characters.
 fn chars<T>(a: T) -> bool {
     let s = "a";
     let t = "a";

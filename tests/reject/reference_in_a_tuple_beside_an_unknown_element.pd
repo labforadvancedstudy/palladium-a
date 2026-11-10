@@ -1,0 +1,22 @@
+// #88, review round 6: a composite is judged position by position.
+//
+// `(c, p)` with `c` a character read out of a string and `p` an `A` (`type A
+// = &i64`): round 6 excused the WHOLE comparison with `(char, i64)` because
+// one position was not known, so the `A` met an `i64` slot unjudged. Measured
+// on main (2ca5eb5) and round 6 alike: gcc compilation failed. The position
+// holding the reference is judged on its own and refused by name.
+type A = &i64;
+
+fn f<T>(x: T, p: A) -> i64 {
+    let s = "a";
+    let c = s[0];
+    let v = (c, p);
+    let z: (char, i64) = v;
+    7
+}
+
+fn main() {
+    let n = 5;
+    let p: A = &n;
+    print_int(f(1, p));
+}

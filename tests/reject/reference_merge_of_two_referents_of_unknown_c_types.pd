@@ -1,0 +1,25 @@
+// #88, review round 6: two referents of no Palladium type are not one.
+//
+// A character read out of a string is a C `char` (`const char*` indexed), a
+// type no Palladium type names; round 6 called its borrow and a recovered
+// `long long *` both "a reference of an unknown referent", and let them meet:
+// the value `if` below became one C temporary for a `char *` and a `long long
+// *`. Measured on main (2ca5eb5) and round 6 alike: internal compiler error,
+// the C backend emitted ill-typed C. The borrow's referent is now the C
+// `char`, which meets another C `char` and nothing else.
+type A = &i64;
+
+fn f<T>(x: T, p: A) -> i64 {
+    let s = "a";
+    let c = s[0];
+    let r = &c;
+    let q = if true { p } else { 0 + false };
+    let z = if true { r } else { q };
+    7
+}
+
+fn main() {
+    let n = 5;
+    let p: A = &n;
+    print_int(f(1, p));
+}

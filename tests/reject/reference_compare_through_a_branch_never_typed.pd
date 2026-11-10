@@ -1,0 +1,30 @@
+// #88, review round 6: a branch the walk never typed must not unmake the
+// reference layers of the one it did type.
+//
+// Round 6 made `if true { &p } else { 0 + false }` (with `p` an `A`, `type A =
+// &i64`) ONE reference of an unknown referent, so `*rp` was a value of no
+// known type and `p2 == q2` compared two ADDRESSES unjudged. Measured on main
+// (2ca5eb5) and round 6 alike: it ran and printed `ne` for two borrowed fives.
+// The value is an `&A`, as its first branch is, `p2` is an `A`, and the
+// comparison is refused by name; `*p2 == *q2` compares the values.
+type A = &i64;
+
+fn deep<T>(x: T, p: A, q: A) -> bool {
+    let rp = if true { &p } else { 0 + false };
+    let rq = if true { &q } else { 0 + false };
+    let p2 = *rp;
+    let q2 = *rq;
+    p2 == q2
+}
+
+fn main() {
+    let n = 5;
+    let m = 5;
+    let p: A = &n;
+    let q: A = &m;
+    if deep(1, p, q) {
+        print("eq");
+    } else {
+        print("ne");
+    }
+}

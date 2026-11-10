@@ -812,3 +812,37 @@ fn an_inference_limit_an_unknown_referent_an_instantiated_parameter_and_a_nested
     .collect();
     assert!(wrong.is_empty(), "{} imported row(s) differ:\n{}", wrong.len(), wrong.join("\n"));
 }
+
+/// REVIEW ROUND 6. (1) A BRANCH NEVER TYPED ADDS NOTHING TO A KNOWN ONE: the
+/// walk made `if true { p } else { 0 + false }` a reference of an unknown
+/// referent, so `let r: &i64 = ..` was refused though main ran it, and
+/// `if true { &p } ..` lost the reference below its `&` — `*rp == *rq`
+/// compared two addresses. Code generation declares such a value by its first
+/// part, and so does the walk now. (2) TWO UNKNOWN REFERENTS ARE NOT ONE: a
+/// character read out of a string is a C `char`, and a reference to it agrees
+/// with another such and nothing else. (3) A COMPOSITE IS JUDGED POSITION BY
+/// POSITION: an unknown element excused `z = (c, p)` over `z: (i64, i64)`.
+/// Each refused row reached gcc, the ill-typed-C trap or a wrong answer on main
+/// (2ca5eb5) and on round 6, or was refused by round 6 where main ran it.
+#[test]
+fn a_part_never_typed_adds_nothing_and_unknown_referents_are_not_one() {
+    let rows: Vec<(&str, &str, &str)> = vec![
+        ("`let r: &i64 = if true { p } else { 0 + false }` (main 5)", "type A = &i64;\nfn f<T>(x: T, p: A) -> i64 { let r: &i64 = if true { p } else { 0 + false }; *r }\nfn main() { let n = 5; let p: A = &n; print_int(f(1, p)); }\n", "RUN: 5\n"),
+        ("the same value given to a parameter declared `A` (main 5)", "type A = &i64;\nfn take(p: A) -> i64 { *p }\nfn f<T>(x: T, p: A) -> i64 { let q = if true { p } else { 0 + false }; take(q) }\nfn main() { let n = 5; let p: A = &n; print_int(f(1, p)); }\n", "RUN: 5\n"),
+        ("the same value stored in a field declared `A` (main 5)", "type A = &i64;\nstruct H { p: A }\nfn f<T>(x: T, p: A) -> i64 { let q = if true { p } else { 0 + false }; let h = H { p: q }; *h.p }\nfn main() { let n = 5; let p: A = &n; print_int(f(1, p)); }\n", "RUN: 5\n"),
+        ("`*rp == *rq` over `rp = if true { &p } ..`", "type A = &i64;\nfn f<T>(x: T, p: A, q: A) -> bool { let rp = if true { &p } else { 0 + false }; let rq = if true { &q } else { 0 + false }; *rp == *rq }\nfn main() { let n = 5; let m = 5; let p: A = &n; let q: A = &m; if f(1, p, q) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]: in `f` instantiated at `i64`: `*rp` is a reference"),
+        ("the same through two bindings", "type A = &i64;\nfn f<T>(x: T, p: A, q: A) -> bool { let rp = if true { &p } else { 0 + false }; let rq = if true { &q } else { 0 + false }; let p2 = *rp; let q2 = *rq; p2 == q2 }\nfn main() { let n = 5; let m = 5; let p: A = &n; let q: A = &m; if f(1, p, q) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]: in `f` instantiated at `i64`: `p2` is a reference"),
+        ("`**rp == **rq`, the values (main eq)", "type A = &i64;\nfn f<T>(x: T, p: A, q: A) -> bool { let rp = if true { &p } else { 0 + false }; let rq = if true { &q } else { 0 + false }; **rp == **rq }\nfn main() { let n = 5; let m = 5; let p: A = &n; let q: A = &m; if f(1, p, q) { print(\"eq\"); } else { print(\"ne\"); } }\n", "RUN: eq\n"),
+        ("a `char *` borrow assigned a `long long *`", "type A = &i64;\nfn f<T>(x: T, p: A) -> i64 { let s = \"a\"; let c = s[0]; let mut r = &c; let q = if true { p } else { 0 + false }; r = q; 7 }\nfn main() { let n = 5; let p: A = &n; print_int(f(1, p)); }\n", "REFUSED[-]: in `f` instantiated at `i64`: Type mismatch: expected &C char, found A"),
+        ("the two merged in a value `if`", "type A = &i64;\nfn f<T>(x: T, p: A) -> i64 { let s = \"a\"; let c = s[0]; let r = &c; let q = if true { p } else { 0 + false }; let z = if true { r } else { q }; 7 }\nfn main() { let n = 5; let p: A = &n; print_int(f(1, p)); }\n", "REFUSED[PD0058]"),
+        ("two `char *` borrows, one assigned the other (main 98)", "fn f<T>(x: T) -> i64 { let s = \"a\"; let t = \"b\"; let c = s[0]; let d = t[0]; let mut r = &c; let q = &d; r = q; (*r) as i64 }\nfn main() { print_int(f(1)); }\n", "RUN: 98\n"),
+        ("two `char *` borrows merged in a value `if` (main 97)", "fn f<T>(x: T) -> i64 { let s = \"a\"; let t = \"b\"; let c = s[0]; let d = t[0]; let r = if true { &c } else { &d }; (*r) as i64 }\nfn main() { print_int(f(1)); }\n", "RUN: 97\n"),
+        ("`z = (c, p)` over `z: (i64, i64)`, `c` a string character", "type A = &i64;\nfn f<T>(x: T, p: A) -> i64 { let s = \"a\"; let c = s[0]; let mut z = (1, 2); z = (c, p); 7 }\nfn main() { let n = 5; let p: A = &n; print_int(f(1, p)); }\n", "REFUSED[-]: in `f` instantiated at `i64`: Type mismatch: expected (Int, Int), found (C char, A)"),
+        ("`let z: (char, i64) = (c, p)`", "type A = &i64;\nfn f<T>(x: T, p: A) -> i64 { let s = \"a\"; let c = s[0]; let v = (c, p); let z: (char, i64) = v; 7 }\nfn main() { let n = 5; let p: A = &n; print_int(f(1, p)); }\n", "REFUSED[PD0022]"),
+        ("`*z` over the tuple `(c, p)`", "type A = &i64;\nfn f<T>(x: T, p: A) -> i64 { let s = \"a\"; let c = s[0]; let z = (c, p); let y = *z; 7 }\nfn main() { let n = 5; let p: A = &n; print_int(f(1, p)); }\n", "REFUSED[PD0082]"),
+    ];
+    check_table(&rows, "ref_round6");
+    let module = [("zu.pd", "pub fn f<T>(x: T) -> bool { let a = 5; let b = 5; let p = &a; let q = &b; let rp = if true { &p } else { 0 + false }; let rq = if true { &q } else { 0 + false }; *rp == *rq }\n")];
+    let got = outcome_with(&module, "import zu;\nfn main() { if f(1) { print(\"eq\"); } else { print(\"ne\"); } }\n", "ref_round6_import");
+    assert!(got.starts_with("REFUSED[PD0083]"), "an imported body's `*rp == *rq`\n    got: {}", got);
+}

@@ -1,0 +1,42 @@
+// #88, review round 6: a branch the walk never typed adds nothing to a known
+// one. `0 + false` is refused (it has no checker type), so round 6 made
+// `if true { p } else { 0 + false }` a reference of an UNKNOWN referent, which
+// agrees with no annotation, parameter or field: each use below was refused,
+// though main (2ca5eb5) ran every one and printed 5. Code generation declares
+// a value `if` by its first branch, and so does the walk now: the value is an
+// `A`, as `p` is.
+type A = &i64;
+
+struct H {
+    p: A,
+}
+
+fn take(p: A) -> i64 {
+    *p
+}
+
+fn annotated<T>(x: T, p: A) -> i64 {
+    let r: &i64 = if true { p } else { 0 + false };
+    *r
+}
+
+fn passed<T>(x: T, p: A) -> i64 {
+    let q = if true { p } else { 0 + false };
+    take(q)
+}
+
+fn stored<T>(x: T, p: A) -> i64 {
+    let q = if true { p } else { 0 + false };
+    let h = H { p: q };
+    *h.p
+}
+
+fn main() {
+    let n = 5;
+    let p1: A = &n;
+    let p2: A = &n;
+    let p3: A = &n;
+    print_int(annotated(1, p1));
+    print_int(passed(1, p2));
+    print_int(stored(1, p3));
+}
