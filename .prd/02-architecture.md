@@ -45,7 +45,7 @@ region)는 아직 코드가 없고 `01-spec.md`와 MILESTONES.md M5–M7이 소�
 
 ## 게이트
 
-`make gates` = 16개 타깃. 로컬이 정본이다(CI는 결제 잠금으로 돌지 않는다).
+`make gates` = 17개 타깃. 로컬이 정본이다(CI는 결제 잠금으로 돌지 않는다).
 
 ```text
 conformance · test-conformance-runner · check-diagnostic-codes · check-docs · gate-receipts ·
