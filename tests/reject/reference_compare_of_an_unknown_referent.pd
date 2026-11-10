@@ -1,0 +1,24 @@
+// #88, review round 5: a borrow is a reference whatever it borrows.
+//
+// The walk of an instantiated generic body could not type `s[0]` (the checker
+// refuses to index a String), so `x` had no type, `&x` had none either, and
+// `&x == &y` compared two ADDRESSES unjudged. Measured on main (2ca5eb5) and
+// on round 5 alike: it ran and printed `ne` for two equal characters. The
+// borrow is now a reference of an unknown referent, and the comparison is
+// refused by name, as every comparison of two references is; `*r == *q`
+// compares the characters.
+fn chars<T>(a: T) -> bool {
+    let s = "a";
+    let t = "a";
+    let x = s[0];
+    let y = t[0];
+    &x == &y
+}
+
+fn main() {
+    if chars(1) {
+        print("eq");
+    } else {
+        print("ne");
+    }
+}

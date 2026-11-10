@@ -1,0 +1,28 @@
+// #88, review round 5: a generic call's arguments meet its INSTANTIATED
+// parameters in a generic body too.
+//
+// `take({ .. 1 }, r)` is refused for an unrelated reason (the block's
+// `let k: i64 = true`), so the walk of the instantiated body asks each of its
+// parts again -- and it only inferred from an argument given for a parameter
+// naming `T`, never asking it against the parameter the instantiation made of
+// it. At `T = i64`, `b: &T` is `b: &i64`, a parameter WRITTEN `&T`, for which
+// code generation takes the address of what it is given: `held`, a held
+// reference, became a pointer to the pointer. Measured on main (2ca5eb5) and
+// on round 5 alike: internal compiler error, the C backend emitted ill-typed
+// C. (The width spelling, `take(1, &n)` with `n: u32`, is refused by the same
+// question, uncoded, as the checker refuses it outside a generic body.)
+fn take<T>(a: T, b: &T) -> i64 {
+    7
+}
+
+fn f<U>(x: U) -> i64 {
+    let n = 5;
+    let held = &n;
+    take({ let k: i64 = true; 1 }, held)
+}
+
+fn main() {
+    let n = 5;
+    print_int(take(1, &n));
+    print_int(f(1));
+}

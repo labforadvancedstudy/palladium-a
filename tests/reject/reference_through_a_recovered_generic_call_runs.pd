@@ -1,0 +1,32 @@
+// #88, review round 5: the RUNNING twin of
+// reference_compare_through_a_recovered_generic_call.pd. A call of a generic
+// whose type arguments this checker cannot infer ("Cannot infer type from
+// complex expression": the argument is a block) is no refusal of the reference
+// rules. Round 5 judged that inference error by the reference it was given and
+// refused this program, which main (2ca5eb5) ran: `T` is now fixed by the
+// argument's type, as where an argument was refused, and the reference the
+// call returns is dereferenced as written.
+type A = &i64;
+
+fn id<T>(a: T) -> T {
+    a
+}
+
+fn f<U>(x: U, p: A) -> i64 {
+    let s = id({ print("x"); p });
+    *s
+}
+
+fn g<U>(x: U, p: A) -> i64 {
+    let s = id({ if false { return 7; } p });
+    *s
+}
+
+fn main() {
+    let n = 5;
+    let p: A = &n;
+    let q: A = &n;
+    let seed = id(p);
+    print_int(f(1, p));
+    print_int(g(1, q));
+}

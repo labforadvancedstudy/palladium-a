@@ -1,0 +1,18 @@
+// #90, review round 5: behind a reference nothing converts.
+//
+// A generic body is not substituted, so `let r: & &T = &p;` is `void ***r =
+// &p;` -- and `p = &a` over a parameter at `T = i64` makes `&p` a `long long
+// **`. Only the top layer of a reference annotation was asked (where C does
+// convert a `void *`), so the layer below it went unasked. Measured on main
+// (2ca5eb5) and on round 5 alike: internal compiler error, the C backend
+// emitted ill-typed C. Each reference layer is now followed, and the types
+// two pointers point to must be one.
+fn f<T>(a: T) -> i64 {
+    let p = &a;
+    let r: & &T = &p;
+    7
+}
+
+fn main() {
+    print_int(f(5));
+}

@@ -760,3 +760,55 @@ fn a_recovered_type_is_the_checkers_or_unknown() {
     let got = outcome_with(&module, "import znum;\nfn main() { print_int(f(1)); }\n", "ref_exact_recovery_import");
     assert!(got.starts_with("RUN: 7\n"), "an imported generic body\n    got: {}", got);
 }
+
+/// REVIEW ROUND 5. (1) AN INFERENCE THE CHECKER CANNOT MAKE IS NO REFUSAL OF
+/// THE REFERENCE RULES: `id({ .. p })` is "Cannot infer type from complex
+/// expression", and judged by the reference it was given it refused
+/// `*id({ .. p })`, which main ran — the parameters are fixed by the arguments
+/// instead. (2) A BORROW IS A REFERENCE WHATEVER IT BORROWS: `&x` over an `x`
+/// the walk could not type was typeless, and `&x == &y` compared addresses.
+/// (3) A GENERIC CALL'S ARGUMENTS MEET THE INSTANTIATED PARAMETERS: a
+/// parameter naming `T` was only inferred from, so `take(1, &n)` gave a `&u32`
+/// for `&T` at `T = i64`. (4) BEHIND A REFERENCE NOTHING CONVERTS: `& &T` was
+/// asked at its top layer only, and `void ***` met a `long long **`. Each
+/// refused row reached gcc, the ill-typed-C trap or a wrong answer on main
+/// (2ca5eb5) and on round 5; each running row runs on both.
+#[test]
+fn an_inference_limit_an_unknown_referent_an_instantiated_parameter_and_a_nested_reference() {
+    let rows: Vec<(&str, &str, &str)> = vec![
+        ("`*id({ if false { return 7; } p })` (main 5)", "type A = &i64;\nfn id<T>(a: T) -> T { a }\nfn f<U>(x: U, p: A) -> i64 { let s = id({ if false { return 7; } p }); *s }\nfn main() { let n = 5; let p: A = &n; let seed = id(p); print_int(f(1, p)); }\n", "RUN: 5\n"),
+        ("`*id({ print(\"x\"); p })` (main x, 5)", "type A = &i64;\nfn id<T>(a: T) -> T { a }\nfn f<U>(x: U, p: A) -> i64 { let s = id({ print(\"x\"); p }); *s }\nfn main() { let n = 5; let p: A = &n; let seed = id(p); print_int(f(1, p)); }\n", "RUN: x\n5\n"),
+        ("`id({ .. 5 })`, no reference (main 5)", "fn id<T>(a: T) -> T { a }\nfn f<U>(x: U) -> i64 { let s = id({ if false { return 7; } 5 }); s }\nfn main() { let seed = id(1); print_int(f(1)); }\n", "RUN: 5\n"),
+        ("`&x == &y` over two characters read from strings", "fn f<T>(a: T) -> bool { let s = \"a\"; let t = \"a\"; let x = s[0]; let y = t[0]; &x == &y }\nfn main() { if f(1) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]: in `f` instantiated at `i64`: `&x` is a reference"),
+        ("a reference `if` beside a branch of no known type, compared", "type A = &i64;\nfn f<T>(x: T, p: A, q: A) -> bool { (if true { p } else { 0 + false }) == (if true { q } else { 0 + false }) }\nfn main() { let n = 5; let m = 5; let p: A = &n; let q: A = &m; if f(1, p, q) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]"),
+        ("a value of no known type cast to a reference alias", "type A = &i64;\nfn f<T>(x: T, p: A, q: A) -> bool { ((if true { p } else { 0 + false }) as A) == ((if true { q } else { 0 + false }) as A) }\nfn main() { let n = 5; let m = 5; let p: A = &n; let q: A = &m; if f(1, p, q) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0003]"),
+        ("a borrowed string character, dereferenced (main 97)", "fn f<T>(a: T) -> i64 { let s = \"a\"; let x = s[0]; let r = &x; (*r) as i64 }\nfn main() { print_int(f(1)); }\n", "RUN: 97\n"),
+        ("a reference read out of a tuple beside an element of no known type", "fn f<T>(a: T) -> bool { let m = 5; let n = 5; let s = \"a\"; let t = (s[0], &m); let u = (s[0], &n); t.1 == u.1 }\nfn main() { if f(1) { print(\"eq\"); } else { print(\"ne\"); } }\n", "REFUSED[PD0083]: in `f` instantiated at `i64`: `t.1` is a reference"),
+        ("the same tuple, read by value (main 102)", "fn f<T>(a: T) -> i64 { let m = 5; let s = \"a\"; let t = (s[0], &m); *t.1 + (t.0 as i64) }\nfn main() { print_int(f(1)); }\n", "RUN: 102\n"),
+        ("two borrowed string characters, compared by value (main eq)", "fn f<T>(a: T) -> bool { let s = \"a\"; let t = \"a\"; let x = s[0]; let y = t[0]; let r = &x; let q = &y; *r == *q }\nfn main() { if f(1) { print(\"eq\"); } else { print(\"ne\"); } }\n", "RUN: eq\n"),
+        ("a `&u32` for a generic's `&T` at `T = i64`", "fn take<T>(a: T, b: &T) -> i64 { 7 }\nfn f<U>(x: U) -> i64 { let n: u32 = 5; take(1, &n) }\nfn main() { let n: i64 = 5; print_int(take(1, &n)); print_int(f(1)); }\n", "REFUSED[-]: in `f` instantiated at `i64`: Type mismatch: expected &i64, found &u32"),
+        ("the same beside a refused argument", "fn take<T>(a: T, b: &T) -> i64 { 7 }\nfn f<U>(x: U) -> i64 { let n: u32 = 5; take({ let k: i64 = true; 1 }, &n) }\nfn main() { let n: i64 = 5; print_int(take(1, &n)); print_int(f(1)); }\n", "REFUSED[-]: in `f` instantiated at `i64`: Type mismatch: expected &i64, found &u32"),
+        ("a held reference for a generic's `&T`, beside a refused argument", "fn take<T>(a: T, b: &T) -> i64 { 7 }\nfn f<U>(x: U) -> i64 { let n = 5; let r = &n; take({ let k: i64 = true; 1 }, r) }\nfn main() { let n = 5; print_int(take(1, &n)); print_int(f(1)); }\n", "REFUSED[PD0084]: in `f` instantiated at `i64`"),
+        ("`T` fixed at an integer and at a reference alias", "type A = &i64;\nfn take<T>(a: T, b: T) -> i64 { 7 }\nfn f<U>(x: U, p: A) -> i64 { take({ let k: i64 = true; 1 }, p) }\nfn main() { let n = 5; let p: A = &n; print_int(take(1, 1)); print_int(f(1, p)); }\n", "REFUSED[-]: in `f` instantiated at `i64`: Type parameter 'T' has conflicting types"),
+        ("a `&i64` for a generic's `&T` at `T = i64` (main 7, 7)", "fn take<T>(a: T, b: &T) -> i64 { 7 }\nfn f<U>(x: U) -> i64 { let n: i64 = 5; take(1, &n) }\nfn main() { let n: i64 = 5; print_int(take(1, &n)); print_int(f(1)); }\n", "RUN: 7\n7\n"),
+        ("`let r: & &T = &p` over `p = &a` at `T = i64`", "fn f<T>(a: T) -> i64 { let p = &a; let r: & &T = &p; 7 }\nfn main() { print_int(f(5)); }\n", "REFUSED[PD0022]: in `f` instantiated at `i64`: Type mismatch: expected &&T, found &&i64"),
+        ("`let r: &(&T, i64) = &p` over `p = (&a, 7)`", "fn f<T>(a: T) -> i64 { let p = (&a, 7); let r: &(&T, i64) = &p; 7 }\nfn main() { print_int(f(5)); }\n", "REFUSED[PD0022]"),
+        ("`let r: &[&T; 1] = &p` over `p = [&a]`", "fn f<T>(a: T) -> i64 { let p = [&a]; let r: &[&T; 1] = &p; 7 }\nfn main() { print_int(f(5)); }\n", "REFUSED[PD0022]"),
+        ("`let r: & &T = &p` over `p = &x`, `x: T` (main 7)", "fn f<T>(a: T) -> i64 { let x: T = a; let p = &x; let r: & &T = &p; 7 }\nfn main() { print_int(f(\"ok\")); }\n", "RUN: 7\n"),
+        ("`let r: & &i64 = &p` over `p = &a` (main 7)", "fn f<T>(a: T) -> i64 { let p = &a; let r: & &i64 = &p; 7 }\nfn main() { print_int(f(5)); }\n", "RUN: 7\n"),
+    ];
+    check_table(&rows, "ref_round5");
+    let chars = [("zchar.pd", "pub fn f<T>(a: T) -> bool { let s = \"a\"; let t = \"a\"; let x = s[0]; let y = t[0]; &x == &y }\n")];
+    let got = outcome_with(&chars, "import zchar;\nfn main() { if f(1) { print(\"eq\"); } else { print(\"ne\"); } }\n", "ref_round5_import_chars");
+    let nested = [("zdeep.pd", "pub fn f<T>(a: T) -> i64 { let p = &a; let r: & &T = &p; 7 }\n")];
+    let deep = outcome_with(&nested, "import zdeep;\nfn main() { print_int(f(5)); }\n", "ref_round5_import_deep");
+    let wrong: Vec<String> = [
+        ("an imported body's `&x == &y`", got, "REFUSED[PD0083]"),
+        ("an imported body's `& &T`", deep, "REFUSED[PD0022]"),
+    ]
+    .into_iter()
+    .filter(|(_, got, expected)| !got.starts_with(expected))
+    .map(|(what, got, expected)| format!("{}\n    expected: {}\n    got:      {}", what, expected, got))
+    .collect();
+    assert!(wrong.is_empty(), "{} imported row(s) differ:\n{}", wrong.len(), wrong.join("\n"));
+}
