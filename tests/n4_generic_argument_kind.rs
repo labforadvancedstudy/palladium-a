@@ -141,8 +141,8 @@ fn a_one_letter_type_argument_takes_the_path_a_longer_name_takes() {
     let c_short = emitted_c(&program("K"), &short);
     let c_long = emitted_c(&program("Kind"), &long);
     assert_eq!(
-        without_check_positions(&c_short),
-        without_check_positions(&c_long.replace("Kind", "K").replace(&long, &short)),
+        with_composed_names_decoded(&without_check_positions(&c_short)),
+        with_composed_names_decoded(&without_check_positions(&c_long)).replace("Kind", "K").replace(&long, &short),
         "`Wrap<K>` must be emitted exactly as `Wrap<Kind>` is"
     );
 }
@@ -789,5 +789,30 @@ fn without_check_positions(c: &str) -> String {
         out.push_str("\"PD0082|-|-|");
         out.push_str(part.splitn(3, '|').nth(2).unwrap_or(part));
     }
+    out
+}
+
+/// The C with every composed name (`c_ident::composed`) written as its decoded
+/// components (#89/#92 review round 11): a composed name carries each
+/// component's LENGTH, so renaming `Kind` to `K` by text substitution is only
+/// meaningful on the decoded form.
+fn with_composed_names_decoded(c: &str) -> String {
+    let is_ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let mut out = String::new();
+    let mut rest = c;
+    while let Some(at) = rest.find("_g_") {
+        let before = if at == 0 { out.chars().last() } else { rest[..at].chars().last() };
+        out.push_str(&rest[..at]);
+        let token_len = rest[at..].find(|ch: char| !is_ident(ch)).unwrap_or(rest.len() - at);
+        let token = &rest[at..at + token_len];
+        match palladium::codegen::c_ident::decode_composed(token) {
+            Some((family, parts)) if !before.is_some_and(is_ident) => {
+                out.push_str(&format!("<{}:{}>", family, parts.join("|")));
+            }
+            _ => out.push_str(token),
+        }
+        rest = &rest[at + token_len..];
+    }
+    out.push_str(rest);
     out
 }

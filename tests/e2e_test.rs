@@ -4,7 +4,7 @@
 // compilation they had just asserted succeeded. They were looking in
 // `target/build/`, which only ever holds the linked *executable*
 // (`src/driver/mod.rs:291`); the generated C goes to `build_output/`
-// (`src/codegen/mod.rs:7022-7033`). The path was the whole bug.
+// (`src/codegen/mod.rs:6988-6999`). The path was the whole bug.
 //
 // The file stem is unique per run because `build_output/<stem>.c` is a global
 // name and other test binaries compile programs of their own — see

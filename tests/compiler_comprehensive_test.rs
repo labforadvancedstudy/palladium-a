@@ -447,6 +447,11 @@ fn test_functions() {
 
 #[test]
 fn test_structs() {
+    // Composed C names come from `c_ident::composed` (#89/#92 review round 11).
+    let point_new = format!(
+        "struct Point {}(long long x, long long y)",
+        palladium::codegen::c_ident::path_name("Point::new")
+    );
     let test_cases = vec![
         // Basic struct
         (
@@ -464,7 +469,7 @@ fn test_structs() {
              fn main() { }",
             vec![
                 "struct Point",
-                "struct Point __pd_Point_new(long long x, long long y)",
+                point_new.as_str(),
             ],
         ),
         // Using structs
@@ -518,21 +523,27 @@ fn test_arrays() {
 
 #[test]
 fn test_enums() {
+    // Tag constants and payload structs are composed names (`c_ident::composed`,
+    // #89/#92 review round 11): the C spells what the encoder says.
+    use palladium::codegen::c_ident::composed;
+    let (red, green, blue) = (
+        composed('c', &["Color", "Red"]),
+        composed('c', &["Color", "Green"]),
+        composed('c', &["Color", "Blue"]),
+    );
+    let some_data = composed('d', &["Option", "Some"]);
+    let red_test = format!("_match_expr.tag == {}", red);
+    let green_test = format!("_match_expr.tag == {}", green);
     let test_cases = vec![
         // Basic enum
         (
             "enum Color { Red, Green, Blue }\nfn main() { }",
-            vec![
-                "typedef enum",
-                "__Color__Red",
-                "__Color__Green",
-                "__Color__Blue",
-            ],
+            vec!["typedef enum", red.as_str(), green.as_str(), blue.as_str()],
         ),
         // Enum with a payload
         (
             "enum Option { Some(int), None }\nfn main() { }",
-            vec!["typedef enum", "Option__Some_Data"],
+            vec!["typedef enum", some_data.as_str()],
         ),
         // Match on enum. The C backend lowers a match to a tag comparison
         // chain, not to a `switch`.
@@ -546,11 +557,7 @@ fn test_enums() {
                      Color::Blue => print(\"blue\")
                  }
              }",
-            vec![
-                "_match_expr.tag == __Color__Red",
-                "_match_expr.tag == __Color__Green",
-                "__pd_print",
-            ],
+            vec![red_test.as_str(), green_test.as_str(), "__pd_print"],
         ),
     ];
 

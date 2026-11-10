@@ -885,12 +885,17 @@ fn every_payload_member_emission_uses_the_one_derivation() {
     let lines: Vec<&str> = src.lines().collect();
 
     // The two emission shapes, by the C they produce:
-    //   `{}__{}_Data {};`   the member's declaration
+    //   `{} {};` whose type is the composed payload struct — the member's
+    //       declaration (its type argument `c_ident::composed('d', …),` is not
+    //       the last argument; at the payload typedefs it is, #89/#92 r11)
     //   `…data.{}…`         the constructor writes and the match reads
     let emitters: Vec<usize> = lines
         .iter()
         .enumerate()
-        .filter(|(_, l)| l.contains("_Data {};") || l.contains("data.{}"))
+        .filter(|(_, l)| {
+            l.trim_end().ends_with("composed('d', &[&enum_def.name, &variant.name]),")
+                || l.contains("data.{}")
+        })
         .map(|(i, _)| i)
         .collect();
 

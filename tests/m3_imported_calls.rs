@@ -1245,7 +1245,7 @@ fn test_a_block_local_shadow_does_not_change_the_outer_bindings_copy_class() {
 /// filter (`src/resolver/mod.rs:113` is the only hit in `src/`). Every consumer
 /// re-derives visibility from `ast.items` instead: `src/typeck/mod.rs:1533-1533`,
 /// `src/codegen/mod.rs:2047-2047`, `src/codegen/mod.rs:1970-1970`,
-/// `src/codegen/mod.rs:2288-2288`, `src/codegen/mod.rs:3265-3265`, and the borrow checker's
+/// `src/codegen/mod.rs:2288-2288`, `src/codegen/mod.rs:3270-3270`, and the borrow checker's
 /// `register_imported_functions`. So `import lib2::{helper};` imports the whole
 /// module.
 #[test]
@@ -1388,7 +1388,7 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// An imported name can shadow a built-in in the checkers but never in codegen,
 /// so the two disagree about which function a call means. The call lowering
 /// tests `crate::builtins::is_builtin(name)` FIRST and unconditionally
-/// (`src/codegen/mod.rs:6134-6136`), while the type checker
+/// (`src/codegen/mod.rs:6100-6102`), while the type checker
 /// (`src/typeck/mod.rs:1647-1647`) and `register_imported_functions` both insert
 /// the imported signature OVER the built-in.
 ///
@@ -1398,7 +1398,7 @@ fn test_a_module_in_a_subdirectory_can_be_imported() {
 /// signature and codegen emits `__pd_print_int("hello")` against the built-in's
 /// `long long`.
 #[test]
-#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:1647-1647 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:6134-6136 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M4, cross-file module imports)"]
+#[ignore = "XFAIL: an imported name that shadows a built-in is registered by the checkers but ignored by codegen — src/typeck/mod.rs:1647-1647 and the borrow checker insert the imported signature over the built-in, while src/codegen/mod.rs:6100-6102 tests is_builtin() first and unconditionally, so `pub fn print_int(s: String)` type-checks `print_int(\"hello\")` and then emits `__pd_print_int(\"hello\")`, which gcc rejects as \"incompatible pointer to integer conversion\" (owned by M4, cross-file module imports)"]
 fn test_an_import_may_not_silently_disagree_with_a_builtin() {
     let (compiled, output, _) = compile_and_run(
         &[("lib2.pd", "pub fn print_int(s: String) { }\n")],
@@ -1519,7 +1519,7 @@ fn emitted_c_over_runs(n: usize) -> Vec<String> {
 /// emission sites that produce DEFINITIONS — imported struct definitions
 /// (`src/codegen/mod.rs:2291-2319`) and imported function bodies
 /// (`src/codegen/mod.rs:2449-2461`) — from the prototype block
-/// (`src/codegen/mod.rs:3262-3273`), which is a fourth site and emits
+/// (`src/codegen/mod.rs:3267-3278`), which is a fourth site and emits
 /// declarations, not definitions. All four are ordered now, so the narrowing no
 /// longer isolates a fixed site from a broken one; it survives because the two
 /// assertions answer different questions, and this one localises a regression to
@@ -1766,7 +1766,9 @@ fn test_modules_and_generics_together_are_byte_stable() {
 
     // The monomorphizations must actually be there, or this test would pass by
     // exercising nothing — the same trap `tests/07_traits_basic.pd` fell into.
-    let monos = runs[0].matches("id_alpha_").count() + runs[0].matches("id_bravo_").count();
+    // A generic instance's C name is composed (`c_ident::instance_name`, #89/#92 r11).
+    let instance_of = |f: &str| palladium::codegen::c_ident::instance_name('f', f, &[]);
+    let monos = runs[0].matches(&instance_of("id_alpha")).count() + runs[0].matches(&instance_of("id_bravo")).count();
     assert!(
         monos > 0,
         "no monomorphized generic reached the C, so this test proves nothing:\n{}",
@@ -1819,10 +1821,10 @@ fn test_one_generic_name_with_two_instantiations_is_stable() {
         .collect();
 
     let first = definition_order(&runs[0]);
-    let monos: Vec<&&str> = first.iter().filter(|l| l.contains("id__")).collect();
+    let monos: Vec<&&str> = first.iter().filter(|l| l.contains("_g_f2_id")).collect();
     assert!(
         monos.len() == 2,
-        "expected both `id__i64` and `id__String` to be emitted, so the sort has \
+        "expected both `id` instances (`_g_f2_id…`, c_ident::instance_name) to be emitted, so the sort has \
          two same-name keys to break a tie between; found {}:\n{:#?}",
         monos.len(),
         first

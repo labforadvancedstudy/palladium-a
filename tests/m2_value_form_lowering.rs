@@ -71,7 +71,7 @@ fn the_path_call_diversion_needs_a_positive_function_hit() {
          fn main() { let r = Rect { w: 3 }; print_int(Rect::area(r)); }",
     );
     assert!(
-        c.contains("__pd_Rect_area"),
+        c.contains(&palladium::codegen::c_ident::path_name("Rect::area")),
         "a static-path method call should be mangled as a call:\n{}",
         c
     );
@@ -161,7 +161,7 @@ fn one_call_on_a_by_value_receiver_is_still_fine() {
          fn main() { let s = S { v: 1 }; print_int(s.take()); }",
     );
     assert!(
-        c.contains("__pd_S_take"),
+        c.contains(&palladium::codegen::c_ident::path_name("S::take")),
         "a single call should compile:\n{}",
         c
     );
@@ -189,7 +189,7 @@ fn an_enum_owned_method_is_reachable_by_its_path_form() {
          fn main() { let c = Color::Red; print_int(Color::code(c)); }",
     );
     assert!(
-        c.contains("__pd_Color_code"),
+        c.contains(&palladium::codegen::c_ident::path_name("Color::code")),
         "the path form should reach the method:\n{}",
         c
     );

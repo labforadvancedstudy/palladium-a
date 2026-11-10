@@ -2493,11 +2493,11 @@ impl CodeGenerator {
                             continue;
                         }
                         // Create a mangled method name
-                        let mangled_name = format!(
-                            "__pd_{}_{}",
-                            impl_block.for_type.to_string().replace("::", "_"),
+                        let mangled_name = c_ident::path_name(&format!(
+                            "{}::{}",
+                            impl_block.for_type,
                             method.name
-                        );
+                        ));
                         self.generate_function_with_name(method, &mangled_name)?;
                     }
                 }
@@ -2671,15 +2671,15 @@ impl CodeGenerator {
         self.output.push_str("typedef enum {\n");
         for variant in &enum_def.variants {
             self.output.push_str(&format!(
-                "    __{}__{},
+                "    {},
 ",
-                enum_def.name, variant.name
+                c_ident::composed('c', &[&enum_def.name, &variant.name])
             ));
         }
         self.output.push_str(&format!(
-            "}} _g_{}Tag;
+            "}} {};
 \n",
-            enum_def.name
+            c_ident::composed('t', &[&enum_def.name])
         ));
 
         // N4-12. A TUPLE IN A PAYLOAD IS REFUSED, and by name rather than by
@@ -2738,9 +2738,9 @@ impl CodeGenerator {
                             ));
                         }
                         self.output.push_str(&format!(
-                            "}} _g_{}__{}_Data;
+                            "}} {};
 \n",
-                            enum_def.name, variant.name
+                            c_ident::composed('d', &[&enum_def.name, &variant.name])
                         ));
                     }
                 }
@@ -2755,9 +2755,9 @@ impl CodeGenerator {
                         ));
                     }
                     self.output.push_str(&format!(
-                        "}} _g_{}__{}_Data;
+                        "}} {};
 \n",
-                        enum_def.name, variant.name
+                        c_ident::composed('d', &[&enum_def.name, &variant.name])
                     ));
                 }
             }
@@ -2770,9 +2770,9 @@ impl CodeGenerator {
             enum_def.name
         ));
         self.output.push_str(&format!(
-            "    _g_{}Tag tag;
+            "    {} tag;
 ",
-            enum_def.name
+            c_ident::composed('t', &[&enum_def.name])
         ));
 
         // Only generate union if there are variants with data
@@ -2793,20 +2793,18 @@ impl CodeGenerator {
                     EnumVariantData::Tuple(types) => {
                         if !types.is_empty() {
                             self.output.push_str(&format!(
-                                "        _g_{}__{}_Data {};
+                                "        {} {};
 ",
-                                enum_def.name,
-                                variant.name,
+                                c_ident::composed('d', &[&enum_def.name, &variant.name]),
                                 c_ident::c_enum_payload_member(&variant.name)
                             ));
                         }
                     }
                     EnumVariantData::Struct(_) => {
                         self.output.push_str(&format!(
-                            "        _g_{}__{}_Data {};
+                            "        {} {};
 ",
-                            enum_def.name,
-                            variant.name,
+                            c_ident::composed('d', &[&enum_def.name, &variant.name]),
                             c_ident::c_enum_payload_member(&variant.name)
                         ));
                     }
@@ -2837,14 +2835,16 @@ impl CodeGenerator {
                 EnumVariantData::Unit => {
                     // Unit variant constructor
                     self.output.push_str(&format!(
-                        "static inline {} _g_{}_{}() {{
+                        "static inline {} {}() {{
 ",
-                        enum_def.name, enum_def.name, variant.name
+                        enum_def.name,
+                        c_ident::composed('u', &[&enum_def.name, &variant.name])
                     ));
                     self.output.push_str(&format!(
-                        "    {} result = {{.tag = __{}__{}}};
+                        "    {} result = {{.tag = {}}};
 ",
-                        enum_def.name, enum_def.name, variant.name
+                        enum_def.name,
+                        c_ident::composed('c', &[&enum_def.name, &variant.name])
                     ));
                     self.output.push_str(
                         "    return result;
@@ -2855,8 +2855,9 @@ impl CodeGenerator {
                 EnumVariantData::Tuple(types) => {
                     // Tuple variant constructor
                     self.output.push_str(&format!(
-                        "static inline {} _g_{}_{}__new(",
-                        enum_def.name, enum_def.name, variant.name
+                        "static inline {} {}(",
+                        enum_def.name,
+                        c_ident::composed('n', &[&enum_def.name, &variant.name])
                     ));
 
                     for (i, ty) in types.iter().enumerate() {
@@ -2869,9 +2870,10 @@ impl CodeGenerator {
 
                     self.output.push_str(") {\n");
                     self.output.push_str(&format!(
-                        "    {} result = {{.tag = __{}__{}}};
+                        "    {} result = {{.tag = {}}};
 ",
-                        enum_def.name, enum_def.name, variant.name
+                        enum_def.name,
+                        c_ident::composed('c', &[&enum_def.name, &variant.name])
                     ));
 
                     for (i, ty) in types.iter().enumerate() {
@@ -2893,8 +2895,9 @@ impl CodeGenerator {
                 EnumVariantData::Struct(fields) => {
                     // Struct variant constructor
                     self.output.push_str(&format!(
-                        "static inline {} _g_{}_{}__new(",
-                        enum_def.name, enum_def.name, variant.name
+                        "static inline {} {}(",
+                        enum_def.name,
+                        c_ident::composed('n', &[&enum_def.name, &variant.name])
                     ));
 
                     for (i, (field_name, field_type)) in fields.iter().enumerate() {
@@ -2907,9 +2910,10 @@ impl CodeGenerator {
 
                     self.output.push_str(") {\n");
                     self.output.push_str(&format!(
-                        "    {} result = {{.tag = __{}__{}}};
+                        "    {} result = {{.tag = {}}};
 ",
-                        enum_def.name, enum_def.name, variant.name
+                        enum_def.name,
+                        c_ident::composed('c', &[&enum_def.name, &variant.name])
                     ));
 
                     for (field_name, field_type) in fields {
@@ -3193,8 +3197,9 @@ impl CodeGenerator {
                 let judged = self.capture_output(|g| g.generate_expression(&global.value));
                 self.current_fn_name = item;
                 definition.push_str(&format!(
-                    "static void __attribute__((unused)) __pd_judge_{}(void) {{ (void)({}); }}\n",
-                    global.name, judged?
+                    "static void __attribute__((unused)) {}(void) {{ (void)({}); }}\n",
+                    c_ident::composed('j', &[&global.name]),
+                    judged?
                 ));
             }
             self.output.push_str(&definition);
@@ -3302,11 +3307,11 @@ impl CodeGenerator {
                         if !method.type_params.is_empty() || method.is_async {
                             continue;
                         }
-                        let mangled_name = format!(
-                            "__pd_{}_{}",
-                            impl_block.for_type.to_string().replace("::", "_"),
+                        let mangled_name = c_ident::path_name(&format!(
+                            "{}::{}",
+                            impl_block.for_type,
                             method.name
-                        );
+                        ));
                         let sig = self.function_signature(method, &mangled_name)?;
                         push(&mut prototypes, &mangled_name, sig);
                     }
@@ -4995,24 +5000,7 @@ impl CodeGenerator {
     /// stable across runs (no hash seed, no counter) and a nested shape's name
     /// contains its inner shape's name.
     fn tuple_c_name(element_c_types: &[String]) -> String {
-        let mut name = format!("__pd_tuple{}", element_c_types.len());
-        for c_type in element_c_types {
-            name.push('_');
-            let mut last_was_underscore = true;
-            for ch in c_type.chars() {
-                if ch.is_ascii_alphanumeric() {
-                    name.push(ch);
-                    last_was_underscore = false;
-                } else if ch == '*' {
-                    name.push_str("p");
-                    last_was_underscore = false;
-                } else if !last_was_underscore {
-                    name.push('_');
-                    last_was_underscore = true;
-                }
-            }
-        }
-        name
+        c_ident::composed('p', element_c_types)
     }
 
     /// Register every tuple shape an EXPRESSION builds, innermost first.
@@ -5154,37 +5142,15 @@ impl CodeGenerator {
     /// Record a tuple shape so its struct and constructor are emitted, and
     /// answer with its C name.
     ///
-    /// THE MANGLING IS NOT INJECTIVE, and this is where that is caught rather
-    /// than where it would be paid. `tuple_c_name` sanitises each element type
-    /// and joins with `_`, so a struct named `A_B` beside `C` mangles to the same
-    /// name as `A` beside `B_C`. The encoding could be length-framed instead;
-    /// refusing is cheaper and, for a collision nobody has hit, more honest than
-    /// a scheme whose correctness argument is longer than the bug. What must NOT
-    /// happen is the silent version: keeping the first layout and emitting the
-    /// second tuple with the first's fields.
+    /// THE NAME IS INJECTIVE (#89/#92 review round 11): `tuple_c_name` is the
+    /// shared length-framed encoding (`c_ident::composed('p', …)`), so two
+    /// different shapes never share a name. The refusal that stood here caught
+    /// what the old `_`-joined sanitising allowed — a struct `A_B` beside `C`
+    /// against `A` beside `B_C` — and is gone with the collision it caught.
     fn register_tuple(&mut self, element_c_types: &[String]) -> Result<String> {
         let name = Self::tuple_c_name(element_c_types);
-        if !self
-            .tuple_shapes
-            .insert(name.clone(), element_c_types.to_vec())
-        {
-            let existing = self
-                .tuple_shapes
-                .element_types(&name)
-                .map(|t| t.join(", "))
-                .unwrap_or_default();
-            return Err(CompileError::CodegenError {
-                message: format!(
-                    "two different tuple shapes mangle to the same C name `{}`: ({}) and ({}). \
-                     The name is built by sanitising each element type, so an underscore in a \
-                     type name can move the boundary between elements. Rename one of the types \
-                     involved; this is a compiler limitation and not a limit of the language",
-                    name,
-                    existing,
-                    element_c_types.join(", ")
-                ),
-            });
-        }
+        let consistent = self.tuple_shapes.insert(name.clone(), element_c_types.to_vec());
+        debug_assert!(consistent, "`{}` names two tuple shapes: composed names are injective", name);
         Ok(name)
     }
 
@@ -5338,9 +5304,9 @@ impl CodeGenerator {
                 .map(|(i, c_type)| format!("{} f{}", c_type, i))
                 .collect();
             out.push_str(&format!(
-                "static {} {}_new({}) {{\n",
+                "static {} {}({}) {{\n",
                 name,
-                name,
+                c_ident::composed('q', &element_types),
                 params.join(", ")
             ));
             out.push_str(&format!("    {} t;\n", name));
@@ -5426,7 +5392,7 @@ impl CodeGenerator {
                 let mut condition = self.checked_comparison(
                     &format!("{}.tag", subject),
                     "==",
-                    &format!("__{}__{}", enum_name, variant),
+                    &c_ident::composed('c', &[enum_name, variant]),
                     "tag",
                     self.pattern_span,
                 );
@@ -6009,8 +5975,8 @@ impl CodeGenerator {
                 for element in elements {
                     element_types.push(self.expr_c_type(element, &outer, *span)?);
                 }
-                let name = self.register_tuple(&element_types)?;
-                self.output.push_str(&format!("{}_new(", name));
+                self.register_tuple(&element_types)?;
+                self.output.push_str(&format!("{}(", c_ident::composed('q', &element_types)));
                 for (i, element) in elements.iter().enumerate() {
                     if i > 0 {
                         self.output.push_str(", ");
@@ -6138,7 +6104,7 @@ impl CodeGenerator {
                                 // Check if this is a method call (contains ::)
                                 if name.contains("::") {
                                     // Convert Type::method to __pd_Type_method
-                                    let mangled = format!("__pd_{}", name.replace("::", "_"));
+                                    let mangled = c_ident::path_name(name);
                                     self.output.push_str(&mangled);
                                 } else if let Some(mangled_name) =
                                     self.get_mangled_name_for_call(name, args)
@@ -6589,13 +6555,13 @@ impl CodeGenerator {
                 match data {
                     None => {
                         // Unit variant
-                        self.output.push_str(&format!("_g_{}_{}", enum_name, variant));
+                        self.output.push_str(&c_ident::composed('u', &[enum_name, variant]));
                         self.output.push_str("()");
                     }
                     Some(EnumConstructorData::Tuple(exprs)) => {
                         // Tuple variant
                         self.output
-                            .push_str(&format!("_g_{}_{}__new", enum_name, variant));
+                            .push_str(&c_ident::composed('n', &[enum_name, variant]));
                         self.output.push('(');
                         for (i, expr) in exprs.iter().enumerate() {
                             if i > 0 {
@@ -6608,7 +6574,7 @@ impl CodeGenerator {
                     Some(EnumConstructorData::Struct(fields)) => {
                         // Struct variant
                         self.output
-                            .push_str(&format!("_g_{}_{}__new", enum_name, variant));
+                            .push_str(&c_ident::composed('n', &[enum_name, variant]));
                         self.output.push('(');
                         for (i, (_, expr)) in fields.iter().enumerate() {
                             if i > 0 {
@@ -6755,7 +6721,7 @@ impl CodeGenerator {
         generic_struct: &crate::typeck::GenericStruct,
     ) -> Result<StructDef> {
         // Generate a mangled name for the concrete struct
-        let mangled_name = format!("_g_{}_{}", struct_name, type_args.join("_"));
+        let mangled_name = c_ident::instance_name('s', struct_name, type_args);
 
         // Create a mapping from type parameters to concrete types
         let mut type_map = std::collections::HashMap::new();
@@ -6800,7 +6766,7 @@ impl CodeGenerator {
         generic_func: &crate::typeck::GenericFunction,
     ) -> Result<Function> {
         // Generate a mangled name for the concrete function
-        let mangled_name = format!("_g_{}__{}", func_name, type_args.join("_"));
+        let mangled_name = c_ident::instance_name('f', func_name, type_args);
 
         // Create a mapping from type parameters to concrete types
         let mut type_map = std::collections::HashMap::new();
@@ -6863,7 +6829,7 @@ impl CodeGenerator {
 
     /// Create a mangled name for a generic function
     fn mangle_generic_name(&self, func_name: &str, type_args: &[String]) -> String {
-        format!("_g_{}__{}", func_name, type_args.join("_"))
+        c_ident::instance_name('f', func_name, type_args)
     }
 
     /// Get the mangled name for a generic function call
@@ -7876,7 +7842,7 @@ mod tests {
         "#,
         )
         .unwrap();
-        assert!(c.contains("struct N n = _g_N_A__new(5LL);"), "{}", c);
+        assert!(c.contains(&format!("struct N n = {}(5LL);", c_ident::composed('n', &["N", "A"]))), "{}", c);
     }
 
     #[test]
@@ -8753,12 +8719,12 @@ mod tests {
         assert!(c.contains("struct Counter __pd_val0 = make();"), "{}", c);
         assert!(c.contains("long long __pd_val1 = G;"), "{}", c);
         assert!(
-            c.contains("__pd_Counter_plus(__pd_val0, __pd_val1)"),
+            c.contains(&format!("{}(__pd_val0, __pd_val1)", c_ident::path_name("Counter::plus"))),
             "{}",
             c
         );
         assert_eq!(c.matches("__pd_val0 = make();").count(), 1, "{}", c);
-        assert!(!c.contains("__pd_Counter_plus(make()"), "{}", c);
+        assert!(!c.contains(&format!("{}(make()", c_ident::path_name("Counter::plus"))), "{}", c);
     }
 
     #[test]
@@ -8831,57 +8797,32 @@ mod indexmap_lite {
 mod tuple_shape_tests {
     use super::*;
 
-    /// THE MANGLING IS NOT INJECTIVE, and this test says so in one line.
-    ///
-    /// `tuple_c_name` sanitises each element's C type and joins with `_`, so an
-    /// underscore inside a type name is indistinguishable from the separator
-    /// between two elements. It is why `register_tuple` refuses a second layout
-    /// under a name it has already given out.
-    ///
-    /// SYNTHETIC ELEMENT TYPES, DELIBERATELY — and this is the part worth
-    /// reading. No Palladium program known to this author can reach the refusal,
-    /// because every element spelling `type_to_c` produces carries a delimiter no
-    /// other spelling can fake: a named type becomes `struct X` (the space
-    /// sanitises to `_`, so `A_B` beside `C` is `struct_A_B_struct_C` while `A`
-    /// beside `B_C` is `struct_A_struct_B_C`), a primitive is one of a closed set
-    /// (`long_long`, `const_char_p`, `int`, `double`), and a nested tuple's name
-    /// begins `__pd_tupleN_`, whose arity digit fixes how many elements follow.
-    /// Tried and refused for other reasons: type aliases (`type A_B = i64;` is
-    /// not transparent to the type checker here).
-    ///
-    /// So the refusal is a guard against a FUTURE spelling, and the only way to
-    /// test it today is to hand `register_tuple` the strings such a spelling
-    /// would produce. A test that could not run is worse than one whose inputs
-    /// are honest about being constructed.
+    /// THE TUPLE NAME IS INJECTIVE (review round 11). The old sanitise-and-join
+    /// gave `A_B` beside `C` and `A` beside `B_C` one name, and a refusal stood
+    /// guard over a collision no program was known to reach; the shared
+    /// length-framed encoding gives them two, which decode back to their shapes.
     #[test]
-    fn the_mangling_can_collide() {
+    fn the_tuple_name_is_injective() {
+        let ab_c = CodeGenerator::tuple_c_name(&["A_B".to_string(), "C".to_string()]);
+        let a_bc = CodeGenerator::tuple_c_name(&["A".to_string(), "B_C".to_string()]);
+        assert_ne!(ab_c, a_bc);
         assert_eq!(
-            CodeGenerator::tuple_c_name(&["A_B".to_string(), "C".to_string()]),
-            CodeGenerator::tuple_c_name(&["A".to_string(), "B_C".to_string()]),
-            "if these ever differ the mangling became injective — delete the refusal below \
-             and say so, do not leave a check nobody can reach"
+            c_ident::decode_composed(&ab_c),
+            Some(('p', vec!["A_B".to_string(), "C".to_string()]))
         );
     }
 
-    /// And the collision is REFUSED rather than silently resolved in favour of
-    /// whichever shape arrived first.
+    /// Both former colliders register, each under its own name.
     #[test]
-    fn a_colliding_layout_is_refused_by_name() {
+    fn two_layouts_that_used_to_collide_both_register() {
         let mut codegen = CodeGenerator::new("collision_probe").expect("a generator");
         let first = codegen
             .register_tuple(&["A_B".to_string(), "C".to_string()])
             .expect("the first shape registers");
-        let second = codegen.register_tuple(&["A".to_string(), "B_C".to_string()]);
-        let err = second.expect_err(
-            "the second shape mangles to the same name with different fields; accepting it \
-             would emit one struct and use it for both",
-        );
-        let text = format!("{}", err);
-        assert!(
-            text.contains("mangle to the same C name") && text.contains(&first),
-            "the refusal must name the collision and the name involved: {}",
-            text
-        );
+        let second = codegen
+            .register_tuple(&["A".to_string(), "B_C".to_string()])
+            .expect("the second shape registers under its own name");
+        assert_ne!(first, second);
     }
 
     /// Registering the SAME layout twice is not a collision — it is the ordinary
@@ -9269,10 +9210,19 @@ fn spelled_c_fn(name: &str) -> String {
         .collect()
 }
 
-/// A function's C name as a person reads it: a composed name's `_g_` and a
-/// moved source name's `_u` (`c_ident::COMPOSED_PREFIX`, `c_ident::c_name`)
-/// taken off, so `_g_same__String` reads `same__String` and `_u__f` reads `_f`.
-fn shown_c_fn(name: &str) -> &str {
-    let name = name.strip_prefix(c_ident::COMPOSED_PREFIX).unwrap_or(name);
-    name.strip_prefix("_u").filter(|rest| rest.starts_with('_')).unwrap_or(name)
+/// A function's C name as a person reads it (the PD0082 marker, the match
+/// trap): a composed name decoded (`c_ident::decode_composed`) — a generic
+/// instance as `f__args`, the spelling these messages always had, a method as
+/// `T::m` — and a moved source name's `_u` taken off, so `_u__f` reads `_f`.
+fn shown_c_fn(name: &str) -> String {
+    let unmoved = |s: &str| s.strip_prefix("_u").filter(|rest| rest.starts_with('_')).unwrap_or(s).to_string();
+    match c_ident::decode_composed(name) {
+        Some(('f', parts)) if !parts.is_empty() => {
+            let parts: Vec<String> = parts.iter().map(|p| unmoved(p)).collect();
+            format!("{}__{}", parts[0], parts[1..].join("_"))
+        }
+        Some(('m', parts)) => parts.iter().map(|p| unmoved(p)).collect::<Vec<_>>().join("::"),
+        Some((_, parts)) => parts.iter().map(|p| unmoved(p)).collect::<Vec<_>>().join("_"),
+        None => unmoved(name),
+    }
 }

@@ -709,7 +709,7 @@ fn escape_assign_target(target: &mut AssignTarget) {
 
 fn escape_expr(expr: &mut Expr) {
     match expr {
-        Expr::Ident(name) => escape_in_place(name),
+        Expr::Ident(name) => escape_path_in_place(name),
         Expr::ArrayLiteral { elements, .. } => elements.iter_mut().for_each(escape_expr),
         // N4-12. A tuple holds expressions; its INDEX is a number and can collide
         // with nothing.
@@ -821,6 +821,19 @@ fn escape_expr(expr: &mut Expr) {
     }
 }
 
+/// A name that may be a PATH (`T::m`, a static or desugared method call):
+/// each segment is escaped as the item it names was where it was declared —
+/// the type as a type, the method as a method — so `path_name` composes the
+/// same components at the call and at the definition (review round 11; as one
+/// string, `E::_m` kept its `_m` while the method was declared `_u_m`).
+fn escape_path_in_place(name: &mut String) {
+    if name.contains("::") {
+        *name = name.split("::").map(|segment| c_name(segment).into_owned()).collect::<Vec<_>>().join("::");
+    } else {
+        escape_in_place(name);
+    }
+}
+
 fn escape_in_place(name: &mut String) {
     if let Cow::Owned(escaped) = c_name(name) {
         *name = escaped;
@@ -866,25 +879,116 @@ pub fn c_name(name: &str) -> Cow<'_, str> {
 }
 
 /// THE PREFIX OF EVERY C NAME CODE GENERATION COMPOSES FROM SOURCE NAMES
-/// (#89/#92 review round 10). A composition of two source names can be a
-/// source name: main emitted a generic `id` at `S` as `id__S`, an enum `E`'s
-/// unit variant `V` as the function `E_V`, its payload as `E__V_Data`, its tag
-/// type as `ETag`, a generic struct `Box<S>` as `Box_S` — and a program may
-/// define `id__S`, `E_V` or `Box_S` itself (loud on main: a redefinition; and
-/// round 9's `_u` spelling made `id___u_S` a NEW such name, silently taking a
-/// program's `fn id___u_S` — astra). So every composed name begins with
-/// `_g_`, which no source name can (`c_name`: a source name beginning with `_`
-/// becomes `_u_…`) and no other generated name does (`c_name`'s list):
-/// `_g_<f>__<args>` (a generic instantiation, `mangle_generic_name` and
-/// `monomorphize_function`), `_g_<S>_<args>` (a generic struct,
-/// `monomorphize_struct`), `_g_<E>_<V>` / `_g_<E>_<V>__new` (variant
-/// constructors, defined and called), `_g_<E>__<V>_Data` (payload structs),
-/// `_g_<E>Tag` (the tag type). Names composed under `__pd_` (methods
-/// `__pd_<T>_<m>`, imports `__pd_<module>_<fn>`, `__pd_tuple…`) and the tag
-/// constants `__<E>__<V>` already lie outside every source spelling. Two
-/// composed names can still meet each other exactly as they did on main; the
-/// prefix adds no such meeting and removes every meeting with a source name.
+/// (#89/#92, review rounds 10-11). See `composed`.
 pub const COMPOSED_PREFIX: &str = "_g_";
+
+/// THE ONE WAY A C NAME IS COMPOSED FROM MORE THAN ONE SOURCE COMPONENT.
+///
+/// `_g_` + a family letter + each component as `<len>_<encoded>`, where the
+/// encoding keeps ASCII letters and digits, writes `_` as `__` and every other
+/// byte as `_` + two lowercase hex digits (a type argument such as `Box<_u_S>`
+/// or a C type such as `long long` is a component too). `decode_composed`
+/// inverts it exactly, so two different (family, components) never share a
+/// name — and no source name can be one, because a source name beginning with
+/// `_` is emitted `_u_…` (`c_name`) and no other generated name begins `_g_`.
+///
+/// WHY LENGTH-DELIMITED. Main joined components with `_` (`id__S`, `E_V`,
+/// `E__V_Data`, `ETag`, `__E__V`, `__pd_T_m`, `Box_S`) and a program could
+/// define those names; round 10 put them under `_g_` but kept the `_` joins,
+/// and with `_u` in the components the joins met each other where main's did
+/// not (astra, round 10: `f<_S>` and `f_<u_S>` both `_g_f___u_S`; `B<_S>` and
+/// `B_<u_S>`; `E::_V` and `E_::u_V`; methods `E::_m` and `E_::u_m`). A join is
+/// never injective; a length-delimited encoding is.
+///
+/// Families (definitions and uses go through the same call): `f` a generic
+/// function instance `[f, type args…]`, `s` a generic struct instance
+/// `[S, type args…]`, `u` a unit-variant constructor and `n` a tuple/struct
+/// variant constructor `[E, V]`, `d` a payload struct `[E, V]`, `t` an enum's
+/// tag type `[E]`, `c` a tag constant `[E, V]`, `m` a method or static call
+/// `[path segments…]` (`T::m`), `p` a tuple struct and `q` its constructor
+/// `[element C types…]`, `j` a file-scope judge `[item]`.
+pub fn composed<S: AsRef<str>>(family: char, components: &[S]) -> String {
+    let mut name = String::from(COMPOSED_PREFIX);
+    name.push(family);
+    for component in components {
+        let encoded = encode_component(component.as_ref());
+        name.push_str(&encoded.len().to_string());
+        name.push('_');
+        name.push_str(&encoded);
+    }
+    name
+}
+
+/// A generic instance's composed name: `[name, type args…]` under `family`.
+pub fn instance_name(family: char, name: &str, type_args: &[String]) -> String {
+    let mut components = vec![name];
+    components.extend(type_args.iter().map(String::as_str));
+    composed(family, &components)
+}
+
+/// A method's or a static call's composed name, from its `T::m` path.
+pub fn path_name(path: &str) -> String {
+    composed('m', &path.split("::").collect::<Vec<_>>())
+}
+
+fn encode_component(component: &str) -> String {
+    let mut out = String::with_capacity(component.len());
+    for byte in component.bytes() {
+        if byte.is_ascii_alphanumeric() {
+            out.push(byte as char);
+        } else if byte == b'_' {
+            out.push_str("__");
+        } else {
+            out.push_str(&format!("_{:02x}", byte));
+        }
+    }
+    out
+}
+
+fn decode_component(encoded: &str) -> Option<String> {
+    let bytes = encoded.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'_' {
+            if bytes.get(i + 1) == Some(&b'_') {
+                out.push(b'_');
+                i += 2;
+            } else {
+                let hex = encoded.get(i + 1..i + 3)?;
+                if !hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+                    return None;
+                }
+                out.push(u8::from_str_radix(hex, 16).ok()?);
+                i += 3;
+            }
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// `composed`'s inverse: the family and the components, or `None` for a name
+/// `composed` cannot have produced.
+pub fn decode_composed(name: &str) -> Option<(char, Vec<String>)> {
+    let rest = name.strip_prefix(COMPOSED_PREFIX)?;
+    let family = rest.chars().next().filter(|c| c.is_ascii_lowercase())?;
+    let mut rest = &rest[1..];
+    let mut components = Vec::new();
+    while !rest.is_empty() {
+        let digits = rest.find('_')?;
+        if digits == 0 || !rest[..digits].bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let len: usize = rest[..digits].parse().ok()?;
+        let body = rest.get(digits + 1..digits + 1 + len)?;
+        components.push(decode_component(body)?);
+        rest = &rest[digits + 1 + len..];
+    }
+    Some((family, components))
+}
 
 /// A TYPE ARGUMENT as the type checker hands it to code generation —
 /// `checker_type_to_string`'s spelling: `_S`, `Box<_S>`, `[_S; 2]`,
@@ -1176,5 +1280,51 @@ mod tests {
             assert_eq!(escape_type_argument(arg), c, "{}", arg);
             assert_eq!(escape_type_argument(arg), escape_type_argument(arg));
         }
+    }
+
+    /// `composed` IS INJECTIVE, by decoding (review round 11): every family over
+    /// every sequence of up to three adversarial components — underscores,
+    /// `_u`, digits, `g_`, `_g_`, a composed name itself, type arguments and C
+    /// types — decodes back to exactly itself, and no two share a name, and
+    /// none is a name `c_name` can produce.
+    #[test]
+    fn composed_names_decode_to_their_components_and_never_meet() {
+        let atoms = [
+            "", "_", "__", "_u", "_u_", "u_", "_S", "u_S", "_u_S", "1", "1_", "_1", "12_3", "g_",
+            "_g_", "_g_f3_abc", "f", "f_", "B", "B_", "E", "E_", "V", "_V", "u_V", "a_b", "Box<_u_S>",
+            "[i64; 2]", "long long", "struct _u_S*", "\u{e9}t\u{e9}", "Tag", "_Data", "new",
+        ];
+        let mut sequences: Vec<Vec<&str>> = vec![vec![]];
+        for a in atoms {
+            sequences.push(vec![a]);
+            for b in atoms {
+                sequences.push(vec![a, b]);
+                for c in ["", "_", "1", "_u_S"] {
+                    sequences.push(vec![a, b, c]);
+                }
+            }
+        }
+        let mut seen = std::collections::HashMap::new();
+        for family in ['f', 's', 'u', 'n', 'd', 't', 'c', 'm', 'p', 'q', 'j'] {
+            for seq in &sequences {
+                let name = composed(family, seq);
+                assert!(name.starts_with(COMPOSED_PREFIX) && !name.starts_with("_u_"), "{}", name);
+                assert!(name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'), "{}", name);
+                let owned: Vec<String> = seq.iter().map(|s| s.to_string()).collect();
+                assert_eq!(decode_composed(&name), Some((family, owned.clone())), "{}", name);
+                if let Some(other) = seen.insert(name.clone(), (family, owned.clone())) {
+                    panic!("{:?} and {:?} both compose to `{}`", other, (family, owned), name);
+                }
+            }
+        }
+        // astra's round-10 pairs, now four distinct names each
+        assert_ne!(instance_name('f', "f", &["_u_S".into()]), instance_name('f', "f_", &["u_S".into()]));
+        assert_ne!(instance_name('s', "B", &["_u_S".into()]), instance_name('s', "B_", &["u_S".into()]));
+        assert_ne!(composed('c', &["E", "_u_V"]), composed('c', &["E_", "u_V"]));
+        assert_ne!(path_name("E::_u_m"), path_name("E_::u_m"));
+        assert_eq!(path_name("Point::new"), "_g_m5_Point3_new");
+        assert_eq!(decode_composed("_g_"), None);
+        assert_eq!(decode_composed("_g_f3_ab"), None);
+        assert_eq!(decode_composed("_g_fx_ab"), None);
     }
 }

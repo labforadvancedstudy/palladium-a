@@ -1301,7 +1301,7 @@ fn a_file_scope_comparison_is_judged_in_a_twin_and_runs() {
                   fn main() { if B { print_int(1); } if C { print_int(2); } if D { print_int(3); } }\n";
     let (_dir, _c_file, c) = emitted_c(source, "cmp_r7_file_scope");
     assert!(c.contains("static const int B = (1LL < 2LL);"), "{}", c);
-    assert!(c.contains("static void __attribute__((unused)) __pd_judge_B(void)"), "{}", c);
+    assert!(c.contains(&format!("static void __attribute__((unused)) {}(void)", palladium::codegen::c_ident::composed('j', &["B"]))), "{}", c);
     assert!(c.contains("\"PD0082|1|19|<|B\"") && c.contains("|==|C\""), "{}", c);
     assert_eq!(run(source, "cmp_r7_file_scope_run"), "1\n2\n3\n");
 
@@ -1461,5 +1461,38 @@ fn a_composed_c_name_never_meets_a_source_name() {
     ];
     for (program, expected) in cases {
         assert_eq!(run(program, "cmp_r10_composed"), expected, "{}", program);
+    }
+}
+
+/// COMPOSED NAMES ARE AN INJECTIVE ENCODING OF THEIR COMPONENTS (review round
+/// 11). Round 10 kept `_` joins under `_g_`, and a join is not injective: with
+/// `_u` in the components, `f<_S>`/`f_<u_S>`, `B<_S>`/`B_<u_S>`, `E::_V`/`E_::u_V`
+/// and methods `E::_m`/`E_::u_m` met where main's names did not (astra: main
+/// `1 2`, `7 8`, `1 2`, `1 2`; round 10 gcc), and a file-scope judge
+/// `__pd_judge_K` met the method `judge::K` (fable: main `3 1`, `4 1`, `7 1`).
+/// Every composed name is now `c_ident::composed` — length-delimited components
+/// under `_g_` — so these print what main printed, and the pairs that met on
+/// main too (`a<b__c>`/`a__b<c>`, `A<B_i64>`/`A_B<i64>`, `A_B::m`/`A::B_m`,
+/// `A_B::C`/`A::B_C`, `A__B::C`/`A::B__C`, a method `string::eq` beside the
+/// runtime's `__pd_string_eq`; gcc refused them) now run.
+#[test]
+fn composed_names_meet_nothing_main_kept_apart() {
+    let cases = [
+        ("struct _S{x:i64}struct u_S{x:i64}fn f<T>(x:T)->i64{1}fn f_<T>(x:T)->i64{2}fn main(){let a=_S{x:7};let b=u_S{x:8};print_int(f(a));print_int(f_(b));}", "1\n2\n"),
+        ("struct _S{x:i64}struct u_S{x:i64}struct B<T>{v:T}struct B_<T>{w:T}fn main(){let a=B{v:_S{x:7}};let b=B_{w:u_S{x:8}};print_int(a.v.x);print_int(b.w.x);}", "7\n8\n"),
+        ("enum E{_V}enum E_{u_V}fn main(){match E::_V{E::_V=>{print_int(1);}}match E_::u_V{E_::u_V=>{print_int(2);}}}", "1\n2\n"),
+        ("struct E{x:i64}struct E_{x:i64}impl E{fn _m(self)->i64{1}}impl E_{fn u_m(self)->i64{2}}fn main(){let a=E{x:1};let b=E_{x:2};print_int(a._m());print_int(b.u_m());}", "1\n2\n"),
+        ("struct judge { n: i64 }\nimpl judge { fn K(&self) -> i64 { self.n } }\nconst K: bool = 1 == 1;\nfn b(x: bool) { if x { print_int(1); } else { print_int(0); } }\nfn main() { let j = judge { n: 3 }; print_int(j.K()); b(K); }", "3\n1\n"),
+        ("struct judge { n: i64 }\nimpl judge { fn S(&self) -> i64 { self.n } }\nstatic S: bool = 2 > 1;\nfn b(x: bool) { if x { print_int(1); } else { print_int(0); } }\nfn main() { let j = judge { n: 4 }; print_int(j.S()); b(S); }", "4\n1\n"),
+        ("struct judge { n: i64 }\nimpl judge { fn K(&self) -> i64 { self.n } }\nconst K: bool = (1 + 1) == 2;\nfn b(x: bool) { if x { print_int(1); } else { print_int(0); } }\nfn main() { let j = judge { n: 7 }; print_int(j.K()); b(K); }", "7\n1\n"),
+        ("struct b__c { x: i64 }\nfn a<T>(x: T) -> T { x }\nfn a__b<T>(x: T) -> T { x }\nstruct c { y: i64 }\nfn main() { let v = b__c { x: 1 }; print_int(a(v).x); let w = c { y: 2 }; print_int(a__b(w).y); }", "1\n2\n"),
+        ("struct A<T> { v: T }\nstruct A_B<T> { w: T }\nstruct B_i64 { x: i64 }\nfn main() { let p = A { v: B_i64 { x: 1 } }; print_int(p.v.x); let q = A_B { w: 2 }; print_int(q.w); }", "1\n2\n"),
+        ("struct A_B { x: i64 }\nstruct A { y: i64 }\nimpl A_B { fn m(&self) -> i64 { self.x } }\nimpl A { fn B_m(&self) -> i64 { self.y } }\nfn main() { let p = A_B { x: 1 }; let q = A { y: 2 }; print_int(p.m()); print_int(q.B_m()); }", "1\n2\n"),
+        ("enum A_B { C(i64) }\nenum A { B_C(i64) }\nfn main() { let x = A_B::C(1); match x { A_B::C(n) => { print_int(n); } } let y = A::B_C(2); match y { A::B_C(n) => { print_int(n); } } }", "1\n2\n"),
+        ("enum A__B { C, D }\nenum A { B__C, E }\nfn main() { let x = A__B::C; match x { A__B::C => { print_int(1); } A__B::D => { print_int(0); } } let y = A::B__C; match y { A::B__C => { print_int(2); } A::E => { print_int(0); } } }", "1\n2\n"),
+        ("struct string { n: i64 }\nimpl string { fn eq(&self, o: string) -> bool { self.n == o.n } }\nfn b(x: bool) { if x { print_int(1); } else { print_int(0); } }\nfn main() { let s = string { n: 1 }; let t = string { n: 1 }; b(s.eq(t)); b(string_eq(\"a\", \"a\")); }", "1\n1\n"),
+    ];
+    for (program, expected) in cases {
+        assert_eq!(run(program, "cmp_r11_composed"), expected, "{}", program);
     }
 }
