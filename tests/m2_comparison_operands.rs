@@ -1496,3 +1496,27 @@ fn composed_names_meet_nothing_main_kept_apart() {
         assert_eq!(run(program, "cmp_r11_composed"), expected, "{}", program);
     }
 }
+
+/// NESTED TUPLES EMIT C OF MAIN'S ORDER (review round 12). Each tuple's C name
+/// embeds its element's (`struct <inner>`); round 11's encoding doubled every
+/// `_` of the inner name again at every level, so 23 nested `(value, 2)`
+/// tuples emitted 599,832,240 bytes of C (astra; main 52,129). An identifier
+/// run is now embedded once, so a level costs what it costs on main: measured
+/// 15,454 / 31,094 / 52,129 bytes on main and 16,786 / 36,402 / 63,121 here at
+/// depths 8 / 16 / 23. Each still prints its value.
+#[test]
+fn nested_tuples_emit_c_of_mains_order() {
+    let program = |depth: usize| {
+        let mut e = "1".to_string();
+        for _ in 0..depth {
+            e = format!("({}, 2)", e);
+        }
+        format!("fn main(){{let x={};print_int(x.1);}}", e)
+    };
+    let size = |depth: usize| emitted_c(&program(depth), "cmp_r12_tuple_depth").2.len();
+    let (eight, sixteen, twenty_three) = (size(8), size(16), size(23));
+    assert!(twenty_three < 120_000, "depth 23 emitted {} bytes (main 52,129)", twenty_three);
+    assert!(twenty_three - sixteen < 7 * 6_000, "16 -> 23 added {} bytes", twenty_three - sixteen);
+    assert!(sixteen - eight < 8 * 6_000, "8 -> 16 added {} bytes", sixteen - eight);
+    assert_eq!(run(&program(23), "cmp_r12_tuple_depth_run"), "2\n");
+}

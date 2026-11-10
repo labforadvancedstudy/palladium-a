@@ -884,13 +884,22 @@ pub const COMPOSED_PREFIX: &str = "_g_";
 
 /// THE ONE WAY A C NAME IS COMPOSED FROM MORE THAN ONE SOURCE COMPONENT.
 ///
-/// `_g_` + a family letter + each component as `<len>_<encoded>`, where the
-/// encoding keeps ASCII letters and digits, writes `_` as `__` and every other
-/// byte as `_` + two lowercase hex digits (a type argument such as `Box<_u_S>`
-/// or a C type such as `long long` is a component too). `decode_composed`
-/// inverts it exactly, so two different (family, components) never share a
-/// name — and no source name can be one, because a source name beginning with
-/// `_` is emitted `_u_…` (`c_name`) and no other generated name begins `_g_`.
+/// `_g_` + a family letter + each component as a sequence of RUNS ended by
+/// `z`: a run of C identifier characters is copied verbatim as `<len>_<run>`,
+/// any other run (`<`, ` `, `*`, …: a type argument such as `Box<_u_S>` or a C
+/// type such as `long long` is a component too) as `<len>x<hex>`.
+/// `decode_composed` inverts it exactly — after each run's length comes `_` or
+/// `x`, after each run a digit (another run) or `z` (the component ends) — so
+/// two different (family, components) never share a name, and no source name
+/// can be one: a source name beginning with `_` is emitted `_u_…` (`c_name`)
+/// and no other generated name begins `_g_`.
+///
+/// AND THE SIZE IS LINEAR (review round 12). Round 11 escaped `_` as `__`, so a
+/// composed name embedded in a component — a tuple whose element is a tuple,
+/// `struct _g_p…` — had every underscore doubled again at every level: 23
+/// nested `(value, 2)` tuples emitted 599,832,240 bytes of C (main: 52,129;
+/// astra). An identifier run is now copied as it is, so an inner name appears
+/// once inside the outer one, and each level adds a constant.
 ///
 /// WHY LENGTH-DELIMITED. Main joined components with `_` (`id__S`, `E_V`,
 /// `E__V_Data`, `ETag`, `__E__V`, `__pd_T_m`, `Box_S`) and a program could
@@ -911,10 +920,7 @@ pub fn composed<S: AsRef<str>>(family: char, components: &[S]) -> String {
     let mut name = String::from(COMPOSED_PREFIX);
     name.push(family);
     for component in components {
-        let encoded = encode_component(component.as_ref());
-        name.push_str(&encoded.len().to_string());
-        name.push('_');
-        name.push_str(&encoded);
+        name.push_str(&encode_component(component.as_ref()));
     }
     name
 }
@@ -931,43 +937,64 @@ pub fn path_name(path: &str) -> String {
     composed('m', &path.split("::").collect::<Vec<_>>())
 }
 
+fn is_c_ident_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// One component's runs, then `z` (see `composed`).
 fn encode_component(component: &str) -> String {
-    let mut out = String::with_capacity(component.len());
-    for byte in component.bytes() {
-        if byte.is_ascii_alphanumeric() {
-            out.push(byte as char);
-        } else if byte == b'_' {
-            out.push_str("__");
+    let bytes = component.as_bytes();
+    let mut out = String::with_capacity(component.len() + 8);
+    let mut i = 0;
+    while i < bytes.len() {
+        let ident = is_c_ident_byte(bytes[i]);
+        let start = i;
+        while i < bytes.len() && is_c_ident_byte(bytes[i]) == ident {
+            i += 1;
+        }
+        if ident {
+            out.push_str(&format!("{}_{}", i - start, &component[start..i]));
         } else {
-            out.push_str(&format!("_{:02x}", byte));
+            let hex: String = bytes[start..i].iter().map(|b| format!("{:02x}", b)).collect();
+            out.push_str(&format!("{}x{}", hex.len(), hex));
         }
     }
+    out.push('z');
     out
 }
 
-fn decode_component(encoded: &str) -> Option<String> {
-    let bytes = encoded.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'_' {
-            if bytes.get(i + 1) == Some(&b'_') {
-                out.push(b'_');
-                i += 2;
-            } else {
-                let hex = encoded.get(i + 1..i + 3)?;
-                if !hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
-                    return None;
-                }
-                out.push(u8::from_str_radix(hex, 16).ok()?);
-                i += 3;
-            }
-        } else {
-            out.push(bytes[i]);
-            i += 1;
+/// One component from the front of `rest`: its text, and what follows it.
+fn decode_component(mut rest: &str) -> Option<(String, &str)> {
+    let mut out = Vec::new();
+    loop {
+        if let Some(after) = rest.strip_prefix('z') {
+            return Some((String::from_utf8(out).ok()?, after));
         }
+        let digits = rest.find(|c: char| !c.is_ascii_digit())?;
+        if digits == 0 {
+            return None;
+        }
+        let len: usize = rest[..digits].parse().ok()?;
+        let kind = rest.as_bytes()[digits];
+        let body = rest.get(digits + 1..digits + 1 + len)?;
+        match kind {
+            b'_' if !body.is_empty() && body.bytes().all(is_c_ident_byte) => out.extend_from_slice(body.as_bytes()),
+            b'x' if len % 2 == 0
+                && len > 0
+                && body.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) =>
+            {
+                for pair in body.as_bytes().chunks(2) {
+                    let byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+                    if is_c_ident_byte(byte) {
+                        return None;
+                    }
+                    out.push(byte);
+                }
+            }
+            _ => return None,
+        }
+        rest = &rest[digits + 1 + len..];
     }
-    String::from_utf8(out).ok()
 }
 
 /// `composed`'s inverse: the family and the components, or `None` for a name
@@ -978,14 +1005,9 @@ pub fn decode_composed(name: &str) -> Option<(char, Vec<String>)> {
     let mut rest = &rest[1..];
     let mut components = Vec::new();
     while !rest.is_empty() {
-        let digits = rest.find('_')?;
-        if digits == 0 || !rest[..digits].bytes().all(|b| b.is_ascii_digit()) {
-            return None;
-        }
-        let len: usize = rest[..digits].parse().ok()?;
-        let body = rest.get(digits + 1..digits + 1 + len)?;
-        components.push(decode_component(body)?);
-        rest = &rest[digits + 1 + len..];
+        let (component, after) = decode_component(rest)?;
+        components.push(component);
+        rest = after;
     }
     Some((family, components))
 }
@@ -1292,7 +1314,8 @@ mod tests {
         let atoms = [
             "", "_", "__", "_u", "_u_", "u_", "_S", "u_S", "_u_S", "1", "1_", "_1", "12_3", "g_",
             "_g_", "_g_f3_abc", "f", "f_", "B", "B_", "E", "E_", "V", "_V", "u_V", "a_b", "Box<_u_S>",
-            "[i64; 2]", "long long", "struct _u_S*", "\u{e9}t\u{e9}", "Tag", "_Data", "new",
+            "[i64; 2]", "long long", "struct _u_S*", "\u{e9}t\u{e9}", "Tag", "_Data", "new", "z", "1z",
+            "x", "1x", "_z", "z_", "_g_f5_abcz", "struct _g_p9_long longz", "_g_s1_Bz8x3c5f755f53",
         ];
         let mut sequences: Vec<Vec<&str>> = vec![vec![]];
         for a in atoms {
@@ -1322,9 +1345,57 @@ mod tests {
         assert_ne!(instance_name('s', "B", &["_u_S".into()]), instance_name('s', "B_", &["u_S".into()]));
         assert_ne!(composed('c', &["E", "_u_V"]), composed('c', &["E_", "u_V"]));
         assert_ne!(path_name("E::_u_m"), path_name("E_::u_m"));
-        assert_eq!(path_name("Point::new"), "_g_m5_Point3_new");
+        assert_eq!(path_name("Point::new"), "_g_m5_Pointz3_newz");
         assert_eq!(decode_composed("_g_"), None);
         assert_eq!(decode_composed("_g_f3_ab"), None);
         assert_eq!(decode_composed("_g_fx_ab"), None);
+    }
+
+    /// THE SIZE IS LINEAR IN NESTING, IN EVERY FAMILY (review round 12). A
+    /// composed name can embed another: a tuple whose element is a tuple or a
+    /// generic struct instance (`struct <inner>`), a generic instance whose type
+    /// argument spells a nested type. Round 11 doubled every `_` of an embedded
+    /// name again at every level — 23 nested tuples emitted 599,832,240 bytes of
+    /// C (astra) — so each chain below, to depth 32 (fable: 4/8/16/32), must add
+    /// a small constant per level and still decode.
+    #[test]
+    fn a_nested_composed_name_grows_by_a_constant_per_level() {
+        type Step = Box<dyn Fn(&str) -> String>;
+        let chains: Vec<(&str, String, Step)> = vec![
+            ("tuple of tuple", composed('p', &["long long", "long long"]),
+                Box::new(|inner: &str| composed('p', &[format!("struct {}", inner), "long long".to_string()]))),
+            ("generic struct of generic struct (type argument spelling)", "_u_S".to_string(),
+                Box::new(|inner: &str| format!("B<{}>", inner))),
+            ("generic fn at a nested tuple (type argument spelling)", "i64".to_string(),
+                Box::new(|inner: &str| format!("({}, i64)", inner))),
+            ("generic instance whose type argument is a composed name", "_u_S".to_string(),
+                Box::new(|inner: &str| instance_name('s', "B", &[inner.to_string()]))),
+            ("tuple of a generic struct instance", composed('p', &["long long"]),
+                Box::new(|inner: &str| composed('p', &[format!("struct {}", instance_name('s', "B", &[inner.to_string()]))]))),
+        ];
+        for (what, start, step) in chains {
+            let mut current = start;
+            let mut lengths = Vec::new();
+            for depth in 0..=32 {
+                if depth > 0 {
+                    current = step(&current);
+                }
+                // A type-argument SPELLING becomes a name inside an instance.
+                let name = if current.starts_with(COMPOSED_PREFIX) {
+                    current.clone()
+                } else {
+                    instance_name('f', "id", &[current.clone()])
+                };
+                assert!(decode_composed(&name).is_some(), "{} at depth {} does not decode", what, depth);
+                lengths.push(name.len());
+            }
+            for (depth, pair) in lengths.windows(2).enumerate() {
+                let added = pair[1].saturating_sub(pair[0]);
+                assert!(added <= 48, "{}: level {} added {} bytes: {:?}", what, depth + 1, added, lengths);
+            }
+            for depth in [4, 8, 16, 32] {
+                assert!(lengths[depth] <= lengths[0] + 48 * depth, "{} at depth {}: {:?}", what, depth, lengths);
+            }
+        }
     }
 }

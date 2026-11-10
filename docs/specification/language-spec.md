@@ -812,7 +812,7 @@ impl_block = "impl" [ generic_params ] [ type "for" ] type "{" { function } "}" 
 
 **implemented**: methods become free functions named by composing the path `Type::method`
 (`c_ident::path_name` — the one length-delimited encoding every composed C name uses, e.g.
-`_g_m4_Rect4_area`, #89/#92 review round 11; `src/codegen/mod.rs:2496-2501`, corrected THREE TIMES: from line 1861 of the pre-cleanup
+`_g_m4_Rectz4_areaz`, #89/#92 review rounds 11-12; `src/codegen/mod.rs:2496-2501`, corrected THREE TIMES: from line 1861 of the pre-cleanup
 revision; on 2026-08-23 from `1174-1180`, which was the file-I/O prelude and had nothing to do with
 method mangling — the line numbers had been tracked through an edit while the target was never
 re-read; and on 2026-08-25, when `4690ef0` inserted above it).
